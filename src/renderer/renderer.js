@@ -10,9 +10,12 @@ class VideoManager {
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
     this.selectedVideo = null;
+    this.thumbnailObserver = null;
+    this.loadingThumbnails = new Set(); // 追蹤正在載入的縮圖
 
     this.initializeElements();
     this.bindEvents();
+    this.initializeThumbnailObserver();
     this.loadData();
   }
 
@@ -74,6 +77,34 @@ class VideoManager {
         this.hideVideoModal();
         this.hideScanModal();
       }
+    });
+  }
+
+  initializeThumbnailObserver() {
+    // 創建 Intersection Observer 用於懶載入
+    this.thumbnailObserver = new IntersectionObserver((entries) => {
+      console.log(`Intersection Observer 觸發，檢查 ${entries.length} 個元素`);
+
+      entries.forEach(entry => {
+        console.log(`元素 ${entry.target.dataset.filepath} intersecting: ${entry.isIntersecting}`);
+
+        if (entry.isIntersecting) {
+          const container = entry.target;
+          const videoPath = container.dataset.filepath;
+
+          if (videoPath && !this.loadingThumbnails.has(videoPath)) {
+            console.log(`開始載入縮圖: ${videoPath}`);
+            this.loadingThumbnails.add(videoPath);
+            this.loadThumbnail(container, videoPath);
+            // 停止觀察已載入的元素
+            this.thumbnailObserver.unobserve(container);
+          }
+        }
+      });
+    }, {
+      root: null, // 使用視窗作為根元素
+      rootMargin: '200px', // 增加到200px，提早觸發
+      threshold: 0.01 // 降低到1%，更容易觸發
     });
   }
 
@@ -256,32 +287,251 @@ class VideoManager {
   }
 
   setupThumbnails() {
-    const thumbnailVideos = this.elements.videosContainer.querySelectorAll('.thumbnail-video, .thumbnail-video-small');
+    // 清理之前的 Observer
+    if (this.thumbnailObserver) {
+      this.thumbnailObserver.disconnect();
+      this.loadingThumbnails.clear();
+    }
 
-    thumbnailVideos.forEach(video => {
-      video.addEventListener('loadeddata', () => {
-        video.currentTime = 10;
-      });
+    const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
 
-      video.addEventListener('seeked', () => {
-        video.style.opacity = '1';
-        const fallback = video.nextElementSibling;
-        if (fallback) {
-          fallback.style.display = 'none';
+    // 將所有縮圖容器加入 Intersection Observer 進行懶載入
+    thumbnailContainers.forEach((container, index) => {
+      const videoPath = container.dataset.filepath;
+      if (videoPath) {
+        // 添加載入中的視覺提示
+        this.addLoadingPlaceholder(container);
+
+        // 立即載入前幾個縮圖，不用等待滾動
+        if (index < 6) {
+          console.log(`立即載入前方縮圖: ${videoPath}`);
+          this.loadingThumbnails.add(videoPath);
+          this.loadThumbnail(container, videoPath);
+        } else {
+          // 其他的使用懒载入
+          this.thumbnailObserver.observe(container);
         }
-      });
-
-      video.addEventListener('error', () => {
-        video.style.display = 'none';
-        const fallback = video.nextElementSibling;
-        if (fallback) {
-          fallback.style.display = 'flex';
-        }
-      });
-
-      video.style.opacity = '0';
-      video.style.transition = 'opacity 0.3s';
+      }
     });
+
+    console.log(`開始懶載入觀察 ${thumbnailContainers.length} 個縮圖容器，立即載入前6個`);
+
+    // 添加一個後備機制，確保可見的縮圖會載入
+    setTimeout(() => {
+      this.ensureVisibleThumbnailsLoaded();
+    }, 1000);
+  }
+
+  ensureVisibleThumbnailsLoaded() {
+    const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
+
+    thumbnailContainers.forEach(container => {
+      const rect = container.getBoundingClientRect();
+      const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+
+      if (isVisible) {
+        const videoPath = container.dataset.filepath;
+        if (videoPath && !this.loadingThumbnails.has(videoPath)) {
+          console.log(`後備載入可見縮圖: ${videoPath}`);
+          this.loadingThumbnails.add(videoPath);
+          this.loadThumbnail(container, videoPath);
+          // 如果正在被觀察，停止觀察
+          try {
+            this.thumbnailObserver.unobserve(container);
+          } catch (e) {
+            // 忽略錯誤
+          }
+        }
+      }
+    });
+  }
+
+  addLoadingPlaceholder(container) {
+    // 為尚未載入的縮圖添加占位符
+    const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
+    if (fallbackElement) {
+      fallbackElement.classList.add('loading');
+      fallbackElement.innerHTML = '<div style="font-size: 0.8rem;">⏳ 等待載入</div>';
+      fallbackElement.style.display = 'flex';
+    }
+  }
+
+  async loadThumbnail(container, videoPath) {
+    try {
+      // 檢查是否已有快取的縮圖
+      const result = await ipcRenderer.invoke('check-thumbnail', videoPath);
+      if (result.success && result.exists) {
+        // 使用快取的縮圖
+        this.showCachedThumbnail(container, result.path);
+      } else {
+        // 檢查影片格式相容性
+        if (this.isVideoFormatSupported(videoPath)) {
+          // 支援的格式使用影片預覽
+          this.setupVideoThumbnail(container, videoPath);
+        } else {
+          // 不支援的格式嘗試使用 FFmpeg 後端生成
+          console.warn(`格式可能不支援瀏覽器播放: ${videoPath}`);
+          await this.generateThumbnailWithBackend(container, videoPath);
+        }
+      }
+    } catch (error) {
+      console.error('載入縮圖失敗:', error);
+      // 出錯時顯示預設縮圖
+      this.showDefaultThumbnail(container, videoPath);
+    } finally {
+      // 載入完成後從追蹤集合中移除
+      this.loadingThumbnails.delete(videoPath);
+    }
+  }
+
+  isVideoFormatSupported(videoPath) {
+    const extension = videoPath.toLowerCase().split('.').pop();
+    // Chromium/Electron 較好支援的格式
+    const supportedFormats = ['mp4', 'webm', 'ogg', 'ogv', 'm4v'];
+    // 部分支援的格式 (讓瀏覽器嘗試，失敗時回退)
+    const partialSupport = ['avi', 'mov', 'mkv', '3gp', 'mpg', 'mpeg'];
+    // 通常不支援的格式 (直接使用後端處理)
+    const unsupportedFormats = ['wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts'];
+
+    if (supportedFormats.includes(extension)) {
+      return true;
+    }
+    if (unsupportedFormats.includes(extension)) {
+      return false;
+    }
+    // 其他格式讓瀏覽器嘗試
+    return true;
+  }
+
+  async generateThumbnailWithBackend(container, videoPath) {
+    try {
+      // 嘗試使用後端 FFmpeg 生成縮圖
+      const result = await ipcRenderer.invoke('get-thumbnail', videoPath);
+      if (result.success && result.thumbnail) {
+        this.showCachedThumbnail(container, result.thumbnail);
+      } else {
+        throw new Error('後端縮圖生成失敗');
+      }
+    } catch (error) {
+      console.warn('後端縮圖生成失敗:', error);
+      this.showDefaultThumbnail(container, videoPath);
+    }
+  }
+
+  showDefaultThumbnail(container, videoPath) {
+    const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
+    if (fallbackElement) {
+      fallbackElement.classList.remove('loading');
+      const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
+      fallbackElement.innerHTML = `
+        <div style="text-align: center;">
+          <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🎬</div>
+          <div style="font-size: 0.7rem; opacity: 0.8;">${extension}</div>
+          <div style="font-size: 0.6rem; opacity: 0.6;">無法預覽</div>
+        </div>
+      `;
+      fallbackElement.style.display = 'flex';
+      fallbackElement.style.background = 'linear-gradient(45deg, #757575, #9e9e9e)';
+    }
+  }
+
+  showCachedThumbnail(container, thumbnailPath) {
+    // 移除原有的 video 元素
+    const videoElement = container.querySelector('.thumbnail-video, .thumbnail-video-small');
+    const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
+
+    if (videoElement) {
+      videoElement.remove();
+    }
+
+    // 建立圖片元素顯示縮圖
+    const img = document.createElement('img');
+    img.className = videoElement ? videoElement.className.replace('thumbnail-video', 'thumbnail-img') : 'thumbnail-img';
+    img.style.width = '100%';
+    img.style.height = '100%';
+    img.style.objectFit = 'cover';
+    img.src = `file://${thumbnailPath}`;
+
+    img.addEventListener('load', () => {
+      if (fallbackElement) {
+        fallbackElement.classList.remove('loading');
+        fallbackElement.style.display = 'none';
+      }
+    });
+
+    img.addEventListener('error', () => {
+      // 圖片載入失敗，回退到影片預覽
+      img.remove();
+      if (fallbackElement) {
+        fallbackElement.classList.remove('loading');
+        fallbackElement.style.display = 'flex';
+      }
+      this.setupVideoThumbnail(container, container.dataset.filepath);
+    });
+
+    container.insertBefore(img, fallbackElement);
+  }
+
+  setupVideoThumbnail(container, videoPath) {
+    const isSmall = container.classList.contains('video-list-thumbnail');
+    const videoClass = isSmall ? 'thumbnail-video-small' : 'thumbnail-video';
+
+    // 檢查是否已有 video 元素
+    let video = container.querySelector('.thumbnail-video, .thumbnail-video-small');
+    if (!video) {
+      video = document.createElement('video');
+      video.className = videoClass;
+      video.preload = 'metadata';
+      video.muted = true;
+
+      const source = document.createElement('source');
+      source.src = videoPath;
+      video.appendChild(source);
+
+      const fallback = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
+      container.insertBefore(video, fallback);
+    }
+
+    // 設定載入超時 (5秒)
+    const timeoutId = setTimeout(() => {
+      console.warn(`影片載入超時: ${videoPath}`);
+      this.showDefaultThumbnail(container, videoPath);
+    }, 5000);
+
+    video.addEventListener('loadeddata', async () => {
+      clearTimeout(timeoutId);
+      // 嘗試多個時間點，避免黑幀
+      video.currentTime = Math.max(10, video.duration * 0.1);
+    });
+
+    video.addEventListener('seeked', async () => {
+      clearTimeout(timeoutId);
+      video.style.opacity = '1';
+      const fallback = video.nextElementSibling;
+      if (fallback && fallback.classList.contains('thumbnail-fallback')) {
+        fallback.classList.remove('loading');
+        fallback.style.display = 'none';
+      }
+
+      // 嘗試生成縮圖快取
+      try {
+        const ThumbnailGenerator = require('../thumbnailGenerator');
+        const thumbnailGenerator = new ThumbnailGenerator();
+        await thumbnailGenerator.generateThumbnailInRenderer(video, videoPath);
+      } catch (error) {
+        console.warn('生成縮圖快取失敗:', error);
+      }
+    });
+
+    video.addEventListener('error', () => {
+      clearTimeout(timeoutId);
+      console.warn(`影片載入錯誤: ${videoPath}`);
+      // 嘗試後端生成
+      this.generateThumbnailWithBackend(container, videoPath);
+    });
+
+    video.style.opacity = '0';
+    video.style.transition = 'opacity 0.3s';
   }
 
   renderTagsFilter() {
@@ -711,8 +961,22 @@ class VideoManager {
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
   }
+
+  // 清理 Observer (當頁面卸載或重新載入時)
+  destroy() {
+    if (this.thumbnailObserver) {
+      this.thumbnailObserver.disconnect();
+      this.thumbnailObserver = null;
+    }
+    this.loadingThumbnails.clear();
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  new VideoManager();
+  const videoManager = new VideoManager();
+
+  // 頁面卸載時清理資源
+  window.addEventListener('beforeunload', () => {
+    videoManager.destroy();
+  });
 });

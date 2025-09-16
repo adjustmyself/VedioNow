@@ -3,10 +3,12 @@ const path = require('path');
 const fs = require('fs-extra');
 const Database = require('./database');
 const VideoScanner = require('./videoScanner');
+const ThumbnailGenerator = require('./thumbnailGenerator');
 
 let mainWindow;
 let database;
 let videoScanner;
+let thumbnailGenerator;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -31,6 +33,7 @@ app.whenReady().then(async () => {
   await database.init();
 
   videoScanner = new VideoScanner(database);
+  thumbnailGenerator = new ThumbnailGenerator();
 
   createWindow();
 
@@ -230,4 +233,24 @@ ipcMain.handle('open-tag-manager', async () => {
   }
 
   return { success: true };
+});
+
+// 縮圖相關的 IPC handlers
+ipcMain.handle('get-thumbnail', async (event, videoPath) => {
+  try {
+    const thumbnail = await thumbnailGenerator.generateThumbnail(videoPath);
+    return { success: true, thumbnail };
+  } catch (error) {
+    console.error('生成縮圖錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('check-thumbnail', async (event, videoPath) => {
+  try {
+    const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath);
+    return { success: true, exists: !!existingThumbnail, path: existingThumbnail };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
