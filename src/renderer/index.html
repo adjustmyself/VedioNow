@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VideoNow - 影片管理程式</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <h1>VideoNow</h1>
+            <div class="header-actions">
+                <button id="tag-manager-btn" class="btn btn-secondary">標籤管理</button>
+                <button id="scan-btn" class="btn btn-primary">掃描資料夾</button>
+                <input type="text" id="search-input" placeholder="搜尋影片..." class="search-input">
+            </div>
+        </header>
+
+        <div class="main-container">
+            <aside class="sidebar">
+                <h3>標籤篩選</h3>
+                <div id="tags-filter" class="tags-container">
+                    <!-- 標籤會動態加載到這裡 -->
+                </div>
+
+                <h3>統計資訊</h3>
+                <div class="stats">
+                    <div class="stat-item">
+                        <span class="stat-label">影片總數:</span>
+                        <span id="total-videos" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">標籤總數:</span>
+                        <span id="total-tags" class="stat-value">0</span>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="content">
+                <div class="toolbar">
+                    <div class="view-controls">
+                        <button id="grid-view" class="btn btn-small active">網格檢視</button>
+                        <button id="list-view" class="btn btn-small">列表檢視</button>
+                    </div>
+                    <div class="sort-controls">
+                        <select id="sort-select">
+                            <option value="created_at">建立時間</option>
+                            <option value="filename">檔案名稱</option>
+                            <option value="filesize">檔案大小</option>
+                            <option value="rating">評分</option>
+                        </select>
+                        <button id="sort-order" class="btn btn-small">降序</button>
+                    </div>
+                </div>
+
+                <div id="videos-container" class="videos-grid">
+                    <!-- 影片會動態加載到這裡 -->
+                </div>
+
+                <div id="loading" class="loading hidden">
+                    <div class="spinner"></div>
+                    <p>載入中...</p>
+                </div>
+
+                <div id="empty-state" class="empty-state hidden">
+                    <h3>沒有找到影片</h3>
+                    <p>請掃描資料夾或調整搜尋條件</p>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- 影片詳情模態框 -->
+    <div id="video-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">影片詳情</h2>
+                <button id="modal-close" class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="video-info">
+                    <div class="info-group">
+                        <label>檔案名稱:</label>
+                        <span id="modal-filename"></span>
+                    </div>
+                    <div class="info-group">
+                        <label>檔案路徑:</label>
+                        <span id="modal-filepath"></span>
+                    </div>
+                    <div class="info-group">
+                        <label>檔案大小:</label>
+                        <span id="modal-filesize"></span>
+                    </div>
+                    <div class="info-group">
+                        <label>建立時間:</label>
+                        <span id="modal-created"></span>
+                    </div>
+                    <div class="info-group">
+                        <label>評分:</label>
+                        <div class="rating">
+                            <span class="star" data-rating="1">★</span>
+                            <span class="star" data-rating="2">★</span>
+                            <span class="star" data-rating="3">★</span>
+                            <span class="star" data-rating="4">★</span>
+                            <span class="star" data-rating="5">★</span>
+                        </div>
+                    </div>
+                    <div class="info-group">
+                        <label>描述:</label>
+                        <textarea id="modal-description" placeholder="輸入影片描述..."></textarea>
+                    </div>
+                    <div class="info-group">
+                        <label>標籤:</label>
+                        <div id="modal-tags" class="tags-container"></div>
+
+                        <!-- 標籤選擇器 -->
+                        <div class="tag-selector-container">
+                            <label>從現有標籤選擇:</label>
+                            <div id="tag-selector" class="tag-selector">
+                                <!-- 標籤群組會動態載入到這裡 -->
+                            </div>
+                        </div>
+
+                        <div class="tag-input-container">
+                            <input type="text" id="new-tag-input" placeholder="新增標籤...">
+                            <button id="add-tag-btn" class="btn btn-small">新增</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="save-changes" class="btn btn-primary">儲存變更</button>
+                <button id="delete-video" class="btn btn-danger">刪除影片記錄</button>
+                <button id="open-file" class="btn btn-secondary">開啟檔案</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 掃描資料夾模態框 -->
+    <div id="scan-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>掃描影片資料夾</h2>
+                <button id="scan-modal-close" class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="scan-options">
+                    <div class="option-group">
+                        <label>資料夾路徑:</label>
+                        <div class="path-input-container">
+                            <input type="text" id="folder-path" placeholder="選擇或輸入資料夾路徑...">
+                            <button id="browse-folder" class="btn btn-secondary">瀏覽</button>
+                        </div>
+                    </div>
+                    <div class="option-group">
+                        <label>
+                            <input type="checkbox" id="recursive-scan" checked>
+                            包含子資料夾
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label>
+                            <input type="checkbox" id="watch-changes">
+                            監控資料夾變更
+                        </label>
+                    </div>
+                </div>
+                <div id="scan-progress" class="progress-container hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p id="scan-status">掃描中...</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="start-scan" class="btn btn-primary">開始掃描</button>
+                <button id="cancel-scan" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
