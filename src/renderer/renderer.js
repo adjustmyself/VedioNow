@@ -6,7 +6,7 @@ class VideoManager {
     this.currentVideos = [];
     this.allTags = [];
     this.activeTags = new Set();
-    this.currentSort = 'created_at';
+    this.currentSort = 'file_created_at';
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
     this.selectedVideo = null;
@@ -137,7 +137,9 @@ class VideoManager {
     // 展平標籤用於統計
     this.allTags = [];
     this.tagsByGroup.forEach(group => {
-      this.allTags.push(...group.tags);
+      if (group.tags && Array.isArray(group.tags)) {
+        this.allTags.push(...group.tags);
+      }
     });
     console.log('載入的標籤群組:', this.tagsByGroup);
     console.log('所有標籤:', this.allTags);
@@ -220,9 +222,9 @@ class VideoManager {
 
     const filename = video.filename || '未知檔名';
     const filesize = this.formatFileSize(video.filesize);
-    const createdDate = video.created_at
-      ? new Date(video.created_at).toLocaleDateString()
-      : '未知日期';
+    const createdDate = video.file_created_at
+      ? new Date(video.file_created_at).toLocaleDateString()
+      : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
 
     return `
       <div class="video-card" data-video-id="${video.id}">
@@ -252,9 +254,9 @@ class VideoManager {
 
     const filename = video.filename || '未知檔名';
     const filesize = this.formatFileSize(video.filesize);
-    const createdDate = video.created_at
-      ? new Date(video.created_at).toLocaleDateString()
-      : '未知日期';
+    const createdDate = video.file_created_at
+      ? new Date(video.file_created_at).toLocaleDateString()
+      : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
 
     return `
       <div class="video-list-item" data-video-id="${video.id}">
@@ -607,10 +609,10 @@ class VideoManager {
         <div class="tag-group-header">
           <span class="tag-group-color" style="background-color: ${group.color};"></span>
           <span class="tag-group-name">${group.name}</span>
-          <span class="tag-group-count">(${group.tags.length})</span>
+          <span class="tag-group-count">(${(group.tags || []).length})</span>
         </div>
         <div class="tag-group-tags">
-          ${group.tags.map(tag =>
+          ${(group.tags || []).map(tag =>
             `<span class="tag ${this.activeTags.has(tag.name) ? 'active' : ''}"
                    data-tag="${tag.name}"
                    style="--tag-color: ${tag.color};">
@@ -651,7 +653,10 @@ class VideoManager {
     document.getElementById('modal-filename').textContent = this.selectedVideo.filename;
     document.getElementById('modal-filepath').textContent = this.selectedVideo.filepath;
     document.getElementById('modal-filesize').textContent = this.formatFileSize(this.selectedVideo.filesize);
-    document.getElementById('modal-created').textContent = new Date(this.selectedVideo.created_at).toLocaleString();
+    const createdText = this.selectedVideo.file_created_at
+      ? new Date(this.selectedVideo.file_created_at).toLocaleString()
+      : (this.selectedVideo.created_at ? new Date(this.selectedVideo.created_at).toLocaleString() : '未知日期');
+    document.getElementById('modal-created').textContent = createdText;
     document.getElementById('modal-description').value = this.selectedVideo.description || '';
 
     this.renderModalTags();
@@ -707,7 +712,7 @@ class VideoManager {
             <div class="tag-group-name-selector">${group.name}</div>
           </div>
           <div class="tags-list-selector">
-            ${group.tags.map(tag => `
+            ${(group.tags || []).map(tag => `
               <div class="tag-item-selector ${this.selectedVideo.tags.includes(tag.name) ? 'selected' : ''}"
                    data-tag-name="${tag.name}">
                 <div class="tag-color-selector" style="background-color: ${tag.color};"></div>

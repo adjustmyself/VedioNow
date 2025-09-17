@@ -101,6 +101,9 @@ class VideoScanner {
     const filename = path.basename(filepath);
     const filesize = stat.size;
 
+    // 獲取檔案建立時間，優先使用 birthtime，如果不可用則使用 mtime
+    const file_created_at = stat.birthtime && stat.birthtime.getTime() > 0 ? stat.birthtime : stat.mtime;
+
     // 計算檔案指紋
     let fingerprint = null;
     try {
@@ -116,7 +119,8 @@ class VideoScanner {
       filesize,
       duration: null,
       description: '',
-      fingerprint
+      fingerprint,
+      file_created_at
     };
   }
 

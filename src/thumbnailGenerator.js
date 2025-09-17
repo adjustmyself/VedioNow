@@ -5,8 +5,8 @@ const crypto = require('crypto');
 
 class ThumbnailGenerator {
   constructor() {
-    // 縮圖將儲存在影片所在資料夾的 .thumbnails 子目錄中
-    // 這樣可以讓多個用戶共享縮圖
+    // 縮圖將儲存在本地快取目錄中，避免網路磁碟權限問題
+    this.thumbnailsDir = path.join(__dirname, '../data/thumbnails');
   }
 
   // 生成檔案路徑的唯一hash值
@@ -16,18 +16,15 @@ class ThumbnailGenerator {
     return crypto.createHash('md5').update(normalizedPath).digest('hex');
   }
 
-  // 產生縮圖路徑 (在影片所在資料夾的 .thumbnails 子目錄中)
+  // 產生縮圖路徑 (在本地快取目錄中)
   getThumbnailPath(videoPath) {
-    const videoDir = path.dirname(videoPath);
-    const thumbnailDir = path.join(videoDir, '.thumbnails');
     const fileHash = this.generateFileHash(videoPath);
-    return path.join(thumbnailDir, `${fileHash}.jpg`);
+    return path.join(this.thumbnailsDir, `${fileHash}.jpg`);
   }
 
   // 獲取縮圖目錄路徑
-  getThumbnailDir(videoPath) {
-    const videoDir = path.dirname(videoPath);
-    return path.join(videoDir, '.thumbnails');
+  getThumbnailDir() {
+    return this.thumbnailsDir;
   }
 
   // 檢查縮圖是否存在
@@ -150,7 +147,7 @@ class ThumbnailGenerator {
     const thumbnailPath = this.getThumbnailPath(videoPath);
 
     // 確保縮圖目錄存在
-    await fs.ensureDir(path.dirname(thumbnailPath));
+    await fs.ensureDir(this.thumbnailsDir);
 
     // 嘗試使用 FFmpeg
     try {
@@ -168,46 +165,32 @@ class ThumbnailGenerator {
       // 生成所有有效影片的hash值
       const validHashes = new Set(validVideoPaths.map(videoPath => this.generateFileHash(videoPath)));
 
-      // 取得所有有影片的資料夾路徑
-      const videoDirs = new Set(validVideoPaths.map(videoPath => path.dirname(videoPath)));
-
       let cleanupCount = 0;
 
-      // 遍歷每個資料夾的 .thumbnails 目錄
-      for (const videoDir of videoDirs) {
-        const thumbnailDir = path.join(videoDir, '.thumbnails');
+      // 檢查本地縮圖目錄
+      if (!await fs.pathExists(this.thumbnailsDir)) {
+        return;
+      }
 
-        if (!await fs.pathExists(thumbnailDir)) {
-          continue;
-        }
+      try {
+        const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
 
-        try {
-          const thumbnailFiles = await fs.readdir(thumbnailDir);
+        for (const thumbnailFile of thumbnailFiles) {
+          // 只處理jpg檔案
+          if (path.extname(thumbnailFile).toLowerCase() === '.jpg') {
+            const fileHash = path.basename(thumbnailFile, '.jpg');
 
-          for (const thumbnailFile of thumbnailFiles) {
-            // 只處理jpg檔案
-            if (path.extname(thumbnailFile).toLowerCase() === '.jpg') {
-              const fileHash = path.basename(thumbnailFile, '.jpg');
-
-              // 如果這個hash不在有效列表中，就刪除縮圖
-              if (!validHashes.has(fileHash)) {
-                const thumbnailPath = path.join(thumbnailDir, thumbnailFile);
-                await fs.remove(thumbnailPath);
-                console.log('已清理過期縮圖:', thumbnailPath);
-                cleanupCount++;
-              }
+            // 如果這個hash不在有效列表中，就刪除縮圖
+            if (!validHashes.has(fileHash)) {
+              const thumbnailPath = path.join(this.thumbnailsDir, thumbnailFile);
+              await fs.remove(thumbnailPath);
+              console.log('已清理過期縮圖:', thumbnailPath);
+              cleanupCount++;
             }
           }
-
-          // 檢查目錄是否為空，如果是則刪除 .thumbnails 目錄
-          const remainingFiles = await fs.readdir(thumbnailDir);
-          if (remainingFiles.length === 0) {
-            await fs.remove(thumbnailDir);
-            console.log('已刪除空的縮圖目錄:', thumbnailDir);
-          }
-        } catch (error) {
-          console.warn(`清理縮圖目錄失敗 ${thumbnailDir}:`, error.message);
         }
+      } catch (error) {
+        console.warn(`清理縮圖目錄失敗 ${this.thumbnailsDir}:`, error.message);
       }
 
       if (cleanupCount > 0) {
@@ -218,41 +201,34 @@ class ThumbnailGenerator {
     }
   }
 
-  // 新增方法：獲取縮圖統計資訊 (需要提供影片路徑列表來計算)
-  async getThumbnailStats(videoPaths = []) {
+  // 新增方法：獲取縮圖統計資訊
+  async getThumbnailStats() {
     try {
-      // 取得所有有影片的資料夾路徑
-      const videoDirs = new Set(videoPaths.map(videoPath => path.dirname(videoPath)));
-
       let totalCount = 0;
       let totalSize = 0;
 
-      // 遍歷每個資料夾的 .thumbnails 目錄
-      for (const videoDir of videoDirs) {
-        const thumbnailDir = path.join(videoDir, '.thumbnails');
+      // 檢查本地縮圖目錄
+      if (!await fs.pathExists(this.thumbnailsDir)) {
+        return { total: 0, size: 0 };
+      }
 
-        if (!await fs.pathExists(thumbnailDir)) {
-          continue;
-        }
+      try {
+        const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
+        const jpgFiles = thumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
 
-        try {
-          const thumbnailFiles = await fs.readdir(thumbnailDir);
-          const jpgFiles = thumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
+        totalCount = jpgFiles.length;
 
-          totalCount += jpgFiles.length;
-
-          for (const file of jpgFiles) {
-            const filePath = path.join(thumbnailDir, file);
-            try {
-              const stats = await fs.stat(filePath);
-              totalSize += stats.size;
-            } catch (error) {
-              console.warn(`無法獲取檔案統計: ${filePath}`, error.message);
-            }
+        for (const file of jpgFiles) {
+          const filePath = path.join(this.thumbnailsDir, file);
+          try {
+            const stats = await fs.stat(filePath);
+            totalSize += stats.size;
+          } catch (error) {
+            console.warn(`無法獲取檔案統計: ${filePath}`, error.message);
           }
-        } catch (error) {
-          console.warn(`無法讀取縮圖目錄: ${thumbnailDir}`, error.message);
         }
+      } catch (error) {
+        console.warn(`無法讀取縮圖目錄: ${this.thumbnailsDir}`, error.message);
       }
 
       return {
@@ -275,6 +251,9 @@ class ThumbnailGenerator {
       return existingThumbnail;
     }
 
+    // 確保縮圖目錄存在
+    await fs.ensureDir(this.thumbnailsDir);
+
     // 使用 Canvas 生成縮圖
     try {
       return await this.generateWithCanvas(videoElement, thumbnailPath);
@@ -284,15 +263,14 @@ class ThumbnailGenerator {
     }
   }
 
-  // 遷移舊的縮圖從統一目錄到各自資料夾 (一次性執行)
+  // 遷移舊的縮圖（現在所有縮圖都在本地目錄，無需遷移）
   async migrateThumbnails(videoPaths = []) {
     try {
-      const oldThumbnailDir = path.join(__dirname, '../data/thumbnails');
+      // 確保本地縮圖目錄存在
+      await fs.ensureDir(this.thumbnailsDir);
 
-      if (!await fs.pathExists(oldThumbnailDir)) {
-        console.log('沒有找到舊的縮圖目錄，無需遷移');
-        return { migrated: 0, errors: 0 };
-      }
+      console.log('縮圖已統一存儲在本地目錄，無需遷移');
+      return { migrated: 0, errors: 0 };
 
       const oldThumbnailFiles = await fs.readdir(oldThumbnailDir);
       const jpgFiles = oldThumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');

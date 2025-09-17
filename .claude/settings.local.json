@@ -5,7 +5,8 @@
       "Bash(npm run dev:*)",
       "Bash(npm install:*)",
       "Read(//c/Users/Adjust/Videos/114年第058期「Auto CAD 2023電腦應用繪圖基礎訓練班」/.thumbnails/**)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(sqlite3:*)"
     ],
     "deny": [],
     "ask": []

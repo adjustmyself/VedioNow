@@ -280,7 +280,11 @@ ipcMain.handle('create-tag', async (event, tagData) => {
 
 ipcMain.handle('get-tags-by-group', async () => {
   try {
-    return await database.getTagsByGroup();
+    console.log('開始獲取標籤群組...');
+    const result = await database.getTagsByGroup();
+    console.log('成功獲取標籤群組，數量:', result.length);
+    console.log('標籤群組內容:', JSON.stringify(result, null, 2));
+    return result;
   } catch (error) {
     console.error('Error getting tags by group:', error);
     return [];
