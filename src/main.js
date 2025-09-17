@@ -53,6 +53,16 @@ app.whenReady().then(async () => {
       console.warn('縮圖遷移失敗:', error);
     }
 
+    // 執行舊標籤系統遷移 (如果需要)
+    try {
+      const legacyMigrationResult = await database.migrateLegacyTags();
+      if (legacyMigrationResult.migrated > 0 || legacyMigrationResult.metadataMigrated > 0) {
+        console.log(`舊標籤系統遷移完成：已遷移 ${legacyMigrationResult.migrated} 個標籤，${legacyMigrationResult.metadataMigrated} 個影片元數據`);
+      }
+    } catch (error) {
+      console.warn('舊標籤系統遷移失敗:', error);
+    }
+
     createWindow();
 
     app.on('activate', () => {
@@ -85,10 +95,10 @@ ipcMain.handle('select-folder', async () => {
   return null;
 });
 
-ipcMain.handle('scan-videos', async (event, folderPath) => {
+ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
   try {
-    const videos = await videoScanner.scanFolder(folderPath);
-    return { success: true, videos };
+    const result = await videoScanner.scanFolder(folderPath, options);
+    return { success: true, result };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -125,6 +135,37 @@ ipcMain.handle('remove-tag', async (event, videoId, tagName) => {
   }
 });
 
+// 新的基於指紋的標籤操作
+ipcMain.handle('add-video-tag', async (event, fingerprint, tagName) => {
+  try {
+    console.log('Adding video tag:', { fingerprint, tagName });
+    await database.addVideoTag(fingerprint, tagName);
+    console.log('Video tag added successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('Error adding video tag:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('remove-video-tag', async (event, fingerprint, tagName) => {
+  try {
+    await database.removeVideoTag(fingerprint, tagName);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('set-video-metadata', async (event, fingerprint, metadata) => {
+  try {
+    await database.setVideoMetadata(fingerprint, metadata);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('get-all-tags', async () => {
   try {
     return await database.getAllTags();
@@ -150,6 +191,35 @@ ipcMain.handle('delete-video', async (event, videoId) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+ipcMain.handle('delete-video-with-file', async (event, videoId) => {
+  try {
+    const result = await database.deleteVideoWithFile(videoId);
+    return { success: true, result };
+  } catch (error) {
+    console.error('Error deleting video with file:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('show-delete-confirmation', async (event, filename) => {
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['取消', '確認刪除'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '確認刪除檔案',
+    message: '警告：此操作將永久刪除檔案！',
+    detail: `檔案：${filename}\n\n此操作無法復原，確定要刪除嗎？`,
+    checkboxLabel: '我瞭解此操作無法復原',
+    checkboxChecked: false
+  });
+
+  return {
+    confirmed: response.response === 1 && response.checkboxChecked,
+    checkboxChecked: response.checkboxChecked
+  };
 });
 
 ipcMain.handle('update-video', async (event, videoId, updates) => {
@@ -458,4 +528,19 @@ ipcMain.handle('dialog-save-file', async (event, options) => {
 ipcMain.handle('restart-app', async () => {
   app.relaunch();
   app.exit(0);
+});
+
+// 手動觸發舊標籤系統遷移
+ipcMain.handle('migrate-legacy-tags', async () => {
+  try {
+    const result = await database.migrateLegacyTags();
+    return {
+      success: true,
+      message: `遷移完成：已遷移 ${result.migrated} 個標籤，${result.metadataMigrated} 個影片元數據`,
+      result
+    };
+  } catch (error) {
+    console.error('手動遷移舊標籤系統失敗:', error);
+    return { success: false, error: error.message };
+  }
 });

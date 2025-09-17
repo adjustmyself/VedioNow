@@ -1,6 +1,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const chokidar = require('chokidar');
+const FileFingerprint = require('./fileFingerprint');
 
 class VideoScanner {
   constructor(database) {
@@ -10,10 +11,11 @@ class VideoScanner {
       '.3gp', '.ogv', '.ogg', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts'
     ];
     this.watchers = new Map();
+    this.fileFingerprint = new FileFingerprint();
   }
 
   async scanFolder(folderPath, options = {}) {
-    const { recursive = true, watchChanges = false } = options;
+    const { recursive = true, watchChanges = false, cleanupMissing = false } = options;
 
     if (!await fs.pathExists(folderPath)) {
       throw new Error(`路徑不存在: ${folderPath}`);
@@ -29,20 +31,40 @@ class VideoScanner {
     const videos = [];
     await this._scanDirectory(folderPath, videos, recursive);
 
+    let addedCount = 0;
+    let updatedCount = 0;
+
     for (const video of videos) {
       try {
-        await this.database.addVideo(video);
+        const result = await this.database.addVideo(video);
+        if (result === 'updated') {
+          updatedCount++;
+        } else {
+          addedCount++;
+        }
       } catch (error) {
         console.error(`添加影片失敗: ${video.filepath}`, error);
       }
+    }
+
+    // 可選：清理已刪除的檔案記錄
+    let cleanupCount = 0;
+    if (cleanupMissing) {
+      cleanupCount = await this._cleanupMissingFiles(folderPath, recursive);
     }
 
     if (watchChanges) {
       this.watchFolder(folderPath, recursive);
     }
 
-    console.log(`掃描完成，找到 ${videos.length} 個影片檔案`);
-    return videos;
+    console.log(`掃描完成 - 找到: ${videos.length}, 新增: ${addedCount}, 更新: ${updatedCount}, 清理: ${cleanupCount}`);
+    return {
+      found: videos.length,
+      added: addedCount,
+      updated: updatedCount,
+      cleaned: cleanupCount,
+      videos
+    };
   }
 
   async _scanDirectory(dirPath, videos, recursive) {
@@ -79,12 +101,22 @@ class VideoScanner {
     const filename = path.basename(filepath);
     const filesize = stat.size;
 
+    // 計算檔案指紋
+    let fingerprint = null;
+    try {
+      fingerprint = await this.fileFingerprint.calculateFingerprint(filepath, stat);
+    } catch (error) {
+      console.warn(`計算檔案指紋失敗: ${filepath}`, error.message);
+      // 繼續處理，但沒有指紋
+    }
+
     return {
       filename,
       filepath,
       filesize,
       duration: null,
-      description: ''
+      description: '',
+      fingerprint
     };
   }
 
@@ -181,6 +213,40 @@ class VideoScanner {
       ...options,
       watchChanges: false
     });
+  }
+
+  async _cleanupMissingFiles(scanPath, recursive) {
+    try {
+      // 獲取資料庫中所有在掃描路徑下的影片
+      const allVideos = await this.database.getVideos();
+      const pathVideos = allVideos.filter(video => {
+        if (recursive) {
+          return video.filepath.startsWith(scanPath);
+        } else {
+          return path.dirname(video.filepath) === scanPath;
+        }
+      });
+
+      let cleanupCount = 0;
+      for (const video of pathVideos) {
+        try {
+          // 檢查檔案是否還存在
+          const exists = await fs.pathExists(video.filepath);
+          if (!exists) {
+            await this.database.deleteVideo(video.id);
+            console.log(`清理已刪除的檔案記錄: ${video.filepath}`);
+            cleanupCount++;
+          }
+        } catch (error) {
+          console.warn(`檢查檔案時發生錯誤: ${video.filepath}`, error.message);
+        }
+      }
+
+      return cleanupCount;
+    } catch (error) {
+      console.error('清理已刪除檔案時發生錯誤:', error);
+      return 0;
+    }
   }
 }
 

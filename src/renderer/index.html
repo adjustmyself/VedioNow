@@ -133,6 +133,7 @@
             <div class="modal-footer">
                 <button id="save-changes" class="btn btn-primary">儲存變更</button>
                 <button id="delete-video" class="btn btn-danger">刪除影片記錄</button>
+                <button id="delete-video-file" class="btn btn-danger-alt">🗑️ 刪除檔案</button>
                 <button id="open-file" class="btn btn-secondary">開啟檔案</button>
             </div>
         </div>
@@ -164,6 +165,12 @@
                         <label>
                             <input type="checkbox" id="watch-changes">
                             監控資料夾變更
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label>
+                            <input type="checkbox" id="cleanup-missing">
+                            清理已刪除的檔案記錄
                         </label>
                     </div>
                 </div>

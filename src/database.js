@@ -30,6 +30,30 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 deleteVideo 方法');
     }
 
+    async deleteVideoWithFile(videoId) {
+        throw new Error('子類別必須實作 deleteVideoWithFile 方法');
+    }
+
+    async setVideoMetadata(fingerprint, metadata) {
+        throw new Error('子類別必須實作 setVideoMetadata 方法');
+    }
+
+    async addVideoTag(fingerprint, tagName) {
+        throw new Error('子類別必須實作 addVideoTag 方法');
+    }
+
+    async removeVideoTag(fingerprint, tagName) {
+        throw new Error('子類別必須實作 removeVideoTag 方法');
+    }
+
+    async deleteVideoMetadata(fingerprint) {
+        throw new Error('子類別必須實作 deleteVideoMetadata 方法');
+    }
+
+    async migrateLegacyTags() {
+        throw new Error('子類別必須實作 migrateLegacyTags 方法');
+    }
+
     async addTag(videoId, tagName) {
         throw new Error('子類別必須實作 addTag 方法');
     }
@@ -93,10 +117,29 @@ class SQLiteDatabase extends DatabaseInterface {
                 filepath TEXT NOT NULL UNIQUE,
                 filesize INTEGER,
                 duration INTEGER,
+                fingerprint TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                description TEXT,
-                rating INTEGER DEFAULT 0
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+
+        const createVideoMetadataTable = `
+            CREATE TABLE IF NOT EXISTS video_metadata (
+                fingerprint TEXT PRIMARY KEY,
+                rating INTEGER DEFAULT 0,
+                description TEXT DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+
+        const createVideoTagRelationsTable = `
+            CREATE TABLE IF NOT EXISTS video_tag_relations (
+                fingerprint TEXT NOT NULL,
+                tag_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (fingerprint, tag_name),
+                FOREIGN KEY (fingerprint) REFERENCES video_metadata(fingerprint) ON DELETE CASCADE
             )
         `;
 
@@ -144,6 +187,8 @@ class SQLiteDatabase extends DatabaseInterface {
         return new Promise((resolve, reject) => {
             this.db.serialize(() => {
                 this.db.run(createVideosTable);
+                this.db.run(createVideoMetadataTable);
+                this.db.run(createVideoTagRelationsTable);
                 this.db.run(createTagGroupsTable);
                 this.db.run(createTagsTableOld);
                 this.db.run(createVideoTagsTable);
@@ -152,11 +197,27 @@ class SQLiteDatabase extends DatabaseInterface {
                     // 忽略錯誤，可能是欄位已經存在
                 });
 
+                // 添加 fingerprint 欄位遷移（針對舊資料庫）
+                this.db.run(`ALTER TABLE videos ADD COLUMN fingerprint TEXT`, (err) => {
+                    // 忽略錯誤，可能是欄位已經存在
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.warn('添加 fingerprint 欄位時發生錯誤:', err.message);
+                    }
+                });
+
+                // 移除舊的 rating, description 欄位（如果存在）
+                // SQLite 不支援直接刪除欄位，我們保留它們以確保向後兼容
+
                 this.db.run(`DROP INDEX IF EXISTS sqlite_autoindex_tags_1`);
 
                 createIndexes.forEach(indexSql => {
                     this.db.run(indexSql);
                 });
+
+                // 添加新表的索引
+                this.db.run(`CREATE INDEX IF NOT EXISTS idx_video_metadata_fingerprint ON video_metadata(fingerprint)`);
+                this.db.run(`CREATE INDEX IF NOT EXISTS idx_video_tag_relations_fingerprint ON video_tag_relations(fingerprint)`);
+                this.db.run(`CREATE INDEX IF NOT EXISTS idx_videos_fingerprint ON videos(fingerprint)`);
 
                 resolve();
             });
@@ -164,30 +225,106 @@ class SQLiteDatabase extends DatabaseInterface {
     }
 
     async addVideo(videoData) {
-        const { filename, filepath, filesize, duration, description } = videoData;
+        const { filename, filepath, filesize, duration, fingerprint } = videoData;
 
         return new Promise((resolve, reject) => {
-            const sql = `
-                INSERT OR REPLACE INTO videos (filename, filepath, filesize, duration, description, updated_at)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            `;
+            let existingVideo = null;
 
-            this.db.run(sql, [filename, filepath, filesize, duration, description], function(err) {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(this.lastID);
+            // 第一步：優先使用指紋查找
+            const findByFingerprint = () => {
+                if (!fingerprint) {
+                    // 沒有指紋，直接用路徑查找
+                    findByFilepath();
+                    return;
                 }
-            });
+
+                this.db.get('SELECT id, filepath FROM videos WHERE fingerprint = ?', [fingerprint], (err, video) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (video) {
+                        existingVideo = video;
+                        // 檔案找到了，可能路徑改變了
+                        if (video.filepath !== filepath) {
+                            console.log(`檔案移動檢測: ${video.filepath} -> ${filepath}`);
+                        }
+                        updateExistingVideo();
+                    } else {
+                        // 指紋沒找到，用路徑再找一次
+                        findByFilepath();
+                    }
+                });
+            };
+
+            // 第二步：用路徑查找
+            const findByFilepath = () => {
+                this.db.get('SELECT id, fingerprint FROM videos WHERE filepath = ?', [filepath], (err, video) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (video) {
+                        existingVideo = video;
+                        updateExistingVideo();
+                    } else {
+                        insertNewVideo();
+                    }
+                });
+            };
+
+            // 更新現有影片
+            const updateExistingVideo = () => {
+                const updateSql = `
+                    UPDATE videos
+                    SET filename = ?, filepath = ?, filesize = ?, duration = ?, fingerprint = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `;
+
+                this.db.run(updateSql, [filename, filepath, filesize, duration, fingerprint, existingVideo.id], function(err) {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        console.log(`更新現有影片資訊: ${filename}`);
+                        resolve('updated');
+                    }
+                });
+            };
+
+            // 插入新影片
+            const insertNewVideo = () => {
+                const insertSql = `
+                    INSERT INTO videos (filename, filepath, filesize, duration, fingerprint, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                `;
+
+                this.db.run(insertSql, [filename, filepath, filesize, duration, fingerprint], function(err) {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        console.log(`添加新影片: ${filename}`);
+                        resolve(this.lastID);
+                    }
+                });
+            };
+
+            // 開始查找流程
+            findByFingerprint();
         });
     }
 
     async getVideos(filters = {}) {
         let sql = `
-            SELECT v.*, GROUP_CONCAT(t.name) as tags
+            SELECT
+                v.*,
+                vm.rating,
+                vm.description,
+                GROUP_CONCAT(vtr.tag_name) as tags
             FROM videos v
-            LEFT JOIN video_tags vt ON v.id = vt.video_id
-            LEFT JOIN tags t ON vt.tag_id = t.id
+            LEFT JOIN video_metadata vm ON v.fingerprint = vm.fingerprint
+            LEFT JOIN video_tag_relations vtr ON v.fingerprint = vtr.fingerprint
         `;
 
         const params = [];
@@ -199,7 +336,7 @@ class SQLiteDatabase extends DatabaseInterface {
         }
 
         if (filters.tag) {
-            conditions.push('t.name = ?');
+            conditions.push('vtr.tag_name = ?');
             params.push(filters.tag);
         }
 
@@ -207,7 +344,7 @@ class SQLiteDatabase extends DatabaseInterface {
             sql += ' WHERE ' + conditions.join(' AND ');
         }
 
-        sql += ' GROUP BY v.id ORDER BY v.created_at DESC';
+        sql += ' GROUP BY v.id, v.fingerprint ORDER BY v.created_at DESC';
 
         return new Promise((resolve, reject) => {
             this.db.all(sql, params, (err, rows) => {
@@ -216,6 +353,8 @@ class SQLiteDatabase extends DatabaseInterface {
                 } else {
                     const videos = rows.map(row => ({
                         ...row,
+                        rating: row.rating || 0,
+                        description: row.description || '',
                         tags: row.tags ? row.tags.split(',') : []
                     }));
                     resolve(videos);
@@ -362,6 +501,52 @@ class SQLiteDatabase extends DatabaseInterface {
         });
     }
 
+    async deleteVideoWithFile(videoId) {
+        return new Promise((resolve, reject) => {
+            // 先獲取影片檔案路徑和指紋
+            this.db.get('SELECT filepath, fingerprint FROM videos WHERE id = ?', [videoId], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+
+                if (!row) {
+                    reject(new Error('找不到指定的影片'));
+                    return;
+                }
+
+                const filepath = row.filepath;
+                const fingerprint = row.fingerprint;
+
+                // 刪除資料庫記錄
+                this.db.run('DELETE FROM videos WHERE id = ?', [videoId], (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    // 級聯刪除相關元數據（如果有指紋）
+                    if (fingerprint) {
+                        this.deleteVideoMetadata(fingerprint).catch(metadataErr => {
+                            console.warn('刪除影片元數據失敗:', metadataErr);
+                        });
+                    }
+
+                    // 刪除實際檔案
+                    fs.unlink(filepath, (fileErr) => {
+                        if (fileErr) {
+                            console.warn('刪除檔案失敗:', fileErr);
+                            // 即使檔案刪除失敗，也視為部分成功（記錄已刪除）
+                            resolve({ recordDeleted: true, fileDeleted: false, error: fileErr.message });
+                        } else {
+                            resolve({ recordDeleted: true, fileDeleted: true });
+                        }
+                    });
+                });
+            });
+        });
+    }
+
     async updateVideo(videoId, updates) {
         const fields = Object.keys(updates);
         const values = Object.values(updates);
@@ -378,6 +563,174 @@ class SQLiteDatabase extends DatabaseInterface {
                 } else {
                     resolve();
                 }
+            });
+        });
+    }
+
+    async setVideoMetadata(fingerprint, metadata) {
+        const { rating = 0, description = '' } = metadata;
+
+        return new Promise((resolve, reject) => {
+            const sql = `
+                INSERT OR REPLACE INTO video_metadata (fingerprint, rating, description, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            `;
+
+            this.db.run(sql, [fingerprint, rating, description], function(err) {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+    }
+
+    async addVideoTag(fingerprint, tagName) {
+        return new Promise((resolve, reject) => {
+            const sql = `INSERT OR IGNORE INTO video_tag_relations (fingerprint, tag_name) VALUES (?, ?)`;
+
+            this.db.run(sql, [fingerprint, tagName], function(err) {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+    }
+
+    async removeVideoTag(fingerprint, tagName) {
+        return new Promise((resolve, reject) => {
+            const sql = `DELETE FROM video_tag_relations WHERE fingerprint = ? AND tag_name = ?`;
+
+            this.db.run(sql, [fingerprint, tagName], function(err) {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+    }
+
+    async deleteVideoMetadata(fingerprint) {
+        return new Promise((resolve, reject) => {
+            this.db.serialize(() => {
+                // 刪除標籤關聯
+                this.db.run('DELETE FROM video_tag_relations WHERE fingerprint = ?', [fingerprint], (err) => {
+                    if (err) {
+                        console.warn('刪除標籤關聯失敗:', err);
+                    }
+                });
+
+                // 刪除元數據
+                this.db.run('DELETE FROM video_metadata WHERE fingerprint = ?', [fingerprint], (err) => {
+                    if (err) {
+                        console.warn('刪除影片元數據失敗:', err);
+                    }
+                });
+
+                resolve();
+            });
+        });
+    }
+
+    async migrateLegacyTags() {
+        return new Promise((resolve, reject) => {
+            console.log('開始遷移舊標籤系統到新系統...');
+
+            // 查詢所有舊的標籤關聯
+            const sql = `
+                SELECT v.id, v.fingerprint, v.rating, v.description, t.name as tag_name
+                FROM videos v
+                JOIN video_tags vt ON v.id = vt.video_id
+                JOIN tags t ON vt.tag_id = t.id
+                WHERE v.fingerprint IS NOT NULL
+            `;
+
+            this.db.all(sql, [], (err, rows) => {
+                if (err) {
+                    console.error('查詢舊標籤數據失敗:', err);
+                    reject(err);
+                    return;
+                }
+
+                if (rows.length === 0) {
+                    console.log('沒有找到需要遷移的舊標籤數據');
+                    resolve({ migrated: 0, metadataMigrated: 0 });
+                    return;
+                }
+
+                console.log(`找到 ${rows.length} 個標籤關聯需要遷移`);
+
+                let migratedTags = 0;
+                let migratedMetadata = new Set();
+                let processedCount = 0;
+
+                const processNextRow = () => {
+                    if (processedCount >= rows.length) {
+                        console.log(`標籤遷移完成 - 遷移了 ${migratedTags} 個標籤，${migratedMetadata.size} 個影片元數據`);
+                        resolve({ migrated: migratedTags, metadataMigrated: migratedMetadata.size });
+                        return;
+                    }
+
+                    const row = rows[processedCount];
+                    processedCount++;
+
+                    // 遷移元數據（rating, description）
+                    if (!migratedMetadata.has(row.fingerprint)) {
+                        const metadataSql = `
+                            INSERT OR IGNORE INTO video_metadata (fingerprint, rating, description, updated_at)
+                            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        `;
+
+                        this.db.run(metadataSql, [row.fingerprint, row.rating || 0, row.description || ''], (err) => {
+                            if (err) {
+                                console.warn(`遷移影片元數據失敗 ${row.fingerprint}:`, err.message);
+                            } else {
+                                migratedMetadata.add(row.fingerprint);
+                            }
+
+                            // 遷移標籤關聯
+                            const tagRelationSql = `
+                                INSERT OR IGNORE INTO video_tag_relations (fingerprint, tag_name, created_at)
+                                VALUES (?, ?, CURRENT_TIMESTAMP)
+                            `;
+
+                            this.db.run(tagRelationSql, [row.fingerprint, row.tag_name], (err) => {
+                                if (err) {
+                                    console.warn(`遷移標籤關聯失敗 ${row.fingerprint} -> ${row.tag_name}:`, err.message);
+                                } else {
+                                    migratedTags++;
+                                }
+
+                                // 處理下一個
+                                setImmediate(processNextRow);
+                            });
+                        });
+                    } else {
+                        // 只遷移標籤關聯
+                        const tagRelationSql = `
+                            INSERT OR IGNORE INTO video_tag_relations (fingerprint, tag_name, created_at)
+                            VALUES (?, ?, CURRENT_TIMESTAMP)
+                        `;
+
+                        this.db.run(tagRelationSql, [row.fingerprint, row.tag_name], (err) => {
+                            if (err) {
+                                console.warn(`遷移標籤關聯失敗 ${row.fingerprint} -> ${row.tag_name}:`, err.message);
+                            } else {
+                                migratedTags++;
+                            }
+
+                            // 處理下一個
+                            setImmediate(processNextRow);
+                        });
+                    }
+                };
+
+                // 開始處理
+                processNextRow();
             });
         });
     }
@@ -654,6 +1007,7 @@ class MongoDatabase extends DatabaseInterface {
     async createIndexes() {
         // 為videos集合創建索引
         await this.db.collection('videos').createIndex({ filepath: 1 }, { unique: true });
+        await this.db.collection('videos').createIndex({ fingerprint: 1 }, { unique: true, sparse: true });
         await this.db.collection('videos').createIndex({ filename: 'text', description: 'text' });
         await this.db.collection('videos').createIndex({ created_at: -1 });
 
@@ -663,27 +1017,62 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async addVideo(videoData) {
-        const { filename, filepath, filesize, duration, description } = videoData;
-
-        const video = {
-            filename,
-            filepath,
-            filesize: filesize || 0,
-            duration: duration || 0,
-            description: description || '',
-            rating: 0,
-            tags: [],
-            created_at: new Date(),
-            updated_at: new Date()
-        };
+        const { filename, filepath, filesize, duration, description, fingerprint } = videoData;
 
         try {
-            const result = await this.db.collection('videos').replaceOne(
-                { filepath },
-                video,
-                { upsert: true }
-            );
-            return result.upsertedId ? result.upsertedId.toString() : result.matchedCount > 0 ? 'updated' : null;
+            let existingVideo = null;
+
+            // 第一步：優先使用指紋查找，如果沒有指紋則用路徑查找
+            if (fingerprint) {
+                existingVideo = await this.db.collection('videos').findOne({ fingerprint });
+
+                // 如果用指紋找到了，但路徑不同，記錄檔案移動
+                if (existingVideo && existingVideo.filepath !== filepath) {
+                    console.log(`檔案移動檢測: ${existingVideo.filepath} -> ${filepath}`);
+                }
+            }
+
+            // 第二步：如果指紋沒找到，用路徑查找
+            if (!existingVideo) {
+                existingVideo = await this.db.collection('videos').findOne({ filepath });
+            }
+
+            if (existingVideo) {
+                // 檔案已存在，更新基本檔案資訊，保留用戶設定
+                const updateResult = await this.db.collection('videos').updateOne(
+                    { _id: existingVideo._id },
+                    {
+                        $set: {
+                            filename,
+                            filepath,
+                            filesize: filesize || 0,
+                            duration: duration || 0,
+                            fingerprint,
+                            updated_at: new Date()
+                        }
+                    }
+                );
+                console.log(`更新現有影片資訊: ${filename}`);
+                return 'updated';
+            } else {
+                // 新檔案，插入新記錄
+                const video = {
+                    filename,
+                    filepath,
+                    filesize: filesize || 0,
+                    duration: duration || 0,
+                    description: description || '',
+                    rating: 0,
+                    tags: [],
+                    fingerprint,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                };
+
+                const result = await this.db.collection('videos').insertOne(video);
+                console.log(`添加新影片: ${filename}`);
+                return result.insertedId.toString();
+            }
         } catch (error) {
             throw error;
         }
@@ -753,9 +1142,171 @@ class MongoDatabase extends DatabaseInterface {
         );
     }
 
+    async setVideoMetadata(fingerprint, metadata) {
+        const { rating = 0, description = '' } = metadata;
+
+        await this.db.collection('video_metadata').updateOne(
+            { fingerprint },
+            {
+                $set: {
+                    rating,
+                    description,
+                    updated_at: new Date()
+                },
+                $setOnInsert: {
+                    created_at: new Date()
+                }
+            },
+            { upsert: true }
+        );
+    }
+
+    async addVideoTag(fingerprint, tagName) {
+        await this.db.collection('video_tag_relations').updateOne(
+            { fingerprint, tag_name: tagName },
+            {
+                $setOnInsert: {
+                    fingerprint,
+                    tag_name: tagName,
+                    created_at: new Date()
+                }
+            },
+            { upsert: true }
+        );
+    }
+
+    async removeVideoTag(fingerprint, tagName) {
+        await this.db.collection('video_tag_relations').deleteOne({
+            fingerprint,
+            tag_name: tagName
+        });
+    }
+
+    async deleteVideoMetadata(fingerprint) {
+        // 刪除標籤關聯
+        await this.db.collection('video_tag_relations').deleteMany({ fingerprint });
+
+        // 刪除元數據
+        await this.db.collection('video_metadata').deleteOne({ fingerprint });
+    }
+
+    async migrateLegacyTags() {
+        console.log('開始遷移舊標籤系統到新系統...');
+
+        try {
+            // 查詢所有舊的標籤關聯 (假設 MongoDB 中標籤存儲在 videos 集合的 tags 欄位中)
+            const videos = await this.db.collection('videos')
+                .find({
+                    fingerprint: { $exists: true, $ne: null },
+                    $or: [
+                        { tags: { $exists: true, $ne: [] } },
+                        { rating: { $exists: true } },
+                        { description: { $exists: true, $ne: '' } }
+                    ]
+                })
+                .toArray();
+
+            if (videos.length === 0) {
+                console.log('沒有找到需要遷移的舊標籤數據');
+                return { migrated: 0, metadataMigrated: 0 };
+            }
+
+            console.log(`找到 ${videos.length} 個影片需要遷移`);
+
+            let migratedTags = 0;
+            let migratedMetadata = 0;
+
+            for (const video of videos) {
+                const { fingerprint, tags = [], rating = 0, description = '' } = video;
+
+                try {
+                    // 遷移元數據（rating, description）
+                    await this.db.collection('video_metadata').updateOne(
+                        { fingerprint },
+                        {
+                            $set: {
+                                rating: rating || 0,
+                                description: description || '',
+                                updated_at: new Date()
+                            },
+                            $setOnInsert: {
+                                created_at: new Date()
+                            }
+                        },
+                        { upsert: true }
+                    );
+                    migratedMetadata++;
+
+                    // 遷移標籤關聯
+                    for (const tagName of tags) {
+                        if (tagName) {
+                            await this.db.collection('video_tag_relations').updateOne(
+                                { fingerprint, tag_name: tagName },
+                                {
+                                    $setOnInsert: {
+                                        fingerprint,
+                                        tag_name: tagName,
+                                        created_at: new Date()
+                                    }
+                                },
+                                { upsert: true }
+                            );
+                            migratedTags++;
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`遷移影片失敗 ${fingerprint}:`, error.message);
+                }
+            }
+
+            console.log(`標籤遷移完成 - 遷移了 ${migratedTags} 個標籤，${migratedMetadata} 個影片元數據`);
+            return { migrated: migratedTags, metadataMigrated: migratedMetadata };
+
+        } catch (error) {
+            console.error('標籤遷移失敗:', error);
+            throw error;
+        }
+    }
+
     async deleteVideo(videoId) {
         const objectId = new ObjectId(videoId);
         await this.db.collection('videos').deleteOne({ _id: objectId });
+    }
+
+    async deleteVideoWithFile(videoId) {
+        const objectId = new ObjectId(videoId);
+
+        // 先獲取影片檔案路徑和指紋
+        const video = await this.db.collection('videos').findOne({ _id: objectId });
+
+        if (!video) {
+            throw new Error('找不到指定的影片');
+        }
+
+        const filepath = video.filepath;
+        const fingerprint = video.fingerprint;
+
+        // 刪除資料庫記錄
+        await this.db.collection('videos').deleteOne({ _id: objectId });
+
+        // 級聯刪除相關元數據（如果有指紋）
+        if (fingerprint) {
+            try {
+                await this.deleteVideoMetadata(fingerprint);
+            } catch (metadataErr) {
+                console.warn('刪除影片元數據失敗:', metadataErr);
+            }
+        }
+
+        // 刪除實際檔案
+        try {
+            await fs.unlink(filepath);
+            return { recordDeleted: true, fileDeleted: true };
+        } catch (fileErr) {
+            console.warn('刪除檔案失敗:', fileErr);
+            // 即使檔案刪除失敗，也視為部分成功（記錄已刪除）
+            return { recordDeleted: true, fileDeleted: false, error: fileErr.message };
+        }
     }
 
     async addTag(videoId, tagName) {

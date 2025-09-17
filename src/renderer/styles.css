@@ -454,6 +454,17 @@ body {
     background: #c82333;
 }
 
+.btn-danger-alt {
+    background: #e74c3c;
+    color: white;
+    border: 1px solid #c0392b;
+}
+
+.btn-danger-alt:hover {
+    background: #c0392b;
+    border-color: #a93226;
+}
+
 .btn-small {
     padding: 0.3rem 0.8rem;
     font-size: 0.8rem;

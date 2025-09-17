@@ -45,6 +45,7 @@ class VideoManager {
       cancelScan: document.getElementById('cancel-scan'),
       recursiveScan: document.getElementById('recursive-scan'),
       watchChanges: document.getElementById('watch-changes'),
+      cleanupMissing: document.getElementById('cleanup-missing'),
       scanProgress: document.getElementById('scan-progress'),
       scanStatus: document.getElementById('scan-status')
     };
@@ -747,6 +748,7 @@ class VideoManager {
     const newTagInput = document.getElementById('new-tag-input');
     const saveChangesBtn = document.getElementById('save-changes');
     const deleteVideoBtn = document.getElementById('delete-video');
+    const deleteVideoFileBtn = document.getElementById('delete-video-file');
     const openFileBtn = document.getElementById('open-file');
 
     // 克隆元素來移除所有事件監聽器
@@ -754,6 +756,7 @@ class VideoManager {
     newTagInput.replaceWith(newTagInput.cloneNode(true));
     saveChangesBtn.replaceWith(saveChangesBtn.cloneNode(true));
     deleteVideoBtn.replaceWith(deleteVideoBtn.cloneNode(true));
+    deleteVideoFileBtn.replaceWith(deleteVideoFileBtn.cloneNode(true));
     openFileBtn.replaceWith(openFileBtn.cloneNode(true));
 
     // 重新獲取元素引用
@@ -761,6 +764,7 @@ class VideoManager {
     const newNewTagInput = document.getElementById('new-tag-input');
     const newSaveChangesBtn = document.getElementById('save-changes');
     const newDeleteVideoBtn = document.getElementById('delete-video');
+    const newDeleteVideoFileBtn = document.getElementById('delete-video-file');
     const newOpenFileBtn = document.getElementById('open-file');
 
     // 綁定星星評分事件
@@ -790,6 +794,10 @@ class VideoManager {
       this.deleteVideo();
     });
 
+    newDeleteVideoFileBtn.addEventListener('click', () => {
+      this.deleteVideoWithFile();
+    });
+
     newOpenFileBtn.addEventListener('click', () => {
       this.openVideoFile();
     });
@@ -813,7 +821,14 @@ class VideoManager {
     if (this.selectedVideo.tags.includes(actualTagName)) return;
 
     try {
-      await ipcRenderer.invoke('add-tag', this.selectedVideo.id, actualTagName);
+      // 使用基於指紋的新方法
+      if (this.selectedVideo.fingerprint) {
+        await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
+      } else {
+        // 回退到舊方法（向後兼容）
+        await ipcRenderer.invoke('add-tag', this.selectedVideo.id, actualTagName);
+      }
+
       this.selectedVideo.tags.push(actualTagName);
 
       // 同步更新當前影片列表中的數據
@@ -834,7 +849,14 @@ class VideoManager {
 
   async removeVideoTag(tagName) {
     try {
-      await ipcRenderer.invoke('remove-tag', this.selectedVideo.id, tagName);
+      // 使用基於指紋的新方法
+      if (this.selectedVideo.fingerprint) {
+        await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
+      } else {
+        // 回退到舊方法（向後兼容）
+        await ipcRenderer.invoke('remove-tag', this.selectedVideo.id, tagName);
+      }
+
       this.selectedVideo.tags = this.selectedVideo.tags.filter(tag => tag !== tagName);
 
       // 同步更新當前影片列表中的數據
@@ -887,10 +909,19 @@ class VideoManager {
     const rating = document.querySelectorAll('.star.active').length;
 
     try {
-      await ipcRenderer.invoke('update-video', this.selectedVideo.id, {
-        description,
-        rating
-      });
+      // 使用基於指紋的新方法來儲存評分和描述
+      if (this.selectedVideo.fingerprint) {
+        await ipcRenderer.invoke('set-video-metadata', this.selectedVideo.fingerprint, {
+          description,
+          rating
+        });
+      } else {
+        // 回退到舊方法（向後兼容）
+        await ipcRenderer.invoke('update-video', this.selectedVideo.id, {
+          description,
+          rating
+        });
+      }
 
       this.selectedVideo.description = description;
       this.selectedVideo.rating = rating;
@@ -922,6 +953,42 @@ class VideoManager {
       await this.loadData();
     } catch (error) {
       console.error('刪除影片錯誤:', error);
+    }
+  }
+
+  async deleteVideoWithFile() {
+    const filename = this.selectedVideo.filename;
+
+    try {
+      // 使用 Electron 原生對話框進行確認
+      const confirmation = await ipcRenderer.invoke('show-delete-confirmation', filename);
+
+      if (!confirmation.confirmed) {
+        if (!confirmation.checkboxChecked) {
+          alert('請勾選確認選項才能執行刪除操作');
+        }
+        return;
+      }
+
+      const result = await ipcRenderer.invoke('delete-video-with-file', this.selectedVideo.id);
+
+      if (result.success) {
+        const { recordDeleted, fileDeleted, error } = result.result;
+
+        if (recordDeleted && fileDeleted) {
+          alert('影片記錄和檔案已成功刪除');
+        } else if (recordDeleted && !fileDeleted) {
+          alert(`影片記錄已刪除，但檔案刪除失敗：\n${error}`);
+        }
+
+        this.hideVideoModal();
+        await this.loadData();
+      } else {
+        alert(`刪除失敗：${result.error}`);
+      }
+    } catch (error) {
+      console.error('刪除影片和檔案錯誤:', error);
+      alert(`刪除過程中發生錯誤：${error.message}`);
     }
   }
 
@@ -958,17 +1025,29 @@ class VideoManager {
       return;
     }
 
+    const options = {
+      recursive: this.elements.recursiveScan.checked,
+      watchChanges: this.elements.watchChanges.checked,
+      cleanupMissing: this.elements.cleanupMissing.checked
+    };
+
     this.elements.scanProgress.classList.remove('hidden');
     this.elements.scanStatus.textContent = '正在掃描...';
 
     try {
-      const result = await ipcRenderer.invoke('scan-videos', folderPath);
+      const result = await ipcRenderer.invoke('scan-videos', folderPath, options);
       if (result.success) {
-        this.elements.scanStatus.textContent = `掃描完成！找到 ${result.videos.length} 個影片檔案`;
+        const stats = result.result;
+        let message = `掃描完成！找到: ${stats.found}, 新增: ${stats.added}, 更新: ${stats.updated}`;
+        if (options.cleanupMissing && stats.cleaned > 0) {
+          message += `, 清理: ${stats.cleaned}`;
+        }
+        this.elements.scanStatus.textContent = message;
+
         setTimeout(() => {
           this.hideScanModal();
           this.loadData();
-        }, 2000);
+        }, 3000);
       } else {
         this.elements.scanStatus.textContent = `掃描失敗: ${result.error}`;
       }
