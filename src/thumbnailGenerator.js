@@ -1,18 +1,33 @@
 const path = require('path');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 
 class ThumbnailGenerator {
   constructor() {
-    this.thumbnailSubfolder = '.video_thumbnails';
+    // 縮圖將儲存在影片所在資料夾的 .thumbnails 子目錄中
+    // 這樣可以讓多個用戶共享縮圖
   }
 
-  // 產生縮圖路徑
+  // 生成檔案路徑的唯一hash值
+  generateFileHash(videoPath) {
+    // 使用MD5生成檔案路徑的hash，作為縮圖的唯一key
+    const normalizedPath = path.normalize(videoPath).toLowerCase();
+    return crypto.createHash('md5').update(normalizedPath).digest('hex');
+  }
+
+  // 產生縮圖路徑 (在影片所在資料夾的 .thumbnails 子目錄中)
   getThumbnailPath(videoPath) {
     const videoDir = path.dirname(videoPath);
-    const videoName = path.basename(videoPath, path.extname(videoPath));
-    const thumbnailDir = path.join(videoDir, this.thumbnailSubfolder);
-    return path.join(thumbnailDir, `${videoName}.jpg`);
+    const thumbnailDir = path.join(videoDir, '.thumbnails');
+    const fileHash = this.generateFileHash(videoPath);
+    return path.join(thumbnailDir, `${fileHash}.jpg`);
+  }
+
+  // 獲取縮圖目錄路徑
+  getThumbnailDir(videoPath) {
+    const videoDir = path.dirname(videoPath);
+    return path.join(videoDir, '.thumbnails');
   }
 
   // 檢查縮圖是否存在
@@ -147,46 +162,106 @@ class ThumbnailGenerator {
     }
   }
 
-  // 清理過期縮圖 (影片檔案不存在時)
-  async cleanupThumbnails(videoDir) {
-    const thumbnailDir = path.join(videoDir, this.thumbnailSubfolder);
-
+  // 清理過期縮圖 (根據有效的影片路徑列表)
+  async cleanupThumbnails(validVideoPaths = []) {
     try {
-      const thumbnailFiles = await fs.readdir(thumbnailDir);
+      // 生成所有有效影片的hash值
+      const validHashes = new Set(validVideoPaths.map(videoPath => this.generateFileHash(videoPath)));
 
-      for (const thumbnailFile of thumbnailFiles) {
-        const videoName = path.basename(thumbnailFile, '.jpg');
+      // 取得所有有影片的資料夾路徑
+      const videoDirs = new Set(validVideoPaths.map(videoPath => path.dirname(videoPath)));
 
-        // 檢查常見的影片副檔名
-        const videoExtensions = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.ogv', '.ogg', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts'];
+      let cleanupCount = 0;
 
-        let videoExists = false;
-        for (const ext of videoExtensions) {
-          const videoPath = path.join(videoDir, videoName + ext);
-          if (await fs.pathExists(videoPath)) {
-            videoExists = true;
-            break;
-          }
+      // 遍歷每個資料夾的 .thumbnails 目錄
+      for (const videoDir of videoDirs) {
+        const thumbnailDir = path.join(videoDir, '.thumbnails');
+
+        if (!await fs.pathExists(thumbnailDir)) {
+          continue;
         }
 
-        // 如果對應的影片檔案不存在，刪除縮圖
-        if (!videoExists) {
-          const thumbnailPath = path.join(thumbnailDir, thumbnailFile);
-          await fs.remove(thumbnailPath);
-          console.log('已清理過期縮圖:', thumbnailPath);
+        try {
+          const thumbnailFiles = await fs.readdir(thumbnailDir);
+
+          for (const thumbnailFile of thumbnailFiles) {
+            // 只處理jpg檔案
+            if (path.extname(thumbnailFile).toLowerCase() === '.jpg') {
+              const fileHash = path.basename(thumbnailFile, '.jpg');
+
+              // 如果這個hash不在有效列表中，就刪除縮圖
+              if (!validHashes.has(fileHash)) {
+                const thumbnailPath = path.join(thumbnailDir, thumbnailFile);
+                await fs.remove(thumbnailPath);
+                console.log('已清理過期縮圖:', thumbnailPath);
+                cleanupCount++;
+              }
+            }
+          }
+
+          // 檢查目錄是否為空，如果是則刪除 .thumbnails 目錄
+          const remainingFiles = await fs.readdir(thumbnailDir);
+          if (remainingFiles.length === 0) {
+            await fs.remove(thumbnailDir);
+            console.log('已刪除空的縮圖目錄:', thumbnailDir);
+          }
+        } catch (error) {
+          console.warn(`清理縮圖目錄失敗 ${thumbnailDir}:`, error.message);
         }
       }
 
-      // 如果縮圖資料夾空了，刪除它
-      const remainingFiles = await fs.readdir(thumbnailDir);
-      if (remainingFiles.length === 0) {
-        await fs.remove(thumbnailDir);
+      if (cleanupCount > 0) {
+        console.log(`縮圖清理完成，共刪除 ${cleanupCount} 個過期縮圖`);
       }
     } catch (error) {
-      // 縮圖目錄不存在是正常的
-      if (error.code !== 'ENOENT') {
-        console.error('清理縮圖時發生錯誤:', error);
+      console.error('清理縮圖時發生錯誤:', error);
+    }
+  }
+
+  // 新增方法：獲取縮圖統計資訊 (需要提供影片路徑列表來計算)
+  async getThumbnailStats(videoPaths = []) {
+    try {
+      // 取得所有有影片的資料夾路徑
+      const videoDirs = new Set(videoPaths.map(videoPath => path.dirname(videoPath)));
+
+      let totalCount = 0;
+      let totalSize = 0;
+
+      // 遍歷每個資料夾的 .thumbnails 目錄
+      for (const videoDir of videoDirs) {
+        const thumbnailDir = path.join(videoDir, '.thumbnails');
+
+        if (!await fs.pathExists(thumbnailDir)) {
+          continue;
+        }
+
+        try {
+          const thumbnailFiles = await fs.readdir(thumbnailDir);
+          const jpgFiles = thumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
+
+          totalCount += jpgFiles.length;
+
+          for (const file of jpgFiles) {
+            const filePath = path.join(thumbnailDir, file);
+            try {
+              const stats = await fs.stat(filePath);
+              totalSize += stats.size;
+            } catch (error) {
+              console.warn(`無法獲取檔案統計: ${filePath}`, error.message);
+            }
+          }
+        } catch (error) {
+          console.warn(`無法讀取縮圖目錄: ${thumbnailDir}`, error.message);
+        }
       }
+
+      return {
+        total: totalCount,
+        size: totalSize
+      };
+    } catch (error) {
+      console.error('獲取縮圖統計資訊失敗:', error);
+      return { total: 0, size: 0 };
     }
   }
 
@@ -206,6 +281,79 @@ class ThumbnailGenerator {
     } catch (error) {
       console.error('生成縮圖失敗:', error);
       return null;
+    }
+  }
+
+  // 遷移舊的縮圖從統一目錄到各自資料夾 (一次性執行)
+  async migrateThumbnails(videoPaths = []) {
+    try {
+      const oldThumbnailDir = path.join(__dirname, '../data/thumbnails');
+
+      if (!await fs.pathExists(oldThumbnailDir)) {
+        console.log('沒有找到舊的縮圖目錄，無需遷移');
+        return { migrated: 0, errors: 0 };
+      }
+
+      const oldThumbnailFiles = await fs.readdir(oldThumbnailDir);
+      const jpgFiles = oldThumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
+
+      let migratedCount = 0;
+      let errorCount = 0;
+
+      console.log(`開始遷移 ${jpgFiles.length} 個縮圖檔案...`);
+
+      for (const thumbnailFile of jpgFiles) {
+        const fileHash = path.basename(thumbnailFile, '.jpg');
+        const oldThumbnailPath = path.join(oldThumbnailDir, thumbnailFile);
+
+        // 尋找對應的影片檔案
+        const matchingVideo = videoPaths.find(videoPath =>
+          this.generateFileHash(videoPath) === fileHash
+        );
+
+        if (matchingVideo) {
+          try {
+            const newThumbnailPath = this.getThumbnailPath(matchingVideo);
+            const newThumbnailDir = path.dirname(newThumbnailPath);
+
+            // 確保新目錄存在
+            await fs.ensureDir(newThumbnailDir);
+
+            // 移動檔案
+            await fs.move(oldThumbnailPath, newThumbnailPath, { overwrite: false });
+            console.log(`已遷移縮圖: ${thumbnailFile} -> ${newThumbnailPath}`);
+            migratedCount++;
+          } catch (error) {
+            console.error(`遷移縮圖失敗 ${thumbnailFile}:`, error.message);
+            errorCount++;
+          }
+        } else {
+          // 沒有對應的影片，刪除過期縮圖
+          try {
+            await fs.remove(oldThumbnailPath);
+            console.log(`已刪除過期縮圖: ${thumbnailFile}`);
+          } catch (error) {
+            console.warn(`刪除過期縮圖失敗 ${thumbnailFile}:`, error.message);
+          }
+        }
+      }
+
+      // 檢查舊目錄是否為空，如果是則刪除
+      try {
+        const remainingFiles = await fs.readdir(oldThumbnailDir);
+        if (remainingFiles.length === 0) {
+          await fs.remove(oldThumbnailDir);
+          console.log('已刪除空的舊縮圖目錄');
+        }
+      } catch (error) {
+        console.warn('無法刪除舊縮圖目錄:', error.message);
+      }
+
+      console.log(`縮圖遷移完成：已遷移 ${migratedCount} 個檔案，${errorCount} 個錯誤`);
+      return { migrated: migratedCount, errors: errorCount };
+    } catch (error) {
+      console.error('縮圖遷移失敗:', error);
+      return { migrated: 0, errors: 1 };
     }
   }
 }

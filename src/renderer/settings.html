@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>應用程式設定</title>
+    <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+    <div id="settings">
+        <header class="settings-header">
+            <h1>應用程式設定</h1>
+            <div class="header-actions">
+                <button id="save-settings-btn" class="btn btn-primary">儲存設定</button>
+                <button id="reset-settings-btn" class="btn btn-secondary">重置預設</button>
+            </div>
+        </header>
+
+        <div class="settings-container">
+            <div class="settings-sidebar">
+                <div class="sidebar-menu">
+                    <button class="menu-item active" data-section="database">
+                        <span class="menu-icon">🗄️</span>
+                        資料庫設定
+                    </button>
+                    <button class="menu-item" data-section="thumbnails">
+                        <span class="menu-icon">🖼️</span>
+                        縮圖管理
+                    </button>
+                    <button class="menu-item" data-section="app">
+                        <span class="menu-icon">⚙️</span>
+                        應用程式設定
+                    </button>
+                </div>
+            </div>
+
+            <div class="settings-content">
+                <!-- 資料庫設定區域 -->
+                <div id="database-section" class="settings-section active">
+                    <div class="section-header">
+                        <h2>資料庫設定</h2>
+                        <p class="section-description">選擇資料庫類型並配置連線參數</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>資料庫類型</h3>
+                        <div class="database-type-selector">
+                            <label class="database-option">
+                                <input type="radio" name="database-type" value="sqlite" checked>
+                                <div class="option-content">
+                                    <div class="option-icon">📁</div>
+                                    <div class="option-info">
+                                        <div class="option-title">SQLite (本地檔案)</div>
+                                        <div class="option-description">輕量級本地資料庫，適合單機使用</div>
+                                    </div>
+                                </div>
+                            </label>
+                            <label class="database-option">
+                                <input type="radio" name="database-type" value="mongodb">
+                                <div class="option-content">
+                                    <div class="option-icon">🍃</div>
+                                    <div class="option-info">
+                                        <div class="option-title">MongoDB</div>
+                                        <div class="option-description">NoSQL資料庫，支援分散式和多用戶存取</div>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- SQLite 設定 -->
+                    <div id="sqlite-config" class="settings-card">
+                        <h3>SQLite 設定</h3>
+                        <div class="form-group">
+                            <label for="sqlite-path">資料庫檔案路徑:</label>
+                            <div class="path-input">
+                                <input type="text" id="sqlite-path" readonly>
+                                <button id="browse-sqlite-path" class="btn btn-secondary btn-small">瀏覽</button>
+                            </div>
+                            <p class="field-description">SQLite資料庫檔案的儲存位置</p>
+                        </div>
+                    </div>
+
+                    <!-- MongoDB 設定 -->
+                    <div id="mongodb-config" class="settings-card hidden">
+                        <h3>MongoDB 連線設定</h3>
+
+                        <div class="connection-tabs">
+                            <button class="tab-btn active" data-tab="basic">基本設定</button>
+                            <button class="tab-btn" data-tab="advanced">進階設定</button>
+                        </div>
+
+                        <div id="basic-tab" class="tab-content active">
+                            <div class="form-group">
+                                <label for="mongodb-host">主機地址:</label>
+                                <input type="text" id="mongodb-host" placeholder="127.0.0.1" value="127.0.0.1">
+                                <p class="field-description">MongoDB伺服器的IP地址或主機名稱</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="mongodb-port">連接埠:</label>
+                                <input type="number" id="mongodb-port" placeholder="27017" value="27017" min="1" max="65535">
+                                <p class="field-description">MongoDB伺服器的連接埠號碼（預設：27017）</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="mongodb-database">資料庫名稱:</label>
+                                <input type="text" id="mongodb-database" placeholder="videonow" value="videonow">
+                                <p class="field-description">要使用的資料庫名稱</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="mongodb-username">使用者名稱:</label>
+                                <input type="text" id="mongodb-username" placeholder="可選">
+                                <p class="field-description">如果需要身份驗證，請輸入使用者名稱</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="mongodb-password">密碼:</label>
+                                <input type="password" id="mongodb-password" placeholder="可選">
+                                <p class="field-description">如果需要身份驗證，請輸入密碼</p>
+                            </div>
+                        </div>
+
+                        <div id="advanced-tab" class="tab-content">
+                            <div class="form-group">
+                                <label for="mongodb-auth-source">認證資料庫:</label>
+                                <input type="text" id="mongodb-auth-source" placeholder="admin" value="admin">
+                                <p class="field-description">用於身份驗證的資料庫（預設：admin）</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="mongodb-ssl">
+                                    啟用 SSL/TLS 加密連線
+                                </label>
+                                <p class="field-description">使用安全的加密連線（適用於雲端資料庫）</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="mongodb-connection-string">自定義連線字串:</label>
+                                <textarea id="mongodb-connection-string" placeholder="mongodb://username:password@host:port/database" rows="3"></textarea>
+                                <p class="field-description">如果使用自定義連線字串，將忽略上方的基本設定</p>
+                            </div>
+                        </div>
+
+                        <div class="connection-actions">
+                            <button id="test-connection-btn" class="btn btn-secondary">測試連線</button>
+                            <div id="connection-status" class="connection-status"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 縮圖管理區域 -->
+                <div id="thumbnails-section" class="settings-section">
+                    <div class="section-header">
+                        <h2>縮圖管理</h2>
+                        <p class="section-description">管理影片縮圖快取和存儲空間</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>縮圖統計</h3>
+                        <div class="thumbnail-stats">
+                            <div class="stat-row">
+                                <span class="stat-label">縮圖總數:</span>
+                                <span id="thumbnail-count" class="stat-value">載入中...</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">佔用空間:</span>
+                                <span id="thumbnail-size" class="stat-value">載入中...</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">存儲位置:</span>
+                                <span class="stat-value">data/thumbnails/</span>
+                            </div>
+                        </div>
+                        <button id="refresh-thumbnail-stats" class="btn btn-secondary btn-small">重新整理統計</button>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>縮圖清理</h3>
+                        <p class="field-description">清理與資料庫中影片檔案不對應的過期縮圖，釋放存儲空間。</p>
+
+                        <div class="cleanup-actions">
+                            <button id="cleanup-thumbnails-btn" class="btn btn-danger">清理過期縮圖</button>
+                            <div id="cleanup-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>縮圖遷移</h3>
+                        <p class="field-description">將縮圖從應用程式目錄遷移到各自的影片資料夾中，以便多用戶共享。</p>
+
+                        <div class="cleanup-actions">
+                            <button id="migrate-thumbnails-btn" class="btn btn-secondary">遷移縮圖到影片資料夾</button>
+                            <div id="migrate-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>縮圖設定</h3>
+                        <div class="form-group">
+                            <label>縮圖儲存位置:</label>
+                            <div class="naming-info">
+                                <div class="info-item">
+                                    <strong>位置:</strong> 影片所在資料夾的 .thumbnails 子目錄
+                                </div>
+                                <div class="info-item">
+                                    <strong>優點:</strong> 多用戶共享縮圖，減少重複生成
+                                </div>
+                                <div class="info-item">
+                                    <strong>命名:</strong> 使用檔案路徑MD5雜湊值 (例如: a1b2c3d4e5f6...jpg)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 應用程式設定區域 -->
+                <div id="app-section" class="settings-section">
+                    <div class="section-header">
+                        <h2>應用程式設定</h2>
+                        <p class="section-description">自訂應用程式外觀和行為</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>介面設定</h3>
+                        <div class="form-group">
+                            <label for="app-theme">主題:</label>
+                            <select id="app-theme">
+                                <option value="light">淺色主題</option>
+                                <option value="dark">深色主題</option>
+                                <option value="auto">跟隨系統</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="app-language">語言:</label>
+                            <select id="app-language">
+                                <option value="zh-TW">繁體中文</option>
+                                <option value="zh-CN">簡體中文</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 儲存確認模態框 -->
+    <div id="save-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>儲存設定</h3>
+                <button id="save-modal-close" class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>設定已成功儲存。某些變更可能需要重新啟動應用程式才能生效。</p>
+                <p>是否現在重新啟動應用程式？</p>
+            </div>
+            <div class="modal-footer">
+                <button id="restart-app" class="btn btn-primary">重新啟動</button>
+                <button id="continue-without-restart" class="btn btn-secondary">稍後重啟</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="settings.js"></script>
+</body>
+</html>

@@ -1,9 +1,10 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
-const Database = require('./database');
+const DatabaseFactory = require('./database');
 const VideoScanner = require('./videoScanner');
 const ThumbnailGenerator = require('./thumbnailGenerator');
+const Config = require('./config');
 
 let mainWindow;
 let database;
@@ -29,19 +30,41 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  database = new Database();
-  await database.init();
+  try {
+    // 初始化配置
+    const config = new Config();
+    await config.init();
 
-  videoScanner = new VideoScanner(database);
-  thumbnailGenerator = new ThumbnailGenerator();
+    // 使用工廠創建資料庫實例
+    database = await DatabaseFactory.create();
 
-  createWindow();
+    videoScanner = new VideoScanner(database);
+    thumbnailGenerator = new ThumbnailGenerator();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+    // 執行縮圖遷移 (如果需要)
+    try {
+      const videos = await database.getVideos();
+      const videoPaths = videos.map(video => video.filepath);
+      const migrationResult = await thumbnailGenerator.migrateThumbnails(videoPaths);
+      if (migrationResult.migrated > 0) {
+        console.log(`縮圖遷移完成：已遷移 ${migrationResult.migrated} 個檔案`);
+      }
+    } catch (error) {
+      console.warn('縮圖遷移失敗:', error);
     }
-  });
+
+    createWindow();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  } catch (error) {
+    console.error('應用程式初始化失敗:', error);
+    dialog.showErrorBox('初始化錯誤', `應用程式初始化失敗: ${error.message}`);
+    app.quit();
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -253,4 +276,186 @@ ipcMain.handle('check-thumbnail', async (event, videoPath) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+// 縮圖清理
+ipcMain.handle('cleanup-thumbnails', async () => {
+  try {
+    // 獲取所有影片的路徑
+    const videos = await database.getVideos();
+    const validVideoPaths = videos.map(video => video.filepath);
+
+    await thumbnailGenerator.cleanupThumbnails(validVideoPaths);
+    return { success: true, message: '縮圖清理完成' };
+  } catch (error) {
+    console.error('縮圖清理錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 縮圖統計資訊
+ipcMain.handle('get-thumbnail-stats', async () => {
+  try {
+    // 獲取所有影片的路徑來計算縮圖統計
+    const videos = await database.getVideos();
+    const videoPaths = videos.map(video => video.filepath);
+    const stats = await thumbnailGenerator.getThumbnailStats(videoPaths);
+    return { success: true, stats };
+  } catch (error) {
+    console.error('獲取縮圖統計錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 縮圖遷移
+ipcMain.handle('migrate-thumbnails', async () => {
+  try {
+    const videos = await database.getVideos();
+    const videoPaths = videos.map(video => video.filepath);
+    const result = await thumbnailGenerator.migrateThumbnails(videoPaths);
+    return {
+      success: true,
+      message: `已遷移 ${result.migrated} 個縮圖檔案，${result.errors} 個錯誤`,
+      result
+    };
+  } catch (error) {
+    console.error('縮圖遷移錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 設置頁面相關的 IPC 處理程序
+ipcMain.handle('open-settings', async () => {
+  const settingsWindow = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    parent: mainWindow,
+    modal: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    },
+    title: '應用程式設定'
+  });
+
+  settingsWindow.loadFile('src/renderer/settings.html');
+
+  if (process.argv.includes('--dev')) {
+    settingsWindow.webContents.openDevTools();
+  }
+
+  return { success: true };
+});
+
+// 獲取配置
+ipcMain.handle('get-config', async () => {
+  try {
+    const config = new Config();
+    await config.init();
+    return await config.load();
+  } catch (error) {
+    console.error('獲取配置失敗:', error);
+    throw error;
+  }
+});
+
+// 儲存配置
+ipcMain.handle('save-config', async (event, settings) => {
+  try {
+    const config = new Config();
+    await config.init();
+    const success = await config.save(settings);
+
+    if (success) {
+      // 如果資料庫類型改變，需要重新初始化資料庫
+      const currentConfig = await config.load();
+      if (currentConfig.database.type !== settings.database.type) {
+        // 關閉當前資料庫連線
+        if (database) {
+          database.close();
+        }
+
+        // 重新創建資料庫實例
+        database = await DatabaseFactory.create();
+
+        // 重新初始化 VideoScanner
+        videoScanner = new VideoScanner(database);
+      }
+    }
+
+    return success;
+  } catch (error) {
+    console.error('儲存配置失敗:', error);
+    return false;
+  }
+});
+
+// 重置配置
+ipcMain.handle('reset-config', async () => {
+  try {
+    const config = new Config();
+    await config.init();
+
+    // 刪除配置檔案
+    if (await fs.pathExists(config.getConfigPath())) {
+      await fs.remove(config.getConfigPath());
+    }
+
+    // 重新初始化
+    await config.init();
+
+    // 重新創建資料庫實例
+    if (database) {
+      database.close();
+    }
+    database = await DatabaseFactory.create();
+    videoScanner = new VideoScanner(database);
+
+    return true;
+  } catch (error) {
+    console.error('重置配置失敗:', error);
+    return false;
+  }
+});
+
+// 測試MongoDB連線
+ipcMain.handle('test-mongodb-connection', async (event, mongoConfig) => {
+  try {
+    const config = new Config();
+    await config.init();
+
+    // 暫時更新MongoDB配置
+    const tempConfig = await config.load();
+    tempConfig.database.mongodb = { ...tempConfig.database.mongodb, ...mongoConfig };
+
+    // 創建臨時Config實例來測試連線
+    const testConfig = new Config();
+    testConfig.defaultConfig = tempConfig;
+
+    const result = await testConfig.testMongoDBConnection();
+    return result;
+  } catch (error) {
+    console.error('測試MongoDB連線失敗:', error);
+    return {
+      success: false,
+      message: error.message || '測試連線失敗'
+    };
+  }
+});
+
+// 檔案對話框
+ipcMain.handle('dialog-save-file', async (event, options) => {
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, options);
+    return result;
+  } catch (error) {
+    console.error('檔案對話框錯誤:', error);
+    throw error;
+  }
+});
+
+// 重新啟動應用程式
+ipcMain.handle('restart-app', async () => {
+  app.relaunch();
+  app.exit(0);
 });

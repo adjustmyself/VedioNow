@@ -22,6 +22,7 @@ class VideoManager {
   initializeElements() {
     this.elements = {
       tagManagerBtn: document.getElementById('tag-manager-btn'),
+      settingsBtn: document.getElementById('settings-btn'),
       scanBtn: document.getElementById('scan-btn'),
       searchInput: document.getElementById('search-input'),
       tagsFilter: document.getElementById('tags-filter'),
@@ -51,6 +52,7 @@ class VideoManager {
 
   bindEvents() {
     this.elements.tagManagerBtn.addEventListener('click', () => this.openTagManager());
+    this.elements.settingsBtn.addEventListener('click', () => this.openSettings());
     this.elements.scanBtn.addEventListener('click', () => this.showScanModal());
     this.elements.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
     this.elements.gridViewBtn.addEventListener('click', () => this.setViewMode('grid'));
@@ -278,8 +280,10 @@ class VideoManager {
     const videoElements = this.elements.videosContainer.querySelectorAll('[data-video-id]');
     videoElements.forEach(element => {
       element.addEventListener('click', () => {
-        const videoId = parseInt(element.dataset.videoId);
-        this.showVideoModal(videoId);
+        const videoId = element.dataset.videoId;
+        // 嘗試轉換為數字（SQLite），如果失敗則保持字串（MongoDB）
+        const id = isNaN(videoId) ? videoId : parseInt(videoId);
+        this.showVideoModal(id);
       });
     });
 
@@ -492,11 +496,34 @@ class VideoManager {
       container.insertBefore(video, fallback);
     }
 
-    // 設定載入超時 (5秒)
+    // 顯示載入提示
+    const fallback = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
+    if (fallback) {
+      fallback.innerHTML = '<div style="font-size: 0.8rem;">📹 載入中...</div>';
+      fallback.classList.add('loading');
+    }
+
+    // 設定載入超時 (15秒，給大檔案和網路磁碟更多時間)
     const timeoutId = setTimeout(() => {
       console.warn(`影片載入超時: ${videoPath}`);
-      this.showDefaultThumbnail(container, videoPath);
-    }, 5000);
+      if (fallback) {
+        fallback.innerHTML = '<div style="font-size: 0.7rem;">⏱️ 載入超時<br><span class="retry-btn">點擊重試</span></div>';
+        fallback.style.cursor = 'pointer';
+
+        // 移除舊的事件監聽器
+        fallback.onclick = null;
+
+        // 為重試按鈕添加事件監聽器，阻止事件冒泡
+        const retryBtn = fallback.querySelector('.retry-btn');
+        if (retryBtn) {
+          retryBtn.onclick = (e) => {
+            e.stopPropagation(); // 阻止事件冒泡到父元素
+            e.preventDefault();
+            this.setupVideoThumbnail(container, videoPath);
+          };
+        }
+      }
+    }, 15000);
 
     video.addEventListener('loadeddata', async () => {
       clearTimeout(timeoutId);
@@ -523,11 +550,37 @@ class VideoManager {
       }
     });
 
-    video.addEventListener('error', () => {
+    video.addEventListener('error', async () => {
       clearTimeout(timeoutId);
       console.warn(`影片載入錯誤: ${videoPath}`);
-      // 嘗試後端生成
-      this.generateThumbnailWithBackend(container, videoPath);
+
+      // 先嘗試後端生成縮圖
+      try {
+        await this.generateThumbnailWithBackend(container, videoPath);
+      } catch (error) {
+        // 如果後端也失敗，顯示格式資訊和重試選項
+        if (fallback) {
+          const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
+          fallback.innerHTML = `
+            <div style="text-align: center; font-size: 0.7rem;">
+              <div>🎬 ${extension}</div>
+              <div style="margin: 2px 0;">載入失敗</div>
+              <div class="retry-btn" style="cursor: pointer; color: #667eea;">點擊重試</div>
+            </div>
+          `;
+          fallback.style.display = 'flex';
+
+          // 為重試按鈕添加事件監聽器，阻止事件冒泡
+          const retryBtn = fallback.querySelector('.retry-btn');
+          if (retryBtn) {
+            retryBtn.onclick = (e) => {
+              e.stopPropagation(); // 阻止事件冒泡到父元素
+              e.preventDefault();
+              this.setupVideoThumbnail(container, videoPath);
+            };
+          }
+        }
+      }
     });
 
     video.style.opacity = '0';
@@ -952,6 +1005,18 @@ class VideoManager {
       }, 1000);
     } catch (error) {
       console.error('開啟標籤管理器錯誤:', error);
+    }
+  }
+
+  async openSettings() {
+    try {
+      await ipcRenderer.invoke('open-settings');
+      // 當設置頁面關閉後，可能需要重新載入資料（如果資料庫類型改變）
+      setTimeout(() => {
+        this.loadData();
+      }, 1000);
+    } catch (error) {
+      console.error('開啟設定頁面錯誤:', error);
     }
   }
 
