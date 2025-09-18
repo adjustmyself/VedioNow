@@ -1115,9 +1115,34 @@ class VideoManager {
 
     try {
       const searchTerm = this.elements.searchInput.value.trim();
-      if (searchTerm) {
-        await this.handleSearch(searchTerm);
+      const activeTagsArray = Array.from(this.activeTags);
+
+      if (searchTerm || activeTagsArray.length > 0) {
+        // 有搜尋條件時，保持搜尋狀態進行分頁
+        const filters = {
+          limit: this.pageSize,
+          offset: (this.currentPage - 1) * this.pageSize
+        };
+
+        const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
+
+        if (Array.isArray(result)) {
+          console.warn('搜尋收到舊格式資料，分頁功能可能異常');
+          this.currentVideos = result;
+          this.totalVideos = result.length;
+          this.totalPages = Math.ceil(result.length / this.pageSize);
+        } else {
+          this.currentVideos = result.videos || [];
+          this.totalVideos = result.total || 0;
+          this.totalPages = result.totalPages || 0;
+          this.currentPage = result.page || 1;
+        }
+
+        this.updateStats();
+        this.renderVideos();
+        this.renderPagination();
       } else {
+        // 沒有搜尋條件時，使用一般載入
         await this.loadVideos();
         this.renderVideos();
         this.renderPagination();
