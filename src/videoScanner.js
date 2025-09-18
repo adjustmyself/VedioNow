@@ -15,7 +15,7 @@ class VideoScanner {
   }
 
   async scanFolder(folderPath, options = {}) {
-    const { recursive = true, watchChanges = false, cleanupMissing = false } = options;
+    const { recursive = true, watchChanges = false, cleanupMissing = false, progressCallback = null } = options;
 
     if (!await fs.pathExists(folderPath)) {
       throw new Error(`路徑不存在: ${folderPath}`);
@@ -28,14 +28,47 @@ class VideoScanner {
 
     console.log(`開始掃描資料夾: ${folderPath}`);
 
+    if (progressCallback) {
+      progressCallback({
+        phase: 'scanning',
+        message: '正在掃描資料夾...',
+        progress: 0,
+        filesFound: 0,
+        currentFile: folderPath
+      });
+    }
+
     const videos = [];
-    await this._scanDirectory(folderPath, videos, recursive);
+    await this._scanDirectory(folderPath, videos, recursive, progressCallback);
+
+    if (progressCallback) {
+      progressCallback({
+        phase: 'processing',
+        message: `掃描完成，找到 ${videos.length} 個影片檔案，開始處理...`,
+        progress: 0,
+        filesFound: videos.length,
+        processed: 0,
+        currentFile: ''
+      });
+    }
 
     let addedCount = 0;
     let updatedCount = 0;
 
-    for (const video of videos) {
+    for (let i = 0; i < videos.length; i++) {
+      const video = videos[i];
       try {
+        if (progressCallback) {
+          progressCallback({
+            phase: 'processing',
+            message: `正在處理影片... (${i + 1}/${videos.length})`,
+            progress: ((i + 1) / videos.length) * 100,
+            filesFound: videos.length,
+            processed: i + 1,
+            currentFile: video.filename
+          });
+        }
+
         const result = await this.database.addVideo(video);
         if (result === 'updated') {
           updatedCount++;
@@ -67,7 +100,7 @@ class VideoScanner {
     };
   }
 
-  async _scanDirectory(dirPath, videos, recursive) {
+  async _scanDirectory(dirPath, videos, recursive, progressCallback = null) {
     try {
       const items = await fs.readdir(dirPath);
 
@@ -78,10 +111,29 @@ class VideoScanner {
           const stat = await fs.stat(itemPath);
 
           if (stat.isDirectory() && recursive) {
-            await this._scanDirectory(itemPath, videos, recursive);
+            if (progressCallback) {
+              progressCallback({
+                phase: 'scanning',
+                message: '正在掃描資料夾...',
+                progress: 0,
+                filesFound: videos.length,
+                currentFile: itemPath
+              });
+            }
+            await this._scanDirectory(itemPath, videos, recursive, progressCallback);
           } else if (stat.isFile() && this._isVideoFile(item)) {
             const videoInfo = await this._getVideoInfo(itemPath, stat);
             videos.push(videoInfo);
+
+            if (progressCallback) {
+              progressCallback({
+                phase: 'scanning',
+                message: `找到影片檔案... (已找到 ${videos.length} 個)`,
+                progress: 0,
+                filesFound: videos.length,
+                currentFile: item
+              });
+            }
           }
         } catch (error) {
           console.warn(`無法讀取項目: ${itemPath}`, error.message);

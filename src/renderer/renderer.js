@@ -10,12 +10,15 @@ class VideoManager {
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
     this.selectedVideo = null;
-    this.thumbnailObserver = null;
     this.loadingThumbnails = new Set(); // 追蹤正在載入的縮圖
+    // 分頁相關狀態
+    this.currentPage = 1;
+    this.pageSize = 9;
+    this.totalVideos = 0;
+    this.totalPages = 0;
 
     this.initializeElements();
     this.bindEvents();
-    this.initializeThumbnailObserver();
     this.loadData();
   }
 
@@ -47,7 +50,12 @@ class VideoManager {
       watchChanges: document.getElementById('watch-changes'),
       cleanupMissing: document.getElementById('cleanup-missing'),
       scanProgress: document.getElementById('scan-progress'),
-      scanStatus: document.getElementById('scan-status')
+      scanStatus: document.getElementById('scan-status'),
+      scanPhase: document.getElementById('scan-phase'),
+      scanCounter: document.getElementById('scan-counter'),
+      scanPercentage: document.getElementById('scan-percentage'),
+      progressFill: document.getElementById('progress-fill'),
+      currentFile: document.getElementById('current-file')
     };
   }
 
@@ -66,6 +74,11 @@ class VideoManager {
     this.elements.startScan.addEventListener('click', () => this.startScan());
     this.elements.cancelScan.addEventListener('click', () => this.hideScanModal());
 
+    // 監聽掃描進度
+    ipcRenderer.on('scan-progress', (event, progressData) => {
+      this.updateScanProgress(progressData);
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target === this.elements.videoModal) {
         this.hideVideoModal();
@@ -83,33 +96,6 @@ class VideoManager {
     });
   }
 
-  initializeThumbnailObserver() {
-    // 創建 Intersection Observer 用於懶載入
-    this.thumbnailObserver = new IntersectionObserver((entries) => {
-      console.log(`Intersection Observer 觸發，檢查 ${entries.length} 個元素`);
-
-      entries.forEach(entry => {
-        console.log(`元素 ${entry.target.dataset.filepath} intersecting: ${entry.isIntersecting}`);
-
-        if (entry.isIntersecting) {
-          const container = entry.target;
-          const videoPath = container.dataset.filepath;
-
-          if (videoPath && !this.loadingThumbnails.has(videoPath)) {
-            console.log(`開始載入縮圖: ${videoPath}`);
-            this.loadingThumbnails.add(videoPath);
-            this.loadThumbnail(container, videoPath);
-            // 停止觀察已載入的元素
-            this.thumbnailObserver.unobserve(container);
-          }
-        }
-      });
-    }, {
-      root: null, // 使用視窗作為根元素
-      rootMargin: '200px', // 增加到200px，提早觸發
-      threshold: 0.01 // 降低到1%，更容易觸發
-    });
-  }
 
   async loadData() {
     this.showLoading();
@@ -121,6 +107,7 @@ class VideoManager {
       this.updateStats();
       this.renderVideos();
       this.renderTagsFilter();
+      this.renderPagination();
     } catch (error) {
       console.error('載入資料錯誤:', error);
     } finally {
@@ -129,7 +116,26 @@ class VideoManager {
   }
 
   async loadVideos() {
-    this.currentVideos = await ipcRenderer.invoke('get-videos');
+    const filters = {
+      limit: this.pageSize,
+      offset: (this.currentPage - 1) * this.pageSize
+    };
+
+    const result = await ipcRenderer.invoke('get-videos', filters);
+
+    if (Array.isArray(result)) {
+      // 向下兼容舊格式 - 但這不應該發生在分頁模式下
+      console.warn('收到舊格式資料，分頁功能可能異常');
+      this.currentVideos = result;
+      this.totalVideos = result.length;
+      this.totalPages = Math.ceil(result.length / this.pageSize);
+    } else {
+      // 新的分頁格式
+      this.currentVideos = result.videos || [];
+      this.totalVideos = result.total || 0;
+      this.totalPages = result.totalPages || 0;
+      this.currentPage = result.page || 1;
+    }
   }
 
   async loadTags() {
@@ -148,10 +154,34 @@ class VideoManager {
   async handleSearch(searchTerm) {
     this.showLoading();
     try {
+      // 重置到第一頁
+      this.currentPage = 1;
+
       const activeTagsArray = Array.from(this.activeTags);
-      this.currentVideos = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray);
+      const filters = {
+        limit: this.pageSize,
+        offset: (this.currentPage - 1) * this.pageSize
+      };
+
+      const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
+
+      if (Array.isArray(result)) {
+        // 向下兼容舊格式 - 但這不應該發生在分頁模式下
+        console.warn('搜尋收到舊格式資料，分頁功能可能異常');
+        this.currentVideos = result;
+        this.totalVideos = result.length;
+        this.totalPages = Math.ceil(result.length / this.pageSize);
+      } else {
+        // 新的分頁格式
+        this.currentVideos = result.videos || [];
+        this.totalVideos = result.total || 0;
+        this.totalPages = result.totalPages || 0;
+        this.currentPage = result.page || 1;
+      }
+
       this.updateStats();
       this.renderVideos();
+      this.renderPagination();
     } catch (error) {
       console.error('搜尋錯誤:', error);
     } finally {
@@ -213,6 +243,8 @@ class VideoManager {
     ).join('');
 
     this.bindVideoEvents();
+    // 立即載入所有縮圖（移除懶載入）
+    this.loadAllThumbnails();
   }
 
   createVideoCard(video) {
@@ -290,67 +322,28 @@ class VideoManager {
       });
     });
 
-    this.setupThumbnails();
   }
 
-  setupThumbnails() {
-    // 清理之前的 Observer
-    if (this.thumbnailObserver) {
-      this.thumbnailObserver.disconnect();
-      this.loadingThumbnails.clear();
-    }
+  loadAllThumbnails() {
+    // 清理載入狀態
+    this.loadingThumbnails.clear();
 
     const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
 
-    // 將所有縮圖容器加入 Intersection Observer 進行懶載入
+    // 立即載入所有縮圖（移除懶載入機制）
     thumbnailContainers.forEach((container, index) => {
       const videoPath = container.dataset.filepath;
       if (videoPath) {
         // 添加載入中的視覺提示
         this.addLoadingPlaceholder(container);
 
-        // 立即載入前幾個縮圖，不用等待滾動
-        if (index < 6) {
-          console.log(`立即載入前方縮圖: ${videoPath}`);
-          this.loadingThumbnails.add(videoPath);
-          this.loadThumbnail(container, videoPath);
-        } else {
-          // 其他的使用懒载入
-          this.thumbnailObserver.observe(container);
-        }
+        console.log(`立即載入縮圖: ${videoPath}`);
+        this.loadingThumbnails.add(videoPath);
+        this.loadThumbnail(container, videoPath);
       }
     });
 
-    console.log(`開始懶載入觀察 ${thumbnailContainers.length} 個縮圖容器，立即載入前6個`);
-
-    // 添加一個後備機制，確保可見的縮圖會載入
-    setTimeout(() => {
-      this.ensureVisibleThumbnailsLoaded();
-    }, 1000);
-  }
-
-  ensureVisibleThumbnailsLoaded() {
-    const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
-
-    thumbnailContainers.forEach(container => {
-      const rect = container.getBoundingClientRect();
-      const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
-
-      if (isVisible) {
-        const videoPath = container.dataset.filepath;
-        if (videoPath && !this.loadingThumbnails.has(videoPath)) {
-          console.log(`後備載入可見縮圖: ${videoPath}`);
-          this.loadingThumbnails.add(videoPath);
-          this.loadThumbnail(container, videoPath);
-          // 如果正在被觀察，停止觀察
-          try {
-            this.thumbnailObserver.unobserve(container);
-          } catch (e) {
-            // 忽略錯誤
-          }
-        }
-      }
-    });
+    console.log(`開始載入 ${thumbnailContainers.length} 個縮圖`);
   }
 
   addLoadingPlaceholder(container) {
@@ -1037,7 +1030,7 @@ class VideoManager {
     };
 
     this.elements.scanProgress.classList.remove('hidden');
-    this.elements.scanStatus.textContent = '正在掃描...';
+    this.resetScanProgress();
 
     try {
       const result = await ipcRenderer.invoke('scan-videos', folderPath, options);
@@ -1063,8 +1056,126 @@ class VideoManager {
   }
 
   updateStats() {
-    this.elements.totalVideos.textContent = this.currentVideos.length;
+    this.elements.totalVideos.textContent = this.totalVideos;
     this.elements.totalTags.textContent = this.allTags.length;
+  }
+
+  resetScanProgress() {
+    this.elements.scanPhase.textContent = '準備中...';
+    this.elements.scanCounter.textContent = '';
+    this.elements.scanPercentage.textContent = '0%';
+    this.elements.progressFill.style.width = '0%';
+    this.elements.scanStatus.textContent = '正在初始化...';
+    this.elements.currentFile.textContent = '';
+  }
+
+  updateScanProgress(progressData) {
+    const { phase, message, progress, filesFound, processed, currentFile } = progressData;
+
+    // 更新階段顯示
+    if (phase === 'scanning') {
+      this.elements.scanPhase.textContent = '掃描中';
+      this.elements.scanCounter.textContent = `已找到 ${filesFound || 0} 個影片`;
+      this.elements.scanPercentage.textContent = '搜尋中...';
+      this.elements.progressFill.style.width = '0%';
+    } else if (phase === 'processing') {
+      this.elements.scanPhase.textContent = '處理中';
+      this.elements.scanCounter.textContent = `${processed || 0} / ${filesFound || 0} 個檔案`;
+      this.elements.scanPercentage.textContent = `${Math.round(progress || 0)}%`;
+      this.elements.progressFill.style.width = `${progress || 0}%`;
+    }
+
+    // 更新狀態訊息
+    this.elements.scanStatus.textContent = message || '';
+
+    // 更新當前檔案
+    if (currentFile) {
+      this.elements.currentFile.textContent = `當前檔案: ${currentFile}`;
+    }
+  }
+
+  // 分頁相關方法
+  async goToPage(page) {
+    if (page < 1 || page > this.totalPages || page === this.currentPage) {
+      return;
+    }
+
+    this.currentPage = page;
+    this.showLoading();
+
+    try {
+      const searchTerm = this.elements.searchInput.value.trim();
+      if (searchTerm) {
+        await this.handleSearch(searchTerm);
+      } else {
+        await this.loadVideos();
+        this.renderVideos();
+        this.renderPagination();
+      }
+    } catch (error) {
+      console.error('切換頁面錯誤:', error);
+    } finally {
+      this.hideLoading();
+    }
+  }
+
+  renderPagination() {
+    const paginationContainer = document.getElementById('pagination-container');
+    console.log('分頁容器:', paginationContainer);
+    console.log('總頁數:', this.totalPages, '當前頁:', this.currentPage, '總影片數:', this.totalVideos);
+
+    if (!paginationContainer) {
+      console.error('找不到分頁容器元素！');
+      return;
+    }
+
+    if (this.totalPages <= 1) {
+      console.log('只有一頁或沒有資料，隱藏分頁控制器');
+      paginationContainer.innerHTML = '';
+      return;
+    }
+
+    let paginationHTML = '';
+
+    // 上一頁按鈕
+    if (this.currentPage > 1) {
+      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(${this.currentPage - 1})">◀ 上一頁</button>`;
+    }
+
+    // 頁碼按鈕
+    const startPage = Math.max(1, this.currentPage - 2);
+    const endPage = Math.min(this.totalPages, this.currentPage + 2);
+
+    if (startPage > 1) {
+      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(1)">1</button>`;
+      if (startPage > 2) {
+        paginationHTML += `<span class="pagination-ellipsis">...</span>`;
+      }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      const isActive = i === this.currentPage ? 'active' : '';
+      paginationHTML += `<button class="pagination-btn ${isActive}" onclick="videoManager.goToPage(${i})">${i}</button>`;
+    }
+
+    if (endPage < this.totalPages) {
+      if (endPage < this.totalPages - 1) {
+        paginationHTML += `<span class="pagination-ellipsis">...</span>`;
+      }
+      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(${this.totalPages})">${this.totalPages}</button>`;
+    }
+
+    // 下一頁按鈕
+    if (this.currentPage < this.totalPages) {
+      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(${this.currentPage + 1})">下一頁 ▶</button>`;
+    }
+
+    // 分頁資訊
+    const startItem = (this.currentPage - 1) * this.pageSize + 1;
+    const endItem = Math.min(this.currentPage * this.pageSize, this.totalVideos);
+    paginationHTML += `<div class="pagination-info">顯示第 ${startItem}-${endItem} 筆，共 ${this.totalVideos} 筆影片</div>`;
+
+    paginationContainer.innerHTML = paginationHTML;
   }
 
   showLoading() {
@@ -1111,18 +1222,17 @@ class VideoManager {
     return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
   }
 
-  // 清理 Observer (當頁面卸載或重新載入時)
+  // 清理資源 (當頁面卸載或重新載入時)
   destroy() {
-    if (this.thumbnailObserver) {
-      this.thumbnailObserver.disconnect();
-      this.thumbnailObserver = null;
-    }
     this.loadingThumbnails.clear();
   }
 }
 
+// 全域變數，讓分頁控制器可以訪問
+let videoManager;
+
 document.addEventListener('DOMContentLoaded', () => {
-  const videoManager = new VideoManager();
+  videoManager = new VideoManager();
 
   // 頁面卸載時清理資源
   window.addEventListener('beforeunload', () => {

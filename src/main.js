@@ -43,7 +43,8 @@ app.whenReady().then(async () => {
 
     // 執行縮圖遷移 (如果需要)
     try {
-      const videos = await database.getVideos();
+      const result = await database.getVideos({ count: false }); // 不需要計算總數
+      const videos = Array.isArray(result) ? result : result.videos || [];
       const videoPaths = videos.map(video => video.filepath);
       const migrationResult = await thumbnailGenerator.migrateThumbnails(videoPaths);
       if (migrationResult.migrated > 0) {
@@ -97,7 +98,15 @@ ipcMain.handle('select-folder', async () => {
 
 ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
   try {
-    const result = await videoScanner.scanFolder(folderPath, options);
+    // 創建進度回調函數，向渲染進程發送進度更新
+    const progressCallback = (progressData) => {
+      event.sender.send('scan-progress', progressData);
+    };
+
+    const result = await videoScanner.scanFolder(folderPath, {
+      ...options,
+      progressCallback
+    });
     return { success: true, result };
   } catch (error) {
     return { success: false, error: error.message };
@@ -106,11 +115,15 @@ ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
 
 ipcMain.handle('get-videos', async (event, filters = {}) => {
   try {
-    const videos = await database.getVideos(filters);
-    return videos;
+    const result = await database.getVideos(filters);
+    // 為了向下兼容，如果返回的是陣列，轉換為新格式
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return result;
   } catch (error) {
     console.error('Error getting videos:', error);
-    return [];
+    return { videos: [], total: 0, page: 1, pageSize: 9, totalPages: 0 };
   }
 });
 
@@ -175,12 +188,17 @@ ipcMain.handle('get-all-tags', async () => {
   }
 });
 
-ipcMain.handle('search-videos', async (event, searchTerm, tags = []) => {
+ipcMain.handle('search-videos', async (event, searchTerm, tags = [], filters = {}) => {
   try {
-    return await database.searchVideos(searchTerm, tags);
+    const result = await database.searchVideos(searchTerm, tags, filters);
+    // 為了向下兼容，如果返回的是陣列，轉換為新格式
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return result;
   } catch (error) {
     console.error('Error searching videos:', error);
-    return [];
+    return { videos: [], total: 0, page: 1, pageSize: 9, totalPages: 0 };
   }
 });
 

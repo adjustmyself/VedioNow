@@ -69,6 +69,11 @@
                     <h3>沒有找到影片</h3>
                     <p>請掃描資料夾或調整搜尋條件</p>
                 </div>
+
+                <!-- 分頁控制器 -->
+                <div id="pagination-container" class="pagination-container">
+                    <!-- 分頁按鈕會動態生成到這裡 -->
+                </div>
             </main>
         </div>
     </div>
@@ -176,10 +181,18 @@
                     </div>
                 </div>
                 <div id="scan-progress" class="progress-container hidden">
-                    <div class="progress-bar">
-                        <div class="progress-fill"></div>
+                    <div class="progress-info">
+                        <div class="progress-stats">
+                            <span id="scan-phase">準備中...</span>
+                            <span id="scan-counter" class="progress-counter"></span>
+                        </div>
+                        <div class="progress-percentage" id="scan-percentage">0%</div>
                     </div>
-                    <p id="scan-status">掃描中...</p>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <p id="scan-status">正在初始化...</p>
+                    <p id="current-file" class="current-file"></p>
                 </div>
             </div>
             <div class="modal-footer">

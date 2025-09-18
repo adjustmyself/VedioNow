@@ -318,6 +318,11 @@ class SQLiteDatabase extends DatabaseInterface {
     }
 
     async getVideos(filters = {}) {
+        // 分頁參數
+        const limit = filters.limit || 9; // 每頁顯示9個影片
+        const offset = filters.offset || 0;
+        const needCount = filters.count !== false; // 預設需要計算總數
+
         let sql = `
             SELECT
                 v.*,
@@ -344,6 +349,8 @@ class SQLiteDatabase extends DatabaseInterface {
         }
 
         sql += ' ORDER BY v.file_created_at DESC, v.created_at DESC';
+        sql += ' LIMIT ? OFFSET ?';
+        params.push(limit, offset);
 
         return new Promise((resolve, reject) => {
             this.db.all(sql, params, (err, rows) => {
@@ -367,7 +374,40 @@ class SQLiteDatabase extends DatabaseInterface {
                             tags: Array.isArray(tags) ? tags : []
                         };
                     });
-                    resolve(videos);
+
+                    // 如果需要計算總數，執行額外查詢
+                    if (needCount) {
+                        let countSql = `
+                            SELECT COUNT(*) as total
+                            FROM videos v
+                            LEFT JOIN video_tag_relations vtr ON v.fingerprint = vtr.fingerprint
+                        `;
+
+                        const countParams = [];
+                        if (conditions.length > 0) {
+                            countSql += ' WHERE ' + conditions.join(' AND ');
+                            // 複製條件參數（不包含 LIMIT/OFFSET）
+                            for (let i = 0; i < params.length - 2; i++) {
+                                countParams.push(params[i]);
+                            }
+                        }
+
+                        this.db.get(countSql, countParams, (countErr, countRow) => {
+                            if (countErr) {
+                                reject(countErr);
+                            } else {
+                                resolve({
+                                    videos: videos,
+                                    total: countRow.total,
+                                    page: Math.floor(offset / limit) + 1,
+                                    pageSize: limit,
+                                    totalPages: Math.ceil(countRow.total / limit)
+                                });
+                            }
+                        });
+                    } else {
+                        resolve({ videos: videos });
+                    }
                 }
             });
         });
@@ -451,7 +491,12 @@ class SQLiteDatabase extends DatabaseInterface {
         });
     }
 
-    async searchVideos(searchTerm, tags = []) {
+    async searchVideos(searchTerm, tags = [], filters = {}) {
+        // 分頁參數
+        const limit = filters.limit || 9;
+        const offset = filters.offset || 0;
+        const needCount = filters.count !== false;
+
         let sql = `
             SELECT v.*, vtr.tags as tag_json
             FROM videos v
@@ -479,6 +524,8 @@ class SQLiteDatabase extends DatabaseInterface {
         }
 
         sql += ' ORDER BY v.file_created_at DESC, v.created_at DESC';
+        sql += ' LIMIT ? OFFSET ?';
+        params.push(limit, offset);
 
         return new Promise((resolve, reject) => {
             this.db.all(sql, params, (err, rows) => {
@@ -502,7 +549,40 @@ class SQLiteDatabase extends DatabaseInterface {
                             tags: Array.isArray(parsedTags) ? parsedTags : []
                         };
                     });
-                    resolve(videos);
+
+                    // 如果需要計算總數，執行額外查詢
+                    if (needCount) {
+                        let countSql = `
+                            SELECT COUNT(*) as total
+                            FROM videos v
+                            LEFT JOIN video_tag_relations vtr ON v.fingerprint = vtr.fingerprint
+                        `;
+
+                        const countParams = [];
+                        if (conditions.length > 0) {
+                            countSql += ' WHERE ' + conditions.join(' AND ');
+                            // 複製條件參數（不包含 LIMIT/OFFSET）
+                            for (let i = 0; i < params.length - 2; i++) {
+                                countParams.push(params[i]);
+                            }
+                        }
+
+                        this.db.get(countSql, countParams, (countErr, countRow) => {
+                            if (countErr) {
+                                reject(countErr);
+                            } else {
+                                resolve({
+                                    videos: videos,
+                                    total: countRow.total,
+                                    page: Math.floor(offset / limit) + 1,
+                                    pageSize: limit,
+                                    totalPages: Math.ceil(countRow.total / limit)
+                                });
+                            }
+                        });
+                    } else {
+                        resolve({ videos: videos });
+                    }
                 }
             });
         });
@@ -1156,6 +1236,11 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async getVideos(filters = {}) {
+        // 分頁參數
+        const limit = filters.limit || 9;
+        const offset = filters.offset || 0;
+        const needCount = filters.count !== false;
+
         let query = {};
 
         if (filters.filename) {
@@ -1169,16 +1254,37 @@ class MongoDatabase extends DatabaseInterface {
         const videos = await this.db.collection('videos')
             .find(query)
             .sort({ file_created_at: -1, created_at: -1 })
+            .skip(offset)
+            .limit(limit)
             .toArray();
 
-        return videos.map(video => ({
+        const mappedVideos = videos.map(video => ({
             ...video,
             id: video._id.toString(),
             tags: video.tags || []
         }));
+
+        // 如果需要計算總數，執行額外查詢
+        if (needCount) {
+            const total = await this.db.collection('videos').countDocuments(query);
+            return {
+                videos: mappedVideos,
+                total: total,
+                page: Math.floor(offset / limit) + 1,
+                pageSize: limit,
+                totalPages: Math.ceil(total / limit)
+            };
+        } else {
+            return { videos: mappedVideos };
+        }
     }
 
-    async searchVideos(searchTerm, tags = []) {
+    async searchVideos(searchTerm, tags = [], filters = {}) {
+        // 分頁參數
+        const limit = filters.limit || 9;
+        const offset = filters.offset || 0;
+        const needCount = filters.count !== false;
+
         let query = {};
 
         if (searchTerm && searchTerm.trim()) {
@@ -1195,13 +1301,29 @@ class MongoDatabase extends DatabaseInterface {
         const videos = await this.db.collection('videos')
             .find(query)
             .sort({ file_created_at: -1, created_at: -1 })
+            .skip(offset)
+            .limit(limit)
             .toArray();
 
-        return videos.map(video => ({
+        const mappedVideos = videos.map(video => ({
             ...video,
             id: video._id.toString(),
             tags: video.tags || []
         }));
+
+        // 如果需要計算總數，執行額外查詢
+        if (needCount) {
+            const total = await this.db.collection('videos').countDocuments(query);
+            return {
+                videos: mappedVideos,
+                total: total,
+                page: Math.floor(offset / limit) + 1,
+                pageSize: limit,
+                totalPages: Math.ceil(total / limit)
+            };
+        } else {
+            return { videos: mappedVideos };
+        }
     }
 
     async updateVideo(videoId, updates) {
@@ -1604,6 +1726,56 @@ class MongoDatabase extends DatabaseInterface {
         }
 
         return result;
+    }
+
+    async updateTag(tagId, updates) {
+        const objectId = new ObjectId(tagId);
+        const updateDoc = {
+            $set: {
+                ...updates,
+                updated_at: new Date()
+            }
+        };
+
+        // 如果有 group_id，轉換為 ObjectId
+        if (updates.group_id) {
+            updateDoc.$set.group_id = new ObjectId(updates.group_id);
+        } else if (updates.group_id === null) {
+            updateDoc.$set.group_id = null;
+        }
+
+        const result = await this.db.collection('tags').updateOne(
+            { _id: objectId },
+            updateDoc
+        );
+
+        if (result.matchedCount === 0) {
+            throw new Error('標籤不存在');
+        }
+
+        return result.modifiedCount > 0;
+    }
+
+    async deleteTag(tagId) {
+        const objectId = new ObjectId(tagId);
+
+        // 先從所有影片中移除此標籤
+        const tag = await this.db.collection('tags').findOne({ _id: objectId });
+        if (tag) {
+            await this.db.collection('videos').updateMany(
+                { tags: { $in: [tag.name] } },
+                { $pull: { tags: tag.name } }
+            );
+        }
+
+        // 刪除標籤
+        const result = await this.db.collection('tags').deleteOne({ _id: objectId });
+
+        if (result.deletedCount === 0) {
+            throw new Error('標籤不存在');
+        }
+
+        return true;
     }
 
     close() {

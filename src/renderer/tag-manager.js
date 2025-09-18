@@ -78,11 +78,40 @@ class TagManager {
     // 顏色預設選擇
     this.bindColorPresets();
 
-    // 模態框背景點擊
+    // 事件委託處理動態按鈕
     document.addEventListener('click', (e) => {
+      // 模態框背景點擊
       if (e.target === this.elements.groupModal) this.hideGroupModal();
       if (e.target === this.elements.tagModal) this.hideTagModal();
       if (e.target === this.elements.confirmModal) this.hideConfirmModal();
+
+      // 處理群組編輯按鈕
+      if (e.target.dataset.action === 'edit-group') {
+        const groupId = e.target.dataset.groupId;
+        this.editGroup(groupId);
+        return;
+      }
+
+      // 處理群組刪除按鈕
+      if (e.target.dataset.action === 'delete-group') {
+        const groupId = e.target.dataset.groupId;
+        this.deleteGroup(groupId);
+        return;
+      }
+
+      // 處理標籤編輯按鈕
+      if (e.target.dataset.action === 'edit-tag') {
+        const tagId = e.target.dataset.tagId;
+        this.editTag(tagId);
+        return;
+      }
+
+      // 處理標籤刪除按鈕
+      if (e.target.dataset.action === 'delete-tag') {
+        const tagId = e.target.dataset.tagId;
+        this.deleteTag(tagId);
+        return;
+      }
     });
 
     // 按鍵事件
@@ -148,8 +177,8 @@ class TagManager {
         <div class="group-stats">${group.tag_count} 個標籤</div>
         ${group.description ? `<div class="group-description">${group.description}</div>` : ''}
         <div class="group-actions">
-          <button class="btn-icon" onclick="tagManager.editGroup(${group.id})" title="編輯">✏️</button>
-          <button class="btn-icon" onclick="tagManager.deleteGroup(${group.id})" title="刪除">🗑️</button>
+          <button class="btn-icon" data-action="edit-group" data-group-id="${group.id}" title="編輯">✏️</button>
+          <button class="btn-icon" data-action="delete-group" data-group-id="${group.id}" title="刪除">🗑️</button>
         </div>
       </div>
     `).join('');
@@ -193,8 +222,8 @@ class TagManager {
                       ${tag.name}
                     </div>
                     <div class="tag-actions">
-                      <button class="btn-icon" onclick="tagManager.editTag(${tag.id})" title="編輯">✏️</button>
-                      <button class="btn-icon" onclick="tagManager.deleteTag(${tag.id})" title="刪除">🗑️</button>
+                      <button class="btn-icon" data-action="edit-tag" data-tag-id="${tag.id}" title="編輯">✏️</button>
+                      <button class="btn-icon" data-action="delete-tag" data-tag-id="${tag.id}" title="刪除">🗑️</button>
                     </div>
                   </div>
                   <div class="tag-stats">${tag.video_count} 個影片</div>
@@ -323,10 +352,20 @@ class TagManager {
     }
 
     try {
+      let result;
       if (this.editingTag) {
-        await ipcRenderer.invoke('update-tag', this.editingTag.id, tagData);
+        console.log('更新標籤:', this.editingTag.id, tagData);
+        result = await ipcRenderer.invoke('update-tag', this.editingTag.id, tagData);
       } else {
-        await ipcRenderer.invoke('create-tag', tagData);
+        console.log('創建標籤:', tagData);
+        result = await ipcRenderer.invoke('create-tag', tagData);
+      }
+
+      console.log('標籤操作結果:', result);
+
+      if (result && result.success === false) {
+        alert(`操作失敗: ${result.error}`);
+        return;
       }
 
       this.hideTagModal();
@@ -338,6 +377,9 @@ class TagManager {
   }
 
   editTag(tagId) {
+    console.log('編輯標籤:', tagId);
+    console.log('可用的標籤群組:', this.tagsByGroup);
+
     let tag = null;
     for (const group of this.tagsByGroup) {
       tag = group.tags.find(t => t.id === tagId);
@@ -347,8 +389,12 @@ class TagManager {
       }
     }
 
+    console.log('找到的標籤:', tag);
+
     if (tag) {
       this.showTagModal(tag);
+    } else {
+      alert('找不到要編輯的標籤');
     }
   }
 
@@ -363,7 +409,15 @@ class TagManager {
       this.elements.confirmMessage.textContent =
         `確定要刪除標籤「${tag.name}」嗎？這會從所有影片中移除此標籤。`;
       this.deleteCallback = async () => {
-        await ipcRenderer.invoke('delete-tag', tagId);
+        console.log('刪除標籤:', tagId);
+        const result = await ipcRenderer.invoke('delete-tag', tagId);
+        console.log('刪除結果:', result);
+
+        if (result && result.success === false) {
+          alert(`刪除失敗: ${result.error}`);
+          return;
+        }
+
         await this.loadData();
       };
       this.elements.confirmModal.classList.remove('hidden');
