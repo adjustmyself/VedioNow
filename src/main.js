@@ -270,9 +270,12 @@ ipcMain.handle('get-all-tag-groups', async () => {
 
 ipcMain.handle('update-tag-group', async (event, groupId, updates) => {
   try {
-    await database.updateTagGroup(groupId, updates);
-    return { success: true };
+    console.log('IPC: 收到更新標籤群組請求:', { groupId, updates });
+    const result = await database.updateTagGroup(groupId, updates);
+    console.log('IPC: 更新標籤群組結果:', result);
+    return { success: true, result };
   } catch (error) {
+    console.error('IPC: 更新標籤群組失敗:', error);
     return { success: false, error: error.message };
   }
 });

@@ -584,10 +584,17 @@ class VideoManager {
   }
 
   renderTagsFilter() {
-    console.log('渲染標籤篩選器，群組數量:', this.tagsByGroup.length);
-    console.log('標籤群組詳情:', this.tagsByGroup);
+    console.log('🎯 [DEBUG] 渲染標籤篩選器開始');
+    console.log('🎯 [DEBUG] 群組數量:', this.tagsByGroup.length);
+    console.log('🎯 [DEBUG] 標籤群組詳情:', JSON.stringify(this.tagsByGroup, null, 2));
+
+    if (!this.elements.tagsFilter) {
+      console.error('🎯 [ERROR] tagsFilter 元素不存在！');
+      return;
+    }
 
     if (this.tagsByGroup.length === 0) {
+      console.log('🎯 [DEBUG] 無標籤群組，顯示空狀態');
       this.elements.tagsFilter.innerHTML = `
         <div class="no-tags-container">
           <span class="no-tags">尚無標籤</span>
@@ -597,7 +604,7 @@ class VideoManager {
       return;
     }
 
-    this.elements.tagsFilter.innerHTML = this.tagsByGroup.map(group => `
+    const html = this.tagsByGroup.map(group => `
       <div class="tag-group-filter">
         <div class="tag-group-header">
           <span class="tag-group-color" style="background-color: ${group.color};"></span>
@@ -616,7 +623,12 @@ class VideoManager {
       </div>
     `).join('');
 
+    console.log('🎯 [DEBUG] 生成的 HTML:', html);
+    this.elements.tagsFilter.innerHTML = html;
+    console.log('🎯 [DEBUG] HTML 已設定到 DOM');
+
     this.bindTagEvents();
+    console.log('🎯 [DEBUG] 事件綁定完成');
   }
 
   bindTagEvents() {
@@ -819,13 +831,12 @@ class VideoManager {
     if (this.selectedVideo.tags.includes(actualTagName)) return;
 
     try {
-      // 使用基於指紋的新方法
-      if (this.selectedVideo.fingerprint) {
-        await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
-      } else {
-        // 回退到舊方法（向後兼容）
-        await ipcRenderer.invoke('add-tag', this.selectedVideo.id, actualTagName);
+      // 只使用基於指紋的新方法
+      if (!this.selectedVideo.fingerprint) {
+        throw new Error('影片缺少 fingerprint，無法添加標籤');
       }
+
+      await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
 
       this.selectedVideo.tags.push(actualTagName);
 
@@ -847,13 +858,12 @@ class VideoManager {
 
   async removeVideoTag(tagName) {
     try {
-      // 使用基於指紋的新方法
-      if (this.selectedVideo.fingerprint) {
-        await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
-      } else {
-        // 回退到舊方法（向後兼容）
-        await ipcRenderer.invoke('remove-tag', this.selectedVideo.id, tagName);
+      // 只使用基於指紋的新方法
+      if (!this.selectedVideo.fingerprint) {
+        throw new Error('影片缺少 fingerprint，無法移除標籤');
       }
+
+      await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
 
       this.selectedVideo.tags = this.selectedVideo.tags.filter(tag => tag !== tagName);
 

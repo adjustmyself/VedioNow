@@ -90,8 +90,8 @@ body {
 }
 
 .tag {
-    background: #e3f2fd;
-    color: #1565c0;
+    background: var(--tag-color, #e3f2fd);
+    color: white;
     padding: 0.3rem 0.8rem;
     border-radius: 15px;
     font-size: 0.8rem;
@@ -101,12 +101,13 @@ body {
 }
 
 .tag:hover {
-    background: #bbdefb;
+    opacity: 0.8;
     transform: translateY(-1px);
 }
 
 .tag.active {
-    background: #1565c0;
+    opacity: 0.9;
+    box-shadow: 0 0 0 2px white, 0 0 0 4px var(--tag-color, #1565c0);
     color: white;
 }
 
@@ -312,7 +313,10 @@ body {
 }
 
 .tag-group-filter {
+    display: block;
+    width: 100%;
     margin-bottom: 1.5rem;
+    clear: both;
 }
 
 .tag-group-header {

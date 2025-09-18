@@ -949,10 +949,34 @@ class SQLiteDatabase extends DatabaseInterface {
     }
 
     async updateTagGroup(groupId, updates) {
+        if (Object.keys(updates).length === 0) return;
+
+        if (this.config.database.type === 'mongodb') {
+            try {
+                const { ObjectId } = require('mongodb');
+                console.log('更新標籤群組:', { groupId, updates });
+
+                const updateDoc = { ...updates };
+                if (updateDoc.updated_at === undefined) {
+                    updateDoc.updated_at = new Date();
+                }
+
+                const result = await this.db.collection('tag_groups').updateOne(
+                    { _id: new ObjectId(groupId) },
+                    { $set: updateDoc }
+                );
+
+                console.log('更新結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
+                return result.modifiedCount > 0;
+            } catch (error) {
+                console.error('更新標籤群組失敗:', error);
+                throw error;
+            }
+        }
+
+        // SQLite implementation
         const fields = Object.keys(updates);
         const values = Object.values(updates);
-
-        if (fields.length === 0) return;
 
         const setClause = fields.map(field => `${field} = ?`).join(', ');
         const sql = `UPDATE tag_groups SET ${setClause} WHERE id = ?`;
@@ -1094,10 +1118,32 @@ class SQLiteDatabase extends DatabaseInterface {
     }
 
     async updateTag(tagId, updates) {
+        if (Object.keys(updates).length === 0) return;
+
+        if (this.config.database.type === 'mongodb') {
+            const { ObjectId } = require('mongodb');
+            const updateDoc = { ...updates };
+            if (updateDoc.updated_at === undefined) {
+                updateDoc.updated_at = new Date();
+            }
+
+            // 如果有 group_id，轉換為 ObjectId
+            if (updateDoc.group_id) {
+                updateDoc.group_id = new ObjectId(updateDoc.group_id);
+            } else if (updateDoc.group_id === null) {
+                updateDoc.group_id = null;
+            }
+
+            const result = await this.db.collection('tags').updateOne(
+                { _id: new ObjectId(tagId) },
+                { $set: updateDoc }
+            );
+            return result.modifiedCount > 0;
+        }
+
+        // SQLite implementation
         const fields = Object.keys(updates);
         const values = Object.values(updates);
-
-        if (fields.length === 0) return;
 
         const setClause = fields.map(field => `${field} = ?`).join(', ');
         const sql = `UPDATE tags SET ${setClause} WHERE id = ?`;
@@ -1241,22 +1287,60 @@ class MongoDatabase extends DatabaseInterface {
         const offset = filters.offset || 0;
         const needCount = filters.count !== false;
 
-        let query = {};
+        // 構建聚合管道
+        const pipeline = [];
 
+        // 第一步：左連接 video_tag_relations
+        pipeline.push({
+            $lookup: {
+                from: 'video_tag_relations',
+                localField: 'fingerprint',
+                foreignField: 'fingerprint',
+                as: 'tag_relation'
+            }
+        });
+
+        // 第二步：添加標籤欄位
+        pipeline.push({
+            $addFields: {
+                tags: {
+                    $ifNull: [
+                        { $arrayElemAt: ['$tag_relation.tags', 0] },
+                        []
+                    ]
+                }
+            }
+        });
+
+        // 第三步：篩選條件
+        const matchStage = {};
         if (filters.filename) {
-            query.filename = new RegExp(filters.filename, 'i');
+            matchStage.filename = new RegExp(filters.filename, 'i');
         }
-
         if (filters.tag) {
-            query.tags = filters.tag;
+            matchStage.tags = filters.tag;
+        }
+        if (Object.keys(matchStage).length > 0) {
+            pipeline.push({ $match: matchStage });
         }
 
-        const videos = await this.db.collection('videos')
-            .find(query)
-            .sort({ file_created_at: -1, created_at: -1 })
-            .skip(offset)
-            .limit(limit)
-            .toArray();
+        // 第四步：排序
+        pipeline.push({
+            $sort: { file_created_at: -1, created_at: -1 }
+        });
+
+        // 第五步：分頁
+        pipeline.push({ $skip: offset });
+        pipeline.push({ $limit: limit });
+
+        // 第六步：清理欄位
+        pipeline.push({
+            $project: {
+                tag_relation: 0
+            }
+        });
+
+        const videos = await this.db.collection('videos').aggregate(pipeline).toArray();
 
         const mappedVideos = videos.map(video => ({
             ...video,
@@ -1266,7 +1350,36 @@ class MongoDatabase extends DatabaseInterface {
 
         // 如果需要計算總數，執行額外查詢
         if (needCount) {
-            const total = await this.db.collection('videos').countDocuments(query);
+            const countPipeline = [
+                {
+                    $lookup: {
+                        from: 'video_tag_relations',
+                        localField: 'fingerprint',
+                        foreignField: 'fingerprint',
+                        as: 'tag_relation'
+                    }
+                },
+                {
+                    $addFields: {
+                        tags: {
+                            $ifNull: [
+                                { $arrayElemAt: ['$tag_relation.tags', 0] },
+                                []
+                            ]
+                        }
+                    }
+                }
+            ];
+
+            if (Object.keys(matchStage).length > 0) {
+                countPipeline.push({ $match: matchStage });
+            }
+
+            countPipeline.push({ $count: 'total' });
+
+            const countResult = await this.db.collection('videos').aggregate(countPipeline).toArray();
+            const total = countResult.length > 0 ? countResult[0].total : 0;
+
             return {
                 videos: mappedVideos,
                 total: total,
@@ -1285,25 +1398,67 @@ class MongoDatabase extends DatabaseInterface {
         const offset = filters.offset || 0;
         const needCount = filters.count !== false;
 
-        let query = {};
+        // 構建聚合管道
+        const pipeline = [];
+
+        // 第一步：左連接 video_tag_relations
+        pipeline.push({
+            $lookup: {
+                from: 'video_tag_relations',
+                localField: 'fingerprint',
+                foreignField: 'fingerprint',
+                as: 'tag_relation'
+            }
+        });
+
+        // 第二步：添加標籤欄位
+        pipeline.push({
+            $addFields: {
+                tags: {
+                    $ifNull: [
+                        { $arrayElemAt: ['$tag_relation.tags', 0] },
+                        []
+                    ]
+                }
+            }
+        });
+
+        // 第三步：篩選條件
+        const matchStage = {};
 
         if (searchTerm && searchTerm.trim()) {
-            query.$or = [
+            matchStage.$or = [
                 { filename: new RegExp(searchTerm, 'i') },
                 { description: new RegExp(searchTerm, 'i') }
             ];
         }
 
         if (tags.length > 0) {
-            query.tags = { $in: tags };
+            // 使用 $all 確保所有指定的標籤都存在
+            matchStage.tags = { $all: tags };
         }
 
-        const videos = await this.db.collection('videos')
-            .find(query)
-            .sort({ file_created_at: -1, created_at: -1 })
-            .skip(offset)
-            .limit(limit)
-            .toArray();
+        if (Object.keys(matchStage).length > 0) {
+            pipeline.push({ $match: matchStage });
+        }
+
+        // 第四步：排序
+        pipeline.push({
+            $sort: { file_created_at: -1, created_at: -1 }
+        });
+
+        // 第五步：分頁
+        pipeline.push({ $skip: offset });
+        pipeline.push({ $limit: limit });
+
+        // 第六步：清理欄位
+        pipeline.push({
+            $project: {
+                tag_relation: 0
+            }
+        });
+
+        const videos = await this.db.collection('videos').aggregate(pipeline).toArray();
 
         const mappedVideos = videos.map(video => ({
             ...video,
@@ -1313,7 +1468,36 @@ class MongoDatabase extends DatabaseInterface {
 
         // 如果需要計算總數，執行額外查詢
         if (needCount) {
-            const total = await this.db.collection('videos').countDocuments(query);
+            const countPipeline = [
+                {
+                    $lookup: {
+                        from: 'video_tag_relations',
+                        localField: 'fingerprint',
+                        foreignField: 'fingerprint',
+                        as: 'tag_relation'
+                    }
+                },
+                {
+                    $addFields: {
+                        tags: {
+                            $ifNull: [
+                                { $arrayElemAt: ['$tag_relation.tags', 0] },
+                                []
+                            ]
+                        }
+                    }
+                }
+            ];
+
+            if (Object.keys(matchStage).length > 0) {
+                countPipeline.push({ $match: matchStage });
+            }
+
+            countPipeline.push({ $count: 'total' });
+
+            const countResult = await this.db.collection('videos').aggregate(countPipeline).toArray();
+            const total = countResult.length > 0 ? countResult[0].total : 0;
+
             return {
                 videos: mappedVideos,
                 total: total,
@@ -1357,16 +1541,18 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async addVideoTag(fingerprint, tagName) {
-        // 獲取當前影片文檔
+        // 確保影片存在
         const video = await this.db.collection('videos').findOne({ fingerprint });
-
         if (!video) {
             throw new Error(`找不到指紋為 ${fingerprint} 的影片`);
         }
 
+        // 從 video_tag_relations 集合獲取當前標籤
+        const relation = await this.db.collection('video_tag_relations').findOne({ fingerprint });
+
         let tags = [];
-        if (video.tags) {
-            tags = Array.isArray(video.tags) ? video.tags : [];
+        if (relation && relation.tags) {
+            tags = Array.isArray(relation.tags) ? relation.tags : [];
         }
 
         // 添加新標籤（如果不存在）
@@ -1374,43 +1560,55 @@ class MongoDatabase extends DatabaseInterface {
             tags.push(tagName);
         }
 
-        await this.db.collection('videos').updateOne(
+        // 更新或插入到 video_tag_relations 集合
+        await this.db.collection('video_tag_relations').updateOne(
             { fingerprint },
             {
                 $set: {
                     tags,
                     updated_at: new Date()
+                },
+                $setOnInsert: {
+                    created_at: new Date()
                 }
-            }
+            },
+            { upsert: true }
         );
     }
 
     async removeVideoTag(fingerprint, tagName) {
-        // 獲取當前影片文檔
+        // 確保影片存在
         const video = await this.db.collection('videos').findOne({ fingerprint });
-
         if (!video) {
             throw new Error(`找不到指紋為 ${fingerprint} 的影片`);
         }
 
+        // 從 video_tag_relations 集合獲取當前標籤
+        const relation = await this.db.collection('video_tag_relations').findOne({ fingerprint });
+
         let tags = [];
-        if (video.tags) {
-            tags = Array.isArray(video.tags) ? video.tags : [];
+        if (relation && relation.tags) {
+            tags = Array.isArray(relation.tags) ? relation.tags : [];
         }
 
         // 移除標籤
         tags = tags.filter(tag => tag !== tagName);
 
-        // 更新標籤陣列（即使是空陣列也要更新）
-        await this.db.collection('videos').updateOne(
-            { fingerprint },
-            {
-                $set: {
-                    tags,
-                    updated_at: new Date()
+        if (tags.length === 0) {
+            // 如果沒有標籤了，刪除記錄
+            await this.db.collection('video_tag_relations').deleteOne({ fingerprint });
+        } else {
+            // 更新標籤陣列
+            await this.db.collection('video_tag_relations').updateOne(
+                { fingerprint },
+                {
+                    $set: {
+                        tags,
+                        updated_at: new Date()
+                    }
                 }
-            }
-        );
+            );
+        }
     }
 
     async deleteVideoMetadata(fingerprint) {
@@ -1679,9 +1877,11 @@ class MongoDatabase extends DatabaseInterface {
         for (const group of groups) {
             const tags = await this.db.collection('tags').find({ group_id: group._id }).toArray();
 
-            // 計算每個標籤的影片數量
+            // 計算每個標籤的影片數量 - 從 video_tag_relations 集合查詢
             const tagsWithCount = await Promise.all(tags.map(async (tag) => {
-                const count = await this.db.collection('videos').countDocuments({ tags: { $in: [tag.name] } });
+                const count = await this.db.collection('video_tag_relations').countDocuments({
+                    tags: { $in: [tag.name] }
+                });
 
                 return {
                     id: tag._id.toString(),
@@ -1707,7 +1907,9 @@ class MongoDatabase extends DatabaseInterface {
 
         if (unGroupedTags.length > 0) {
             const tagsWithCount = await Promise.all(unGroupedTags.map(async (tag) => {
-                const count = await this.db.collection('videos').countDocuments({ tags: { $in: [tag.name] } });
+                const count = await this.db.collection('video_tag_relations').countDocuments({
+                    tags: { $in: [tag.name] }
+                });
                 return {
                     id: tag._id.toString(),
                     name: tag.name,
@@ -1728,33 +1930,6 @@ class MongoDatabase extends DatabaseInterface {
         return result;
     }
 
-    async updateTag(tagId, updates) {
-        const objectId = new ObjectId(tagId);
-        const updateDoc = {
-            $set: {
-                ...updates,
-                updated_at: new Date()
-            }
-        };
-
-        // 如果有 group_id，轉換為 ObjectId
-        if (updates.group_id) {
-            updateDoc.$set.group_id = new ObjectId(updates.group_id);
-        } else if (updates.group_id === null) {
-            updateDoc.$set.group_id = null;
-        }
-
-        const result = await this.db.collection('tags').updateOne(
-            { _id: objectId },
-            updateDoc
-        );
-
-        if (result.matchedCount === 0) {
-            throw new Error('標籤不存在');
-        }
-
-        return result.modifiedCount > 0;
-    }
 
     async deleteTag(tagId) {
         const objectId = new ObjectId(tagId);
@@ -1776,6 +1951,57 @@ class MongoDatabase extends DatabaseInterface {
         }
 
         return true;
+    }
+
+    async updateTagGroup(groupId, updates) {
+        try {
+            console.log('更新標籤群組:', { groupId, updates });
+
+            const updateDoc = { ...updates };
+            if (updateDoc.updated_at === undefined) {
+                updateDoc.updated_at = new Date();
+            }
+
+            const result = await this.db.collection('tag_groups').updateOne(
+                { _id: new ObjectId(groupId) },
+                { $set: updateDoc }
+            );
+
+            console.log('更新結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
+            return result.modifiedCount > 0;
+        } catch (error) {
+            console.error('更新標籤群組失敗:', error);
+            throw error;
+        }
+    }
+
+    async updateTag(tagId, updates) {
+        try {
+            console.log('更新標籤:', { tagId, updates });
+
+            const updateDoc = { ...updates };
+            if (updateDoc.updated_at === undefined) {
+                updateDoc.updated_at = new Date();
+            }
+
+            // 如果有 group_id，轉換為 ObjectId
+            if (updateDoc.group_id) {
+                updateDoc.group_id = new ObjectId(updateDoc.group_id);
+            } else if (updateDoc.group_id === null) {
+                updateDoc.group_id = null;
+            }
+
+            const result = await this.db.collection('tags').updateOne(
+                { _id: new ObjectId(tagId) },
+                { $set: updateDoc }
+            );
+
+            console.log('更新標籤結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
+            return result.modifiedCount > 0;
+        } catch (error) {
+            console.error('更新標籤失敗:', error);
+            throw error;
+        }
     }
 
     close() {
