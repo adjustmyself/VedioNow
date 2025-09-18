@@ -353,27 +353,59 @@ class SQLiteDatabase extends DatabaseInterface {
         params.push(limit, offset);
 
         return new Promise((resolve, reject) => {
-            this.db.all(sql, params, (err, rows) => {
+            this.db.all(sql, params, async (err, rows) => {
                 if (err) {
                     reject(err);
                 } else {
-                    const videos = rows.map(row => {
-                        let tags = [];
+                    // 為每個視頻獲取標籤的完整信息（包括顏色）
+                    const videos = await Promise.all(rows.map(async row => {
+                        let tagNames = [];
                         try {
                             if (row.tag_json && row.tag_json !== 'null' && row.tag_json !== '') {
-                                tags = JSON.parse(row.tag_json);
+                                tagNames = JSON.parse(row.tag_json);
                             }
                         } catch (e) {
                             console.warn(`解析標籤 JSON 失敗: ${row.tag_json}`, e);
-                            tags = [];
+                            tagNames = [];
                         }
+
+                        // 獲取標籤的完整信息
+                        let tagsWithColors = [];
+                        if (Array.isArray(tagNames) && tagNames.length > 0) {
+                            const tagPlaceholders = tagNames.map(() => '?').join(',');
+                            const tagSql = `SELECT name, color FROM tags WHERE name IN (${tagPlaceholders})`;
+
+                            try {
+                                const tagRows = await new Promise((resolve, reject) => {
+                                    this.db.all(tagSql, tagNames, (err, rows) => {
+                                        if (err) reject(err);
+                                        else resolve(rows);
+                                    });
+                                });
+
+                                tagsWithColors = tagNames.map(tagName => {
+                                    const tagInfo = tagRows.find(t => t.name === tagName);
+                                    return {
+                                        name: tagName,
+                                        color: tagInfo ? tagInfo.color : '#3b82f6' // 預設顏色
+                                    };
+                                });
+                            } catch (e) {
+                                console.warn(`獲取標籤顏色失敗:`, e);
+                                tagsWithColors = tagNames.map(name => ({
+                                    name,
+                                    color: '#3b82f6'
+                                }));
+                            }
+                        }
+
                         return {
                             ...row,
                             rating: row.rating || 0,
                             description: row.description || '',
-                            tags: Array.isArray(tags) ? tags : []
+                            tags: tagsWithColors
                         };
-                    });
+                    }));
 
                     // 如果需要計算總數，執行額外查詢
                     if (needCount) {
@@ -528,27 +560,59 @@ class SQLiteDatabase extends DatabaseInterface {
         params.push(limit, offset);
 
         return new Promise((resolve, reject) => {
-            this.db.all(sql, params, (err, rows) => {
+            this.db.all(sql, params, async (err, rows) => {
                 if (err) {
                     reject(err);
                 } else {
-                    const videos = rows.map(row => {
-                        let parsedTags = [];
+                    // 為每個視頻獲取標籤的完整信息（包括顏色）
+                    const videos = await Promise.all(rows.map(async row => {
+                        let tagNames = [];
                         try {
                             if (row.tag_json && row.tag_json !== 'null' && row.tag_json !== '') {
-                                parsedTags = JSON.parse(row.tag_json);
+                                tagNames = JSON.parse(row.tag_json);
                             }
                         } catch (e) {
                             console.warn(`解析標籤 JSON 失敗: ${row.tag_json}`, e);
-                            parsedTags = [];
+                            tagNames = [];
                         }
+
+                        // 獲取標籤的完整信息
+                        let tagsWithColors = [];
+                        if (Array.isArray(tagNames) && tagNames.length > 0) {
+                            const tagPlaceholders = tagNames.map(() => '?').join(',');
+                            const tagSql = `SELECT name, color FROM tags WHERE name IN (${tagPlaceholders})`;
+
+                            try {
+                                const tagRows = await new Promise((resolve, reject) => {
+                                    this.db.all(tagSql, tagNames, (err, rows) => {
+                                        if (err) reject(err);
+                                        else resolve(rows);
+                                    });
+                                });
+
+                                tagsWithColors = tagNames.map(tagName => {
+                                    const tagInfo = tagRows.find(t => t.name === tagName);
+                                    return {
+                                        name: tagName,
+                                        color: tagInfo ? tagInfo.color : '#3b82f6' // 預設顏色
+                                    };
+                                });
+                            } catch (e) {
+                                console.warn(`獲取標籤顏色失敗:`, e);
+                                tagsWithColors = tagNames.map(name => ({
+                                    name,
+                                    color: '#3b82f6'
+                                }));
+                            }
+                        }
+
                         return {
                             ...row,
                             rating: row.rating || 0,
                             description: row.description || '',
-                            tags: Array.isArray(parsedTags) ? parsedTags : []
+                            tags: tagsWithColors
                         };
-                    });
+                    }));
 
                     // 如果需要計算總數，執行額外查詢
                     if (needCount) {

@@ -249,7 +249,14 @@ class VideoManager {
 
   createVideoCard(video) {
     const tags = video.tags && video.tags.length > 0
-      ? video.tags.map(tag => `<span class="tag">${tag}</span>`).join('')
+      ? video.tags.map(tag => {
+          // 支援舊格式（字串）和新格式（物件）
+          if (typeof tag === 'string') {
+            return `<span class="tag" style="--tag-color: #3b82f6;">${tag}</span>`;
+          } else {
+            return `<span class="tag" style="--tag-color: ${tag.color};">${tag.name}</span>`;
+          }
+        }).join('')
       : '<span class="no-tags">無標籤</span>';
 
     const filename = video.filename || '未知檔名';
@@ -281,7 +288,14 @@ class VideoManager {
 
   createVideoListItem(video) {
     const tags = video.tags && video.tags.length > 0
-      ? video.tags.map(tag => `<span class="tag">${tag}</span>`).join('')
+      ? video.tags.map(tag => {
+          // 支援舊格式（字串）和新格式（物件）
+          if (typeof tag === 'string') {
+            return `<span class="tag" style="--tag-color: #3b82f6;">${tag}</span>`;
+          } else {
+            return `<span class="tag" style="--tag-color: ${tag.color};">${tag.name}</span>`;
+          }
+        }).join('')
       : '<span class="no-tags">無標籤</span>';
 
     const filename = video.filename || '未知檔名';
@@ -906,7 +920,14 @@ class VideoManager {
     const tagsElement = videoCard.querySelector('.video-tags');
     if (tagsElement) {
       const tags = video.tags && video.tags.length > 0
-        ? video.tags.map(tag => `<span class="tag">${tag}</span>`).join('')
+        ? video.tags.map(tag => {
+            // 支援舊格式（字串）和新格式（物件）
+            if (typeof tag === 'string') {
+              return `<span class="tag" style="--tag-color: #3b82f6;">${tag}</span>`;
+            } else {
+              return `<span class="tag" style="--tag-color: ${tag.color};">${tag.name}</span>`;
+            }
+          }).join('')
         : '<span class="no-tags">無標籤</span>';
       tagsElement.innerHTML = tags;
     }
