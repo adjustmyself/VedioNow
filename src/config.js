@@ -6,7 +6,7 @@ class Config {
     this.configPath = path.join(__dirname, '../data/config.json');
     this.defaultConfig = {
       database: {
-        type: 'sqlite', // 'sqlite' 或 'mongodb'
+        type: 'mongodb',
         mongodb: {
           host: '127.0.0.1',
           port: 27017,
@@ -16,9 +16,6 @@ class Config {
           authSource: 'admin',
           ssl: false,
           connectionString: '' // 如果有自定義連線字串
-        },
-        sqlite: {
-          path: path.join(__dirname, '../data/videos.db')
         }
       },
       app: {

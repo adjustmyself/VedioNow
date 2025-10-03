@@ -37,9 +37,8 @@ This is an Electron application with a main/renderer process architecture:
 ### Core Components
 
 **Database (`src/database.js`)**
-- SQLite3 database wrapper class
+- MongoDB database wrapper class
 - Manages video metadata, tags, and tag groups
-- Located at `data/videos.db`
 - Handles CRUD operations for videos and tagging system
 
 **VideoScanner (`src/videoScanner.js`)**
@@ -65,25 +64,25 @@ This is an Electron application with a main/renderer process architecture:
 
 ## Database Schema
 
-The SQLite database includes these main tables:
+The MongoDB database includes these main collections:
 - `videos` - Video file metadata, ratings, descriptions
 - `tag_groups` - Tag categories with colors and sorting
 - `tags` - Individual tags linked to groups
-- `video_tags` - Many-to-many relationship between videos and tags
+- `video_tag_relations` - Tag relationships for videos based on fingerprint
 
 ## File Structure
 
 ```
 src/
 ├── main.js              # Electron main process
-├── database.js          # SQLite database operations
+├── database.js          # MongoDB database operations
 ├── videoScanner.js      # Directory scanning and monitoring
 └── renderer/
     ├── index.html       # Main UI
     ├── renderer.js      # Frontend logic (VideoManager class)
     ├── styles.css       # Main styles
     └── tag-manager.*    # Tag management window
-data/                    # SQLite database location
+data/                    # Thumbnails and config storage
 dist/                    # Build output directory
 ```
 

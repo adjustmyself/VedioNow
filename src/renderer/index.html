@@ -20,7 +20,22 @@
 
         <div class="main-container">
             <aside class="sidebar">
+                <h3>評分篩選</h3>
+                <div id="rating-filter" class="rating-filter">
+                    <div class="rating-option active" data-rating="0">
+                        <span class="rating-label">全部評分</span>
+                    </div>
+                    <div class="rating-filter-stars">
+                        <span class="filter-star" data-rating="1">☆</span>
+                        <span class="filter-star" data-rating="2">☆</span>
+                        <span class="filter-star" data-rating="3">☆</span>
+                        <span class="filter-star" data-rating="4">☆</span>
+                        <span class="filter-star" data-rating="5">☆</span>
+                    </div>
+                </div>
+
                 <h3>標籤篩選</h3>
+                <button id="reset-tags-btn" class="btn btn-reset">重置標籤篩選</button>
                 <div id="tags-filter" class="tags-container">
                     <!-- 標籤會動態加載到這裡 -->
                 </div>

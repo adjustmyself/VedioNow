@@ -42,47 +42,8 @@
                         <p class="section-description">選擇資料庫類型並配置連線參數</p>
                     </div>
 
-                    <div class="settings-card">
-                        <h3>資料庫類型</h3>
-                        <div class="database-type-selector">
-                            <label class="database-option">
-                                <input type="radio" name="database-type" value="sqlite" checked>
-                                <div class="option-content">
-                                    <div class="option-icon">📁</div>
-                                    <div class="option-info">
-                                        <div class="option-title">SQLite (本地檔案)</div>
-                                        <div class="option-description">輕量級本地資料庫，適合單機使用</div>
-                                    </div>
-                                </div>
-                            </label>
-                            <label class="database-option">
-                                <input type="radio" name="database-type" value="mongodb">
-                                <div class="option-content">
-                                    <div class="option-icon">🍃</div>
-                                    <div class="option-info">
-                                        <div class="option-title">MongoDB</div>
-                                        <div class="option-description">NoSQL資料庫，支援分散式和多用戶存取</div>
-                                    </div>
-                                </div>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- SQLite 設定 -->
-                    <div id="sqlite-config" class="settings-card">
-                        <h3>SQLite 設定</h3>
-                        <div class="form-group">
-                            <label for="sqlite-path">資料庫檔案路徑:</label>
-                            <div class="path-input">
-                                <input type="text" id="sqlite-path" readonly>
-                                <button id="browse-sqlite-path" class="btn btn-secondary btn-small">瀏覽</button>
-                            </div>
-                            <p class="field-description">SQLite資料庫檔案的儲存位置</p>
-                        </div>
-                    </div>
-
                     <!-- MongoDB 設定 -->
-                    <div id="mongodb-config" class="settings-card hidden">
+                    <div id="mongodb-config" class="settings-card">
                         <h3>MongoDB 連線設定</h3>
 
                         <div class="connection-tabs">

@@ -21,13 +21,6 @@ class SettingsManager {
             });
         });
 
-        // 資料庫類型切換
-        document.querySelectorAll('input[name="database-type"]').forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                this.toggleDatabaseConfig(e.target.value);
-            });
-        });
-
         // 分頁切換
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -49,11 +42,6 @@ class SettingsManager {
         // 重置設定按鈕
         document.getElementById('reset-settings-btn').addEventListener('click', () => {
             this.resetSettings();
-        });
-
-        // 瀏覽SQLite路徑按鈕
-        document.getElementById('browse-sqlite-path').addEventListener('click', () => {
-            this.browseSQLitePath();
         });
 
         // 模態框關閉
@@ -134,34 +122,10 @@ class SettingsManager {
         document.getElementById(`${tab}-tab`).classList.add('active');
     }
 
-    toggleDatabaseConfig(type) {
-        const sqliteConfig = document.getElementById('sqlite-config');
-        const mongodbConfig = document.getElementById('mongodb-config');
-
-        if (type === 'sqlite') {
-            sqliteConfig.classList.remove('hidden');
-            mongodbConfig.classList.add('hidden');
-        } else {
-            sqliteConfig.classList.add('hidden');
-            mongodbConfig.classList.remove('hidden');
-        }
-
-        this.clearConnectionStatus();
-    }
 
     async loadSettings() {
         try {
             this.config = await ipcRenderer.invoke('get-config');
-
-            // 載入資料庫設定
-            const dbType = this.config.database?.type || 'sqlite';
-            document.querySelector(`input[name="database-type"][value="${dbType}"]`).checked = true;
-            this.toggleDatabaseConfig(dbType);
-
-            // SQLite 設定
-            if (this.config.database?.sqlite?.path) {
-                document.getElementById('sqlite-path').value = this.config.database.sqlite.path;
-            }
 
             // MongoDB 設定
             const mongodb = this.config.database?.mongodb || {};
@@ -205,14 +169,9 @@ class SettingsManager {
     }
 
     collectSettings() {
-        const dbType = document.querySelector('input[name="database-type"]:checked').value;
-
         const settings = {
             database: {
-                type: dbType,
-                sqlite: {
-                    path: document.getElementById('sqlite-path').value
-                },
+                type: 'mongodb',
                 mongodb: {
                     host: document.getElementById('mongodb-host').value,
                     port: parseInt(document.getElementById('mongodb-port').value),
@@ -295,26 +254,6 @@ class SettingsManager {
         const statusEl = document.getElementById('connection-status');
         statusEl.className = 'connection-status';
         statusEl.textContent = '';
-    }
-
-    async browseSQLitePath() {
-        try {
-            const result = await ipcRenderer.invoke('dialog-save-file', {
-                title: '選擇SQLite資料庫檔案位置',
-                defaultPath: 'videos.db',
-                filters: [
-                    { name: 'SQLite資料庫', extensions: ['db', 'sqlite', 'sqlite3'] },
-                    { name: '所有檔案', extensions: ['*'] }
-                ]
-            });
-
-            if (result && !result.canceled) {
-                document.getElementById('sqlite-path').value = result.filePath;
-            }
-        } catch (error) {
-            console.error('選擇檔案失敗:', error);
-            this.showError('選擇檔案失敗: ' + error.message);
-        }
     }
 
     showModal(modalId) {

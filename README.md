@@ -133,7 +133,7 @@ VideoNow 支援 Windows 網路磁碟路徑：
 
 ## 資料儲存
 
-- 影片資訊儲存在 SQLite 資料庫中
+- 影片資訊儲存在 MongoDB 資料庫中
 - 資料庫位置：`data/videos.db`
 - 不會修改或移動原始影片檔案
 - 刪除程式不會影響影片檔案
@@ -173,7 +173,7 @@ A: 可能原因：
 
 - **前端**: HTML, CSS, JavaScript
 - **後端**: Node.js, Electron
-- **資料庫**: SQLite3
+- **資料庫**: MongoDB
 - **檔案監控**: Chokidar
 
 ### 專案結構

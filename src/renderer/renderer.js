@@ -6,6 +6,7 @@ class VideoManager {
     this.currentVideos = [];
     this.allTags = [];
     this.activeTags = new Set();
+    this.selectedRating = 0; // 0 表示全部
     this.currentSort = 'file_created_at';
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
@@ -29,6 +30,7 @@ class VideoManager {
       scanBtn: document.getElementById('scan-btn'),
       searchInput: document.getElementById('search-input'),
       tagsFilter: document.getElementById('tags-filter'),
+      resetTagsBtn: document.getElementById('reset-tags-btn'),
       videosContainer: document.getElementById('videos-container'),
       totalVideos: document.getElementById('total-videos'),
       totalTags: document.getElementById('total-tags'),
@@ -64,6 +66,7 @@ class VideoManager {
     this.elements.settingsBtn.addEventListener('click', () => this.openSettings());
     this.elements.scanBtn.addEventListener('click', () => this.showScanModal());
     this.elements.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
+    this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
     this.elements.gridViewBtn.addEventListener('click', () => this.setViewMode('grid'));
     this.elements.listViewBtn.addEventListener('click', () => this.setViewMode('list'));
     this.elements.sortSelect.addEventListener('change', (e) => this.setSortField(e.target.value));
@@ -73,6 +76,7 @@ class VideoManager {
     this.elements.browseFolder.addEventListener('click', () => this.selectFolder());
     this.elements.startScan.addEventListener('click', () => this.startScan());
     this.elements.cancelScan.addEventListener('click', () => this.hideScanModal());
+    this.bindRatingFilterEvents();
 
     // 監聽掃描進度
     ipcRenderer.on('scan-progress', (event, progressData) => {
@@ -118,7 +122,8 @@ class VideoManager {
   async loadVideos() {
     const filters = {
       limit: this.pageSize,
-      offset: (this.currentPage - 1) * this.pageSize
+      offset: (this.currentPage - 1) * this.pageSize,
+      rating: this.selectedRating
     };
 
     const result = await ipcRenderer.invoke('get-videos', filters);
@@ -160,7 +165,8 @@ class VideoManager {
       const activeTagsArray = Array.from(this.activeTags);
       const filters = {
         limit: this.pageSize,
-        offset: (this.currentPage - 1) * this.pageSize
+        offset: (this.currentPage - 1) * this.pageSize,
+        rating: this.selectedRating
       };
 
       const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
@@ -265,6 +271,10 @@ class VideoManager {
       ? new Date(video.file_created_at).toLocaleDateString()
       : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
 
+    // 生成星星評分
+    const rating = video.rating || 0;
+    const stars = this.generateStars(rating);
+
     return `
       <div class="video-card" data-video-id="${video.id}">
         <div class="video-thumbnail" data-filepath="${video.filepath}">
@@ -280,6 +290,7 @@ class VideoManager {
           <div class="video-meta">
             ${filesize} • ${createdDate}
           </div>
+          <div class="video-rating">${stars}</div>
           <div class="video-tags">${tags}</div>
         </div>
       </div>
@@ -304,6 +315,10 @@ class VideoManager {
       ? new Date(video.file_created_at).toLocaleDateString()
       : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
 
+    // 生成星星評分
+    const rating = video.rating || 0;
+    const stars = this.generateStars(rating);
+
     return `
       <div class="video-list-item" data-video-id="${video.id}">
         <div class="video-list-thumbnail" data-filepath="${video.filepath}">
@@ -319,6 +334,7 @@ class VideoManager {
           <div class="video-meta">
             ${filesize} • ${createdDate}
           </div>
+          <div class="video-rating">${stars}</div>
           <div class="video-tags">${tags}</div>
         </div>
       </div>
@@ -330,9 +346,7 @@ class VideoManager {
     videoElements.forEach(element => {
       element.addEventListener('click', () => {
         const videoId = element.dataset.videoId;
-        // 嘗試轉換為數字（SQLite），如果失敗則保持字串（MongoDB）
-        const id = isNaN(videoId) ? videoId : parseInt(videoId);
-        this.showVideoModal(id);
+        this.showVideoModal(videoId);
       });
     });
 
@@ -655,12 +669,67 @@ class VideoManager {
     });
   }
 
+  bindRatingFilterEvents() {
+    // 綁定「全部」按鈕
+    const allOption = document.querySelector('.rating-option[data-rating="0"]');
+    if (allOption) {
+      allOption.addEventListener('click', () => {
+        this.setRatingFilter(0);
+      });
+    }
+
+    // 綁定星星點擊事件
+    const filterStars = document.querySelectorAll('.filter-star');
+    filterStars.forEach((star) => {
+      star.addEventListener('click', () => {
+        const rating = parseInt(star.dataset.rating);
+        this.setRatingFilter(rating);
+      });
+    });
+  }
+
+  setRatingFilter(rating) {
+    this.selectedRating = rating;
+    this.currentPage = 1; // 重置到第一頁
+
+    // 更新「全部」按鈕狀態
+    const allOption = document.querySelector('.rating-option[data-rating="0"]');
+    if (allOption) {
+      allOption.classList.toggle('active', rating === 0);
+    }
+
+    // 更新星星狀態
+    const filterStars = document.querySelectorAll('.filter-star');
+    filterStars.forEach((star) => {
+      const starRating = parseInt(star.dataset.rating);
+      if (rating === 0) {
+        star.classList.remove('active');
+        star.textContent = '☆';
+      } else if (starRating <= rating) {
+        star.classList.add('active');
+        star.textContent = '★';
+      } else {
+        star.classList.remove('active');
+        star.textContent = '☆';
+      }
+    });
+
+    // 重新載入影片
+    this.handleSearch(this.elements.searchInput.value);
+  }
+
   toggleTagFilter(tagName) {
     if (this.activeTags.has(tagName)) {
       this.activeTags.delete(tagName);
     } else {
       this.activeTags.add(tagName);
     }
+    this.renderTagsFilter();
+    this.handleSearch(this.elements.searchInput.value);
+  }
+
+  resetTagsFilter() {
+    this.activeTags.clear();
     this.renderTagsFilter();
     this.handleSearch(this.elements.searchInput.value);
   }
@@ -1142,7 +1211,8 @@ class VideoManager {
         // 有搜尋條件時，保持搜尋狀態進行分頁
         const filters = {
           limit: this.pageSize,
-          offset: (this.currentPage - 1) * this.pageSize
+          offset: (this.currentPage - 1) * this.pageSize,
+          rating: this.selectedRating
         };
 
         const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
@@ -1276,6 +1346,18 @@ class VideoManager {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  }
+
+  generateStars(rating) {
+    const stars = [];
+    for (let i = 1; i <= 5; i++) {
+      if (i <= rating) {
+        stars.push('<span class="star filled">★</span>');
+      } else {
+        stars.push('<span class="star">☆</span>');
+      }
+    }
+    return stars.join('');
   }
 
   // 清理資源 (當頁面卸載或重新載入時)
