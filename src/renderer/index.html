@@ -149,6 +149,25 @@
                             <button id="add-tag-btn" class="btn btn-small">新增</button>
                         </div>
                     </div>
+
+                    <!-- 影片合集區域 -->
+                    <div class="info-group" id="collection-section">
+                        <label>影片合集:</label>
+                        <div class="collection-controls">
+                            <button id="create-collection-btn" class="btn btn-primary">📁 合併同資料夾影片</button>
+                            <button id="remove-collection-btn" class="btn btn-danger hidden">🔓 取消合併</button>
+                        </div>
+                        <div id="collection-list" class="collection-list hidden">
+                            <h4>📺 合集清單</h4>
+                            <div id="collection-name-edit" class="collection-name-edit">
+                                <input type="text" id="collection-name-input" placeholder="合集名稱">
+                                <button id="save-collection-name" class="btn btn-small">儲存</button>
+                            </div>
+                            <div id="collection-episodes" class="collection-episodes">
+                                <!-- 動態渲染子影片清單 -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -156,6 +175,49 @@
                 <button id="delete-video" class="btn btn-danger">刪除影片記錄</button>
                 <button id="delete-video-file" class="btn btn-danger-alt">🗑️ 刪除檔案</button>
                 <button id="open-file" class="btn btn-secondary">開啟檔案</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 合併影片選擇模態框 -->
+    <div id="collection-select-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>建立影片合集</h2>
+                <button id="collection-select-close" class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="collection-form">
+                    <div class="info-group">
+                        <label>資料夾路徑:</label>
+                        <span id="collection-folder-path" class="folder-path-display"></span>
+                    </div>
+                    <div class="info-group">
+                        <label>找到影片數:</label>
+                        <span id="folder-video-count" class="video-count">0</span> 個
+                    </div>
+                    <div class="info-group">
+                        <label>合集名稱:</label>
+                        <input type="text" id="collection-name-new" placeholder="例：影集名稱 第一季" class="form-input">
+                    </div>
+                    <div class="info-group">
+                        <label>主影片 (封面):</label>
+                        <select id="main-video-select" class="form-select">
+                            <!-- 動態載入同資料夾影片 -->
+                        </select>
+                    </div>
+                    <div class="info-group">
+                        <label>包含的影片:</label>
+                        <div class="video-selection-hint">選擇要包含在合集中的影片（可拖曳調整順序）</div>
+                        <div id="child-videos-list" class="child-videos-list">
+                            <!-- 可選擇和拖曳排序的影片清單 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="confirm-collection" class="btn btn-primary">確認合併</button>
+                <button id="cancel-collection" class="btn btn-secondary">取消</button>
             </div>
         </div>
     </div>

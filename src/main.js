@@ -330,6 +330,68 @@ ipcMain.handle('delete-tag', async (event, tagId) => {
   }
 });
 
+// ========== 影片合集相關 IPC Handlers ==========
+
+ipcMain.handle('create-collection', async (event, mainFingerprint, childFingerprints, collectionName, folderPath) => {
+  try {
+    const result = await database.createVideoCollection(mainFingerprint, childFingerprints, collectionName, folderPath);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error creating collection:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('remove-collection', async (event, mainFingerprint) => {
+  try {
+    const result = await database.removeVideoCollection(mainFingerprint);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error removing collection:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-collection', async (event, mainFingerprint) => {
+  try {
+    const collection = await database.getVideoCollection(mainFingerprint);
+    return { success: true, data: collection };
+  } catch (error) {
+    console.error('Error getting collection:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('update-collection', async (event, mainFingerprint, updates) => {
+  try {
+    const result = await database.updateVideoCollection(mainFingerprint, updates);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error updating collection:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('remove-video-from-collection', async (event, mainFingerprint, childFingerprint) => {
+  try {
+    const result = await database.removeVideoFromCollection(mainFingerprint, childFingerprint);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error removing video from collection:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-folder-videos', async (event, folderPath) => {
+  try {
+    const videos = await database.getVideosByFolder(folderPath);
+    return { success: true, data: videos };
+  } catch (error) {
+    console.error('Error getting folder videos:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // 開啟標籤管理視窗
 ipcMain.handle('open-tag-manager', async () => {
   const tagWindow = new BrowserWindow({

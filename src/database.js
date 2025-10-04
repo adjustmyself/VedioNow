@@ -220,7 +220,27 @@ class MongoDatabase extends DatabaseInterface {
             }
         });
 
-        // 第三步：篩選條件
+        // 第三步：左連接 video_collections 過濾子影片
+        pipeline.push({
+            $lookup: {
+                from: 'video_collections',
+                localField: 'fingerprint',
+                foreignField: 'fingerprint',
+                as: 'collection_info'
+            }
+        });
+
+        // 第四步：過濾掉 is_main=false 的影片
+        pipeline.push({
+            $match: {
+                $or: [
+                    { 'collection_info': { $size: 0 } },  // 不在合集中
+                    { 'collection_info.is_main': true }    // 或是主影片
+                ]
+            }
+        });
+
+        // 第五步：篩選條件
         const matchStage = {};
         if (filters.filename) {
             matchStage.filename = new RegExp(filters.filename, 'i');
@@ -235,19 +255,20 @@ class MongoDatabase extends DatabaseInterface {
             pipeline.push({ $match: matchStage });
         }
 
-        // 第四步：排序
+        // 第六步：排序
         pipeline.push({
             $sort: { file_created_at: -1, created_at: -1 }
         });
 
-        // 第五步：分頁
+        // 第七步：分頁
         pipeline.push({ $skip: offset });
         pipeline.push({ $limit: limit });
 
-        // 第六步：清理欄位
+        // 第八步：清理欄位
         pipeline.push({
             $project: {
-                tag_relation: 0
+                tag_relation: 0,
+                collection_info: 0
             }
         });
 
@@ -278,6 +299,22 @@ class MongoDatabase extends DatabaseInterface {
                                 []
                             ]
                         }
+                    }
+                },
+                {
+                    $lookup: {
+                        from: 'video_collections',
+                        localField: 'fingerprint',
+                        foreignField: 'fingerprint',
+                        as: 'collection_info'
+                    }
+                },
+                {
+                    $match: {
+                        $or: [
+                            { 'collection_info': { $size: 0 } },
+                            { 'collection_info.is_main': true }
+                        ]
                     }
                 }
             ];
@@ -334,7 +371,27 @@ class MongoDatabase extends DatabaseInterface {
             }
         });
 
-        // 第三步：篩選條件
+        // 第三步：左連接 video_collections 過濾子影片
+        pipeline.push({
+            $lookup: {
+                from: 'video_collections',
+                localField: 'fingerprint',
+                foreignField: 'fingerprint',
+                as: 'collection_info'
+            }
+        });
+
+        // 第四步：過濾掉 is_main=false 的影片
+        pipeline.push({
+            $match: {
+                $or: [
+                    { 'collection_info': { $size: 0 } },
+                    { 'collection_info.is_main': true }
+                ]
+            }
+        });
+
+        // 第五步：篩選條件
         const matchStage = {};
 
         if (searchTerm && searchTerm.trim()) {
@@ -357,19 +414,20 @@ class MongoDatabase extends DatabaseInterface {
             pipeline.push({ $match: matchStage });
         }
 
-        // 第四步：排序
+        // 第六步：排序
         pipeline.push({
             $sort: { file_created_at: -1, created_at: -1 }
         });
 
-        // 第五步：分頁
+        // 第七步：分頁
         pipeline.push({ $skip: offset });
         pipeline.push({ $limit: limit });
 
-        // 第六步：清理欄位
+        // 第八步：清理欄位
         pipeline.push({
             $project: {
-                tag_relation: 0
+                tag_relation: 0,
+                collection_info: 0
             }
         });
 
@@ -400,6 +458,22 @@ class MongoDatabase extends DatabaseInterface {
                                 []
                             ]
                         }
+                    }
+                },
+                {
+                    $lookup: {
+                        from: 'video_collections',
+                        localField: 'fingerprint',
+                        foreignField: 'fingerprint',
+                        as: 'collection_info'
+                    }
+                },
+                {
+                    $match: {
+                        $or: [
+                            { 'collection_info': { $size: 0 } },
+                            { 'collection_info.is_main': true }
+                        ]
                     }
                 }
             ];
@@ -915,6 +989,125 @@ class MongoDatabase extends DatabaseInterface {
             return result.modifiedCount > 0;
         } catch (error) {
             console.error('更新標籤失敗:', error);
+            throw error;
+        }
+    }
+
+    // ========== 影片合集相關方法 ==========
+
+    async createVideoCollection(mainVideoFingerprint, childVideoFingerprints, collectionName, folderPath) {
+        try {
+            // 建立記錄陣列
+            const records = [];
+
+            // 主影片記錄
+            records.push({
+                fingerprint: mainVideoFingerprint,
+                is_main: true,
+                collection_name: collectionName,
+                folder_path: folderPath,
+                created_at: new Date(),
+                updated_at: new Date()
+            });
+
+            // 子影片記錄
+            childVideoFingerprints.forEach((fingerprint, index) => {
+                records.push({
+                    fingerprint: fingerprint,
+                    is_main: false,
+                    main_fingerprint: mainVideoFingerprint,
+                    sort_order: index,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+            });
+
+            // 批次插入
+            const result = await this.db.collection('video_collections').insertMany(records);
+            return { success: true, insertedCount: result.insertedCount };
+        } catch (error) {
+            console.error('建立影片合集失敗:', error);
+            throw error;
+        }
+    }
+
+    async removeVideoCollection(mainVideoFingerprint) {
+        try {
+            const result = await this.db.collection('video_collections').deleteMany({
+                $or: [
+                    { fingerprint: mainVideoFingerprint, is_main: true },
+                    { main_fingerprint: mainVideoFingerprint, is_main: false }
+                ]
+            });
+            return { success: result.deletedCount > 0, deletedCount: result.deletedCount };
+        } catch (error) {
+            console.error('刪除影片合集失敗:', error);
+            throw error;
+        }
+    }
+
+    async getVideoCollection(mainVideoFingerprint) {
+        try {
+            const mainRecord = await this.db.collection('video_collections').findOne({
+                fingerprint: mainVideoFingerprint,
+                is_main: true
+            });
+
+            if (!mainRecord) {
+                return null;
+            }
+
+            // 查詢子影片記錄
+            const childRecords = await this.db.collection('video_collections')
+                .find({ main_fingerprint: mainVideoFingerprint, is_main: false })
+                .sort({ sort_order: 1 })
+                .toArray();
+
+            // 查詢子影片的詳細資訊
+            const childFingerprints = childRecords.map(r => r.fingerprint);
+            const childVideos = await this.db.collection('videos')
+                .find({ fingerprint: { $in: childFingerprints } })
+                .toArray();
+
+            // 按 sort_order 排序並組合資料
+            const sortedChildVideos = childRecords.map(record => {
+                const video = childVideos.find(v => v.fingerprint === record.fingerprint);
+                return video ? { ...video, sort_order: record.sort_order } : null;
+            }).filter(v => v !== null);
+
+            return {
+                name: mainRecord.collection_name,
+                child_videos: sortedChildVideos
+            };
+        } catch (error) {
+            console.error('取得影片合集失敗:', error);
+            throw error;
+        }
+    }
+
+    async updateVideoCollection(mainVideoFingerprint, updates) {
+        try {
+            const result = await this.db.collection('video_collections').updateOne(
+                { fingerprint: mainVideoFingerprint, is_main: true },
+                { $set: { ...updates, updated_at: new Date() } }
+            );
+            return { success: result.modifiedCount > 0 };
+        } catch (error) {
+            console.error('更新影片合集失敗:', error);
+            throw error;
+        }
+    }
+
+    async removeVideoFromCollection(mainVideoFingerprint, childFingerprint) {
+        try {
+            const result = await this.db.collection('video_collections').deleteOne({
+                fingerprint: childFingerprint,
+                is_main: false,
+                main_fingerprint: mainVideoFingerprint
+            });
+            return { success: result.deletedCount > 0 };
+        } catch (error) {
+            console.error('從合集移除影片失敗:', error);
             throw error;
         }
     }
