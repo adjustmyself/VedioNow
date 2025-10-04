@@ -335,6 +335,8 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.2;
+    min-height: 1.2em;
+    display: block;
 }
 
 .video-meta {
