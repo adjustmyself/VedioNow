@@ -119,6 +119,7 @@ class MongoDatabase extends DatabaseInterface {
         await this.db.collection('videos').createIndex({ fingerprint: 1 }, { unique: true, sparse: true });
         await this.db.collection('videos').createIndex({ filename: 'text', description: 'text' });
         await this.db.collection('videos').createIndex({ created_at: -1 });
+        await this.db.collection('videos').createIndex({ is_master: 1 });
 
         // 為tags集合創建索引
         await this.db.collection('tags').createIndex({ name: 1 }, { unique: true });
@@ -175,6 +176,7 @@ class MongoDatabase extends DatabaseInterface {
                     rating: 0,
                     tags: [],
                     fingerprint,
+                    is_master: true,  // 預設為主影片
                     file_created_at: file_created_at || null,
                     created_at: new Date(),
                     updated_at: new Date()
@@ -198,7 +200,17 @@ class MongoDatabase extends DatabaseInterface {
         // 構建聚合管道
         const pipeline = [];
 
-        // 第一步：左連接 video_tag_relations
+        // 第一步：過濾掉子影片（is_master !== false）
+        pipeline.push({
+            $match: {
+                $or: [
+                    { is_master: { $ne: false } },  // is_master 為 true 或不存在
+                    { is_master: { $exists: false } }
+                ]
+            }
+        });
+
+        // 第二步：左連接 video_tag_relations
         pipeline.push({
             $lookup: {
                 from: 'video_tag_relations',
@@ -208,7 +220,7 @@ class MongoDatabase extends DatabaseInterface {
             }
         });
 
-        // 第二步：添加標籤欄位
+        // 第三步：添加標籤欄位
         pipeline.push({
             $addFields: {
                 tags: {
@@ -220,27 +232,7 @@ class MongoDatabase extends DatabaseInterface {
             }
         });
 
-        // 第三步：左連接 video_collections 過濾子影片
-        pipeline.push({
-            $lookup: {
-                from: 'video_collections',
-                localField: 'fingerprint',
-                foreignField: 'fingerprint',
-                as: 'collection_info'
-            }
-        });
-
-        // 第四步：過濾掉 is_main=false 的影片
-        pipeline.push({
-            $match: {
-                $or: [
-                    { 'collection_info': { $size: 0 } },  // 不在合集中
-                    { 'collection_info.is_main': true }    // 或是主影片
-                ]
-            }
-        });
-
-        // 第五步：篩選條件
+        // 第四步：篩選條件
         const matchStage = {};
         if (filters.filename) {
             matchStage.filename = new RegExp(filters.filename, 'i');
@@ -255,20 +247,19 @@ class MongoDatabase extends DatabaseInterface {
             pipeline.push({ $match: matchStage });
         }
 
-        // 第六步：排序
+        // 第五步：排序
         pipeline.push({
             $sort: { file_created_at: -1, created_at: -1 }
         });
 
-        // 第七步：分頁
+        // 第六步：分頁
         pipeline.push({ $skip: offset });
         pipeline.push({ $limit: limit });
 
-        // 第八步：清理欄位
+        // 第七步：清理欄位
         pipeline.push({
             $project: {
-                tag_relation: 0,
-                collection_info: 0
+                tag_relation: 0
             }
         });
 
@@ -283,6 +274,14 @@ class MongoDatabase extends DatabaseInterface {
         // 如果需要計算總數，執行額外查詢
         if (needCount) {
             const countPipeline = [
+                {
+                    $match: {
+                        $or: [
+                            { is_master: { $ne: false } },
+                            { is_master: { $exists: false } }
+                        ]
+                    }
+                },
                 {
                     $lookup: {
                         from: 'video_tag_relations',
@@ -299,22 +298,6 @@ class MongoDatabase extends DatabaseInterface {
                                 []
                             ]
                         }
-                    }
-                },
-                {
-                    $lookup: {
-                        from: 'video_collections',
-                        localField: 'fingerprint',
-                        foreignField: 'fingerprint',
-                        as: 'collection_info'
-                    }
-                },
-                {
-                    $match: {
-                        $or: [
-                            { 'collection_info': { $size: 0 } },
-                            { 'collection_info.is_main': true }
-                        ]
                     }
                 }
             ];
@@ -349,7 +332,17 @@ class MongoDatabase extends DatabaseInterface {
         // 構建聚合管道
         const pipeline = [];
 
-        // 第一步：左連接 video_tag_relations
+        // 第一步：過濾掉子影片（is_master !== false）
+        pipeline.push({
+            $match: {
+                $or: [
+                    { is_master: { $ne: false } },
+                    { is_master: { $exists: false } }
+                ]
+            }
+        });
+
+        // 第二步：左連接 video_tag_relations
         pipeline.push({
             $lookup: {
                 from: 'video_tag_relations',
@@ -359,7 +352,7 @@ class MongoDatabase extends DatabaseInterface {
             }
         });
 
-        // 第二步：添加標籤欄位
+        // 第三步：添加標籤欄位
         pipeline.push({
             $addFields: {
                 tags: {
@@ -371,27 +364,7 @@ class MongoDatabase extends DatabaseInterface {
             }
         });
 
-        // 第三步：左連接 video_collections 過濾子影片
-        pipeline.push({
-            $lookup: {
-                from: 'video_collections',
-                localField: 'fingerprint',
-                foreignField: 'fingerprint',
-                as: 'collection_info'
-            }
-        });
-
-        // 第四步：過濾掉 is_main=false 的影片
-        pipeline.push({
-            $match: {
-                $or: [
-                    { 'collection_info': { $size: 0 } },
-                    { 'collection_info.is_main': true }
-                ]
-            }
-        });
-
-        // 第五步：篩選條件
+        // 第四步：篩選條件
         const matchStage = {};
 
         if (searchTerm && searchTerm.trim()) {
@@ -414,20 +387,19 @@ class MongoDatabase extends DatabaseInterface {
             pipeline.push({ $match: matchStage });
         }
 
-        // 第六步：排序
+        // 第五步：排序
         pipeline.push({
             $sort: { file_created_at: -1, created_at: -1 }
         });
 
-        // 第七步：分頁
+        // 第六步：分頁
         pipeline.push({ $skip: offset });
         pipeline.push({ $limit: limit });
 
-        // 第八步：清理欄位
+        // 第七步：清理欄位
         pipeline.push({
             $project: {
-                tag_relation: 0,
-                collection_info: 0
+                tag_relation: 0
             }
         });
 
@@ -442,6 +414,14 @@ class MongoDatabase extends DatabaseInterface {
         // 如果需要計算總數，執行額外查詢
         if (needCount) {
             const countPipeline = [
+                {
+                    $match: {
+                        $or: [
+                            { is_master: { $ne: false } },
+                            { is_master: { $exists: false } }
+                        ]
+                    }
+                },
                 {
                     $lookup: {
                         from: 'video_tag_relations',
@@ -458,22 +438,6 @@ class MongoDatabase extends DatabaseInterface {
                                 []
                             ]
                         }
-                    }
-                },
-                {
-                    $lookup: {
-                        from: 'video_collections',
-                        localField: 'fingerprint',
-                        foreignField: 'fingerprint',
-                        as: 'collection_info'
-                    }
-                },
-                {
-                    $match: {
-                        $or: [
-                            { 'collection_info': { $size: 0 } },
-                            { 'collection_info.is_main': true }
-                        ]
                     }
                 }
             ];
@@ -995,6 +959,26 @@ class MongoDatabase extends DatabaseInterface {
 
     // ========== 影片合集相關方法 ==========
 
+    async getVideosByFolder(folderPath) {
+        try {
+            // 標準化路徑分隔符
+            const normalizedPath = folderPath.replace(/\//g, '\\');
+
+            // 使用正則表達式匹配資料夾路徑
+            const videos = await this.db.collection('videos').find({
+                filepath: new RegExp(`^${normalizedPath.replace(/\\/g, '\\\\')}\\\\[^\\\\]+$`)
+            }).toArray();
+
+            return videos.map(video => ({
+                ...video,
+                id: video._id.toString()
+            }));
+        } catch (error) {
+            console.error('獲取資料夾影片失敗:', error);
+            throw error;
+        }
+    }
+
     async createVideoCollection(mainVideoFingerprint, childVideoFingerprints, collectionName, folderPath) {
         try {
             // 建立記錄陣列
@@ -1024,6 +1008,22 @@ class MongoDatabase extends DatabaseInterface {
 
             // 批次插入
             const result = await this.db.collection('video_collections').insertMany(records);
+
+            // 設定子影片的 is_master = false
+            await this.db.collection('videos').updateMany(
+                { fingerprint: { $in: childVideoFingerprints } },
+                { $set: { is_master: false, updated_at: new Date() } }
+            );
+
+            // 確保主影片的 is_master = true
+            await this.db.collection('videos').updateOne(
+                { fingerprint: mainVideoFingerprint },
+                { $set: { is_master: true, updated_at: new Date() } }
+            );
+
+            // 為主影片加上「合集」標籤
+            await this.addVideoTag(mainVideoFingerprint, '合集');
+
             return { success: true, insertedCount: result.insertedCount };
         } catch (error) {
             console.error('建立影片合集失敗:', error);
@@ -1033,13 +1033,49 @@ class MongoDatabase extends DatabaseInterface {
 
     async removeVideoCollection(mainVideoFingerprint) {
         try {
-            const result = await this.db.collection('video_collections').deleteMany({
+            // 先獲取所有子影片的 fingerprint
+            const childRecords = await this.db.collection('video_collections')
+                .find({ main_fingerprint: mainVideoFingerprint, is_main: false })
+                .toArray();
+            const childFingerprints = childRecords.map(r => r.fingerprint);
+
+            // 刪除合集記錄
+            const collectionResult = await this.db.collection('video_collections').deleteMany({
                 $or: [
                     { fingerprint: mainVideoFingerprint, is_main: true },
                     { main_fingerprint: mainVideoFingerprint, is_main: false }
                 ]
             });
-            return { success: result.deletedCount > 0, deletedCount: result.deletedCount };
+
+            // 刪除所有子影片的資料庫記錄和標籤關聯
+            if (childFingerprints.length > 0) {
+                await this.db.collection('videos').deleteMany(
+                    { fingerprint: { $in: childFingerprints } }
+                );
+
+                await this.db.collection('video_tag_relations').deleteMany(
+                    { fingerprint: { $in: childFingerprints } }
+                );
+
+                console.log(`已刪除 ${childFingerprints.length} 個子影片的資料庫記錄`);
+            }
+
+            // 刪除主影片的資料庫記錄和標籤關聯
+            await this.db.collection('videos').deleteOne(
+                { fingerprint: mainVideoFingerprint }
+            );
+
+            await this.db.collection('video_tag_relations').deleteMany(
+                { fingerprint: mainVideoFingerprint }
+            );
+
+            console.log(`已刪除主影片和 ${childFingerprints.length} 個子影片的資料庫記錄`);
+
+            return {
+                success: collectionResult.deletedCount > 0,
+                deletedCount: collectionResult.deletedCount,
+                totalVideosDeleted: childFingerprints.length + 1 // 子影片 + 主影片
+            };
         } catch (error) {
             console.error('刪除影片合集失敗:', error);
             throw error;

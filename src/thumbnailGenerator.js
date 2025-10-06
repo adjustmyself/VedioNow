@@ -46,10 +46,15 @@ class ThumbnailGenerator {
       let currentOffsetIndex = 0;
 
       const tryGenerateThumbnail = (offset) => {
+        // 標準化路徑：將反斜線轉為正斜線（FFmpeg 在 Windows 上兩者都支援）
+        // 這樣可以避免路徑中的反斜線轉義問題
+        const normalizedVideoPath = videoPath.replace(/\\/g, '/');
+        const normalizedThumbnailPath = thumbnailPath.replace(/\\/g, '/');
+
         // 針對不同格式調整 FFmpeg 參數
         const extension = videoPath.toLowerCase().split('.').pop();
         let ffmpegArgs = [
-          '-i', videoPath,
+          '-i', normalizedVideoPath,
           '-ss', offset.toString(),
           '-vframes', '1',
           '-q:v', '2'
@@ -62,31 +67,54 @@ class ThumbnailGenerator {
           ffmpegArgs.push('-f', 'mjpeg');
         }
 
-        ffmpegArgs.push('-y', thumbnailPath);
+        ffmpegArgs.push('-y', normalizedThumbnailPath);
 
-        console.log('FFmpeg 命令:', 'ffmpeg', ffmpegArgs.join(' '));
+        console.log('===== FFmpeg 縮圖生成 =====');
+        console.log('原始影片路徑:', videoPath);
+        console.log('標準化路徑:', normalizedVideoPath);
+        console.log('縮圖路徑:', normalizedThumbnailPath);
+        console.log('完整命令:', 'ffmpeg ' + ffmpegArgs.map(arg =>
+          arg.includes(' ') || arg.includes('(') || arg.includes(')') ? `"${arg}"` : arg
+        ).join(' '));
 
-        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+          windowsVerbatimArguments: false,
+          shell: false
+        });
+
+        let stderrOutput = '';
 
         ffmpeg.stderr.on('data', (data) => {
-          // 記錄 FFmpeg 錯誤輸出，但不中斷處理
-          console.log('FFmpeg stderr:', data.toString());
+          const output = data.toString();
+          stderrOutput += output;
+          // 只記錄關鍵錯誤信息
+          if (output.includes('Error') || output.includes('Invalid') || output.includes('No such file')) {
+            console.error('FFmpeg 錯誤:', output);
+          }
         });
 
         ffmpeg.on('close', (code) => {
           console.log(`FFmpeg 退出碼: ${code} (時間點: ${offset}s)`);
           if (code === 0) {
+            console.log('✓ 縮圖生成成功');
             resolve(thumbnailPath);
-          } else if (currentOffsetIndex < timeOffsets.length - 1) {
-            currentOffsetIndex++;
-            tryGenerateThumbnail(timeOffsets[currentOffsetIndex]);
           } else {
-            reject(new Error(`FFmpeg failed for all time offsets, last exit code: ${code}`));
+            console.error(`✗ FFmpeg 失敗 (退出碼: ${code})`);
+            if (stderrOutput) {
+              console.error('完整錯誤輸出:', stderrOutput.substring(stderrOutput.length - 500)); // 只顯示最後500字
+            }
+            if (currentOffsetIndex < timeOffsets.length - 1) {
+              currentOffsetIndex++;
+              console.log(`嘗試下一個時間點: ${timeOffsets[currentOffsetIndex]}s`);
+              tryGenerateThumbnail(timeOffsets[currentOffsetIndex]);
+            } else {
+              reject(new Error(`FFmpeg failed for all time offsets, last exit code: ${code}\nLast error: ${stderrOutput.substring(stderrOutput.length - 200)}`));
+            }
           }
         });
 
         ffmpeg.on('error', (error) => {
-          console.error('FFmpeg 執行錯誤:', error.message);
+          console.error('FFmpeg 執行錯誤 (spawn failed):', error.message);
           if (currentOffsetIndex < timeOffsets.length - 1) {
             currentOffsetIndex++;
             tryGenerateThumbnail(timeOffsets[currentOffsetIndex]);

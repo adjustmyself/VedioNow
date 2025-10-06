@@ -47,7 +47,9 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "artifactName": "${productName}-${version}.${ext}"
     },
     "mac": {
       "target": "dmg",

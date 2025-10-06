@@ -11,7 +11,14 @@
       "Bash(npm run build:*)",
       "Bash(npm rebuild:*)",
       "Bash(npx:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(git push:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(git restore:*)",
+      "Bash(git clean:*)"
     ],
     "deny": [],
     "ask": []
