@@ -442,9 +442,9 @@ class VideoManager {
     // Chromium/Electron 較好支援的格式
     const supportedFormats = ['mp4', 'webm', 'ogg', 'ogv', 'm4v'];
     // 部分支援的格式 (讓瀏覽器嘗試，失敗時回退)
-    const partialSupport = ['avi', 'mov', 'mkv', '3gp', 'mpg', 'mpeg'];
+    const partialSupport = ['mov', 'mkv', '3gp', 'mpg', 'mpeg'];
     // 通常不支援的格式 (直接使用後端處理)
-    const unsupportedFormats = ['wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts'];
+    const unsupportedFormats = ['avi', 'wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts'];
 
     if (supportedFormats.includes(extension)) {
       return true;
@@ -1398,7 +1398,12 @@ class VideoManager {
       return;
     }
 
-    const folderPath = this.selectedVideo.filepath.substring(0, this.selectedVideo.filepath.lastIndexOf('\\'));
+    // 支援 Windows 路徑的兩種分隔符（反斜線和正斜線）
+    const filepath = this.selectedVideo.filepath;
+    const lastBackslash = filepath.lastIndexOf('\\');
+    const lastSlash = filepath.lastIndexOf('/');
+    const lastSeparator = Math.max(lastBackslash, lastSlash);
+    const folderPath = filepath.substring(0, lastSeparator);
 
     try {
       // 獲取同資料夾的所有影片

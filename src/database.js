@@ -961,13 +961,25 @@ class MongoDatabase extends DatabaseInterface {
 
     async getVideosByFolder(folderPath) {
         try {
-            // 標準化路徑分隔符
-            const normalizedPath = folderPath.replace(/\//g, '\\');
+            // 標準化路徑：統一使用反斜線，並確保結尾沒有分隔符
+            let normalizedPath = folderPath.replace(/\//g, '\\').replace(/\\+$/, '');
 
-            // 使用正則表達式匹配資料夾路徑
+            // 轉義正則表達式特殊字符
+            const escapedPath = normalizedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            // 匹配同一資料夾下的所有影片（支援兩種路徑分隔符）
+            // 模式：路徑 + 分隔符 + 檔名（不含子資料夾）
+            const pattern = `^${escapedPath}[\\\\/][^\\\\/]+$`;
+
+            console.log('資料夾路徑:', folderPath);
+            console.log('標準化路徑:', normalizedPath);
+            console.log('搜尋正則:', pattern);
+
             const videos = await this.db.collection('videos').find({
-                filepath: new RegExp(`^${normalizedPath.replace(/\\/g, '\\\\')}\\\\[^\\\\]+$`)
+                filepath: new RegExp(pattern, 'i')  // 不區分大小寫
             }).toArray();
+
+            console.log(`找到 ${videos.length} 個影片`);
 
             return videos.map(video => ({
                 ...video,

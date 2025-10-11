@@ -53,21 +53,36 @@ class ThumbnailGenerator {
 
         // 針對不同格式調整 FFmpeg 參數
         const extension = videoPath.toLowerCase().split('.').pop();
-        let ffmpegArgs = [
-          '-i', normalizedVideoPath,
-          '-ss', offset.toString(),
-          '-vframes', '1',
-          '-q:v', '2'
-        ];
+        let ffmpegArgs = [];
 
-        // 針對 TS 格式添加特殊處理
-        if (['ts', 'mts', 'm2ts'].includes(extension)) {
-          ffmpegArgs.push('-f', 'image2');
+        // AVI 格式需要先解析再擷取
+        if (extension === 'avi') {
+          ffmpegArgs = [
+            '-ss', offset.toString(),
+            '-i', normalizedVideoPath,
+            '-vframes', '1',
+            '-q:v', '2',
+            '-f', 'image2',
+            '-update', '1',
+            '-y', normalizedThumbnailPath
+          ];
         } else {
-          ffmpegArgs.push('-f', 'mjpeg');
-        }
+          ffmpegArgs = [
+            '-i', normalizedVideoPath,
+            '-ss', offset.toString(),
+            '-vframes', '1',
+            '-q:v', '2'
+          ];
 
-        ffmpegArgs.push('-y', normalizedThumbnailPath);
+          // 針對 TS 格式添加特殊處理
+          if (['ts', 'mts', 'm2ts'].includes(extension)) {
+            ffmpegArgs.push('-f', 'image2', '-update', '1');
+          } else {
+            ffmpegArgs.push('-f', 'mjpeg');
+          }
+
+          ffmpegArgs.push('-y', normalizedThumbnailPath);
+        }
 
         console.log('===== FFmpeg 縮圖生成 =====');
         console.log('原始影片路徑:', videoPath);
