@@ -309,6 +309,11 @@ class VideoManager {
           <div class="thumbnail-fallback">
             <span>🎬</span>
           </div>
+          <div class="thumbnail-toolbar">
+            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${video.id}" data-filepath="${video.filepath}" title="重新產生縮圖">
+              🖼️ 產生縮圖
+            </button>
+          </div>
         </div>
         <div class="video-card-content">
           <div class="video-title" title="${filename}">${filename}</div>
@@ -353,6 +358,11 @@ class VideoManager {
           <div class="thumbnail-fallback-small">
             <span>🎬</span>
           </div>
+          <div class="thumbnail-toolbar">
+            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${video.id}" data-filepath="${video.filepath}" title="重新產生縮圖">
+              🖼️
+            </button>
+          </div>
         </div>
         <div class="video-list-content">
           <div class="video-title">${filename}</div>
@@ -369,12 +379,26 @@ class VideoManager {
   bindVideoEvents() {
     const videoElements = this.elements.videosContainer.querySelectorAll('[data-video-id]');
     videoElements.forEach(element => {
-      element.addEventListener('click', () => {
+      element.addEventListener('click', (e) => {
+        // 如果點擊的是工具欄按鈕，不觸發卡片點擊
+        if (e.target.closest('.thumbnail-toolbar')) {
+          return;
+        }
         const videoId = element.dataset.videoId;
         this.showVideoModal(videoId);
       });
     });
 
+    // 綁定縮圖生成按鈕事件
+    const generateThumbButtons = this.elements.videosContainer.querySelectorAll('.btn-generate-thumb');
+    generateThumbButtons.forEach(button => {
+      button.addEventListener('click', async (e) => {
+        e.stopPropagation(); // 防止觸發卡片點擊事件
+        const videoPath = button.dataset.filepath;
+        const videoId = button.dataset.videoId;
+        await this.generateThumbnailForCard(videoPath, videoId, button);
+      });
+    });
   }
 
   loadAllThumbnails() {
@@ -870,6 +894,7 @@ class VideoManager {
     const addTagBtn = document.getElementById('add-tag-btn');
     const newTagInput = document.getElementById('new-tag-input');
     const saveChangesBtn = document.getElementById('save-changes');
+    const generateThumbnailBtn = document.getElementById('generate-thumbnail');
     const deleteVideoBtn = document.getElementById('delete-video');
     const deleteVideoFileBtn = document.getElementById('delete-video-file');
     const openFileBtn = document.getElementById('open-file');
@@ -878,6 +903,7 @@ class VideoManager {
     addTagBtn.replaceWith(addTagBtn.cloneNode(true));
     newTagInput.replaceWith(newTagInput.cloneNode(true));
     saveChangesBtn.replaceWith(saveChangesBtn.cloneNode(true));
+    generateThumbnailBtn.replaceWith(generateThumbnailBtn.cloneNode(true));
     deleteVideoBtn.replaceWith(deleteVideoBtn.cloneNode(true));
     deleteVideoFileBtn.replaceWith(deleteVideoFileBtn.cloneNode(true));
     openFileBtn.replaceWith(openFileBtn.cloneNode(true));
@@ -886,6 +912,7 @@ class VideoManager {
     const newAddTagBtn = document.getElementById('add-tag-btn');
     const newNewTagInput = document.getElementById('new-tag-input');
     const newSaveChangesBtn = document.getElementById('save-changes');
+    const newGenerateThumbnailBtn = document.getElementById('generate-thumbnail');
     const newDeleteVideoBtn = document.getElementById('delete-video');
     const newDeleteVideoFileBtn = document.getElementById('delete-video-file');
     const newOpenFileBtn = document.getElementById('open-file');
@@ -911,6 +938,10 @@ class VideoManager {
 
     newSaveChangesBtn.addEventListener('click', () => {
       this.saveVideoChanges();
+    });
+
+    newGenerateThumbnailBtn.addEventListener('click', () => {
+      this.generateThumbnailManually();
     });
 
     newDeleteVideoBtn.addEventListener('click', () => {
@@ -1126,8 +1157,116 @@ class VideoManager {
     }
   }
 
-  showScanModal() {
+  async generateThumbnailManually() {
+    if (!this.selectedVideo) {
+      alert('請先選擇一個影片');
+      return;
+    }
+
+    const videoPath = this.selectedVideo.filepath;
+    const generateBtn = document.getElementById('generate-thumbnail');
+
+    try {
+      // 更新按鈕狀態
+      generateBtn.textContent = '⏳ 生成中...';
+      generateBtn.disabled = true;
+
+      console.log('開始手動生成縮圖:', videoPath);
+
+      // 呼叫後端使用 FFmpeg 生成縮圖
+      const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath);
+
+      if (result.success && result.thumbnail) {
+        alert('縮圖生成成功！');
+        console.log('縮圖已儲存至:', result.thumbnail);
+
+        // 重新載入頁面上的縮圖（如果當前影片在列表中顯示）
+        const videoCard = document.querySelector(`[data-video-id="${this.selectedVideo.id}"]`);
+        if (videoCard) {
+          const thumbnailContainer = videoCard.querySelector('.video-thumbnail, .video-list-thumbnail');
+          if (thumbnailContainer) {
+            // 清除現有縮圖並重新載入
+            this.showCachedThumbnail(thumbnailContainer, result.thumbnail);
+          }
+        }
+      } else {
+        throw new Error(result.error || '縮圖生成失敗');
+      }
+    } catch (error) {
+      console.error('手動生成縮圖失敗:', error);
+      alert(`縮圖生成失敗：${error.message}\n\n請確認：\n1. 系統已安裝 FFmpeg\n2. 影片檔案可正常存取\n3. 影片格式受支援`);
+    } finally {
+      // 恢復按鈕狀態
+      generateBtn.textContent = '🖼️ 產生縮圖';
+      generateBtn.disabled = false;
+    }
+  }
+
+  async generateThumbnailForCard(videoPath, videoId, button) {
+    try {
+      // 更新按鈕狀態
+      const originalText = button.textContent;
+      button.textContent = '⏳';
+      button.disabled = true;
+      button.style.opacity = '0.6';
+
+      console.log('從卡片生成縮圖:', videoPath);
+
+      // 呼叫後端使用 FFmpeg 生成縮圖
+      const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath);
+
+      if (result.success && result.thumbnail) {
+        console.log('縮圖生成成功:', result.thumbnail);
+
+        // 立即更新當前卡片的縮圖
+        const videoCard = document.querySelector(`[data-video-id="${videoId}"]`);
+        if (videoCard) {
+          const thumbnailContainer = videoCard.querySelector('.video-thumbnail, .video-list-thumbnail');
+          if (thumbnailContainer) {
+            // 清除現有縮圖並重新載入
+            this.showCachedThumbnail(thumbnailContainer, result.thumbnail);
+          }
+        }
+
+        // 短暫顯示成功提示
+        button.textContent = '✓';
+        button.style.backgroundColor = '#4caf50';
+        button.style.color = 'white';
+
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.disabled = false;
+          button.style.opacity = '1';
+          button.style.backgroundColor = '';
+          button.style.color = '';
+        }, 2000);
+      } else {
+        throw new Error(result.error || '縮圖生成失敗');
+      }
+    } catch (error) {
+      console.error('卡片生成縮圖失敗:', error);
+
+      // 顯示錯誤狀態
+      button.textContent = '✗';
+      button.style.backgroundColor = '#f44336';
+      button.style.color = 'white';
+
+      setTimeout(() => {
+        button.textContent = '🖼️';
+        button.disabled = false;
+        button.style.opacity = '1';
+        button.style.backgroundColor = '';
+        button.style.color = '';
+      }, 2000);
+
+      alert(`縮圖生成失敗：${error.message}`);
+    }
+  }
+
+  async showScanModal() {
     this.elements.scanModal.classList.remove('hidden');
+    // 載入最近掃描路徑
+    await this.loadRecentScanPaths();
   }
 
   hideScanModal() {
@@ -1577,11 +1716,15 @@ class VideoManager {
         // 顯示子影片清單
         const collection = result.data;
         this.elements.collectionEpisodes.innerHTML = collection.child_videos.map((v, index) => `
-          <div class="episode-item">
+          <div class="episode-item" data-filepath="${v.filepath}">
             <span class="episode-number">${index + 1}</span>
             <span class="episode-name">${v.filename}</span>
+            <button class="btn btn-play" data-filepath="${v.filepath}">▶ 播放</button>
           </div>
         `).join('');
+
+        // 綁定播放按鈕事件
+        this.bindEpisodePlayEvents();
       } else {
         // 不是合集主影片
         this.elements.collectionList.classList.add('hidden');
@@ -1592,9 +1735,61 @@ class VideoManager {
     }
   }
 
+  bindEpisodePlayEvents() {
+    const playButtons = this.elements.collectionEpisodes.querySelectorAll('.btn-play');
+    playButtons.forEach(button => {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation(); // 防止事件冒泡
+        const filepath = button.dataset.filepath;
+        if (filepath) {
+          shell.openPath(filepath);
+        }
+      });
+    });
+  }
+
   // 清理資源 (當頁面卸載或重新載入時)
   destroy() {
     this.loadingThumbnails.clear();
+  }
+
+  // ========== 最近掃描路徑相關方法 ==========
+
+  async loadRecentScanPaths() {
+    try {
+      const result = await ipcRenderer.invoke('get-recent-scan-paths');
+      if (result.success && result.paths && result.paths.length > 0) {
+        this.renderRecentScanPaths(result.paths);
+        document.getElementById('recent-paths-group').classList.add('has-paths');
+      } else {
+        document.getElementById('recent-paths-group').classList.remove('has-paths');
+        document.getElementById('recent-paths-list').innerHTML = '';
+      }
+    } catch (error) {
+      console.error('載入最近掃描路徑失敗:', error);
+    }
+  }
+
+  renderRecentScanPaths(paths) {
+    const recentPathsList = document.getElementById('recent-paths-list');
+    if (!recentPathsList) return;
+
+    recentPathsList.innerHTML = paths.map(path => `
+      <div class="recent-path-item" data-path="${path}" title="${path}">
+        <span class="recent-path-icon">📁</span>
+        <span class="recent-path-text">${path}</span>
+      </div>
+    `).join('');
+
+    // 綁定點擊事件
+    recentPathsList.querySelectorAll('.recent-path-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const path = item.dataset.path;
+        this.elements.folderPath.value = path;
+        // 可選：自動聚焦到路徑輸入框
+        this.elements.folderPath.focus();
+      });
+    });
   }
 }
 

@@ -107,6 +107,14 @@ ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
       ...options,
       progressCallback
     });
+
+    // 掃描成功後，將路徑保存到最近掃描記錄
+    if (result) {
+      const config = new Config();
+      await config.init();
+      await config.addRecentScanPath(folderPath);
+    }
+
     return { success: true, result };
   } catch (error) {
     return { success: false, error: error.message };
@@ -435,6 +443,32 @@ ipcMain.handle('check-thumbnail', async (event, videoPath) => {
   }
 });
 
+// 強制重新生成縮圖
+ipcMain.handle('generate-thumbnail-force', async (event, videoPath) => {
+  try {
+    const thumbnailPath = thumbnailGenerator.getThumbnailPath(videoPath);
+
+    // 刪除現有縮圖（如果存在）
+    const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath);
+    if (existingThumbnail) {
+      await fs.remove(existingThumbnail);
+      console.log('已刪除舊縮圖:', existingThumbnail);
+    }
+
+    // 使用 FFmpeg 生成新縮圖
+    const result = await thumbnailGenerator.generateThumbnail(videoPath);
+
+    if (result) {
+      return { success: true, thumbnail: result };
+    } else {
+      throw new Error('FFmpeg 縮圖生成返回 null');
+    }
+  } catch (error) {
+    console.error('強制生成縮圖錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // 縮圖清理
 ipcMain.handle('cleanup-thumbnails', async () => {
   try {
@@ -628,6 +662,32 @@ ipcMain.handle('migrate-legacy-tags', async () => {
     };
   } catch (error) {
     console.error('手動遷移舊標籤系統失敗:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 獲取最近掃描路徑
+ipcMain.handle('get-recent-scan-paths', async () => {
+  try {
+    const config = new Config();
+    await config.init();
+    const paths = await config.getRecentScanPaths();
+    return { success: true, paths };
+  } catch (error) {
+    console.error('獲取最近掃描路徑失敗:', error);
+    return { success: false, error: error.message, paths: [] };
+  }
+});
+
+// 清空最近掃描路徑
+ipcMain.handle('clear-recent-scan-paths', async () => {
+  try {
+    const config = new Config();
+    await config.init();
+    const success = await config.clearRecentScanPaths();
+    return { success };
+  } catch (error) {
+    console.error('清空最近掃描路徑失敗:', error);
     return { success: false, error: error.message };
   }
 });

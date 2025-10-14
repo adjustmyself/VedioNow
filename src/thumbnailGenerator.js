@@ -71,17 +71,11 @@ class ThumbnailGenerator {
             '-i', normalizedVideoPath,
             '-ss', offset.toString(),
             '-vframes', '1',
-            '-q:v', '2'
+            '-q:v', '2',
+            '-f', 'image2',
+            '-update', '1',
+            '-y', normalizedThumbnailPath
           ];
-
-          // 針對 TS 格式添加特殊處理
-          if (['ts', 'mts', 'm2ts'].includes(extension)) {
-            ffmpegArgs.push('-f', 'image2', '-update', '1');
-          } else {
-            ffmpegArgs.push('-f', 'mjpeg');
-          }
-
-          ffmpegArgs.push('-y', normalizedThumbnailPath);
         }
 
         console.log('===== FFmpeg 縮圖生成 =====');

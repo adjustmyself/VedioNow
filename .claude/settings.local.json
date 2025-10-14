@@ -18,7 +18,14 @@
       "Bash(tasklist)",
       "Bash(findstr:*)",
       "Bash(git restore:*)",
-      "Bash(git clean:*)"
+      "Bash(git clean:*)",
+      "Bash(cat:*)",
+      "Bash(npm ls:*)",
+      "Bash(node_modules/.bin/electron.cmd:*)",
+      "Bash(taskkill:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(npm start)",
+      "Bash(where:*)"
     ],
     "deny": [],
     "ask": []

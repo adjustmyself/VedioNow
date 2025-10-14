@@ -21,6 +21,9 @@ class Config {
       app: {
         theme: 'light',
         language: 'zh-TW'
+      },
+      scan: {
+        recentPaths: [] // 最近掃描的5個路徑
       }
     };
   }
@@ -129,6 +132,60 @@ class Config {
 
   getConfigPath() {
     return this.configPath;
+  }
+
+  // 獲取最近掃描路徑
+  async getRecentScanPaths() {
+    try {
+      const config = await this.load();
+      return config.scan?.recentPaths || [];
+    } catch (error) {
+      console.error('獲取最近掃描路徑失敗:', error);
+      return [];
+    }
+  }
+
+  // 新增最近掃描路徑（最多保留5個，去重）
+  async addRecentScanPath(folderPath) {
+    try {
+      const config = await this.load();
+      if (!config.scan) {
+        config.scan = { recentPaths: [] };
+      }
+
+      // 移除重複的路徑（不區分大小寫）
+      const normalizedPath = folderPath.toLowerCase();
+      config.scan.recentPaths = config.scan.recentPaths.filter(
+        p => p.toLowerCase() !== normalizedPath
+      );
+
+      // 將新路徑添加到最前面
+      config.scan.recentPaths.unshift(folderPath);
+
+      // 只保留最近5個路徑
+      config.scan.recentPaths = config.scan.recentPaths.slice(0, 5);
+
+      return await this.save(config);
+    } catch (error) {
+      console.error('新增最近掃描路徑失敗:', error);
+      return false;
+    }
+  }
+
+  // 清空最近掃描路徑
+  async clearRecentScanPaths() {
+    try {
+      const config = await this.load();
+      if (!config.scan) {
+        config.scan = { recentPaths: [] };
+      } else {
+        config.scan.recentPaths = [];
+      }
+      return await this.save(config);
+    } catch (error) {
+      console.error('清空最近掃描路徑失敗:', error);
+      return false;
+    }
   }
 }
 
