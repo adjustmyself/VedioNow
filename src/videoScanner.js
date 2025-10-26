@@ -10,6 +10,17 @@ class VideoScanner {
       '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v',
       '.3gp', '.ogv', '.ogg', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts'
     ];
+    // BT 下載未完成檔案的副檔名
+    this.incompleteDownloadExtensions = [
+      '.part',      // qBittorrent, aria2, Firefox
+      '.!ut',       // uTorrent
+      '.crdownload',// Chrome
+      '.tmp',       // 臨時檔案
+      '.downloading',// 通用下載中
+      '.download',  // 通用下載中
+      '.partial',   // 部分下載
+      '.aria2'      // aria2 控制檔案
+    ];
     this.watchers = new Map();
     this.fileFingerprint = new FileFingerprint();
   }
@@ -146,7 +157,39 @@ class VideoScanner {
 
   _isVideoFile(filename) {
     const ext = path.extname(filename).toLowerCase();
+
+    // 檢查是否為未完成的下載檔案
+    if (this._isIncompleteDownload(filename)) {
+      return false;
+    }
+
     return this.supportedFormats.includes(ext);
+  }
+
+  _isIncompleteDownload(filename) {
+    const lowerFilename = filename.toLowerCase();
+
+    // 檢查是否有未完成下載的副檔名
+    for (const ext of this.incompleteDownloadExtensions) {
+      if (lowerFilename.endsWith(ext)) {
+        return true;
+      }
+    }
+
+    // 檢查是否有複合副檔名（例如：video.mp4.part）
+    // 提取倒數第二個副檔名
+    const parts = filename.split('.');
+    if (parts.length >= 3) {
+      const secondToLastExt = '.' + parts[parts.length - 2].toLowerCase();
+      if (this.supportedFormats.includes(secondToLastExt)) {
+        const lastExt = '.' + parts[parts.length - 1].toLowerCase();
+        if (this.incompleteDownloadExtensions.includes(lastExt)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   async _getVideoInfo(filepath, stat) {
