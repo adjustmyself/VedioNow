@@ -673,6 +673,7 @@ class MongoDatabase extends DatabaseInterface {
 
         const filepath = video.filepath;
         const fingerprint = video.fingerprint;
+        const folderPath = path.dirname(filepath);
 
         // 刪除資料庫記錄
         await this.db.collection('videos').deleteOne({ _id: objectId });
@@ -687,9 +688,43 @@ class MongoDatabase extends DatabaseInterface {
         }
 
         // 刪除實際檔案
+        let folderDeleted = false;
+        let folderDeleteError = null;
+
         try {
             await fs.unlink(filepath);
-            return { recordDeleted: true, fileDeleted: true };
+
+            // 檔案刪除成功後，檢查資料夾是否為空
+            try {
+                const filesInFolder = await fs.readdir(folderPath);
+
+                // 如果資料夾為空（或只有隱藏檔案如 .DS_Store, Thumbs.db），則刪除資料夾
+                const visibleFiles = filesInFolder.filter(file =>
+                    !file.startsWith('.') &&
+                    file !== 'Thumbs.db' &&
+                    file !== 'desktop.ini'
+                );
+
+                if (visibleFiles.length === 0) {
+                    // 刪除所有剩餘檔案（包括隱藏檔案）
+                    for (const file of filesInFolder) {
+                        await fs.unlink(path.join(folderPath, file));
+                    }
+                    // 刪除資料夾
+                    await fs.rmdir(folderPath);
+                    folderDeleted = true;
+                }
+            } catch (folderErr) {
+                console.warn('檢查或刪除資料夾失敗:', folderErr);
+                folderDeleteError = folderErr.message;
+            }
+
+            return {
+                recordDeleted: true,
+                fileDeleted: true,
+                folderDeleted,
+                folderDeleteError
+            };
         } catch (fileErr) {
             console.warn('刪除檔案失敗:', fileErr);
             // 即使檔案刪除失敗，也視為部分成功（記錄已刪除）

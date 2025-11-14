@@ -867,8 +867,7 @@ select {
 }
 
 .tag-selector {
-    max-height: 300px;
-    overflow-y: auto;
+    overflow-y: visible;
 }
 
 .tag-group-selector {

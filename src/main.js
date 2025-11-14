@@ -12,6 +12,16 @@ let videoScanner;
 let thumbnailGenerator;
 
 function createWindow() {
+  // 根據平台選擇正確的 icon 格式
+  let iconPath;
+  if (process.platform === 'win32') {
+    iconPath = path.join(__dirname, '../assets/icon.ico');
+  } else if (process.platform === 'darwin') {
+    iconPath = path.join(__dirname, '../assets/icon.icns');
+  } else {
+    iconPath = path.join(__dirname, '../assets/icon.png');
+  }
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -19,7 +29,7 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false
     },
-    icon: path.join(__dirname, '../assets/icon.png')
+    icon: iconPath
   });
 
   mainWindow.loadFile('src/renderer/index.html');

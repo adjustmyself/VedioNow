@@ -1132,10 +1132,16 @@ class VideoManager {
       const result = await ipcRenderer.invoke('delete-video-with-file', this.selectedVideo.id);
 
       if (result.success) {
-        const { recordDeleted, fileDeleted, error } = result.result;
+        const { recordDeleted, fileDeleted, folderDeleted, folderDeleteError, error } = result.result;
 
         if (recordDeleted && fileDeleted) {
-          alert('影片記錄和檔案已成功刪除');
+          let message = '影片記錄和檔案已成功刪除';
+          if (folderDeleted) {
+            message += '\n資料夾已清空並刪除';
+          } else if (folderDeleteError) {
+            message += `\n資料夾刪除失敗：${folderDeleteError}`;
+          }
+          alert(message);
         } else if (recordDeleted && !fileDeleted) {
           alert(`影片記錄已刪除，但檔案刪除失敗：\n${error}`);
         }
