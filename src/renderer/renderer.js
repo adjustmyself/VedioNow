@@ -17,6 +17,11 @@ class VideoManager {
     this.pageSize = 9;
     this.totalVideos = 0;
     this.totalPages = 0;
+    // 事件綁定標誌，避免重複綁定
+    this.modalEventsBound = false;
+    this.tagSelectorEventBound = false;
+    this.modalTagsEventBound = false;
+    this.episodePlayEventBound = false;
 
     this.initializeElements();
     this.bindEvents();
@@ -820,11 +825,16 @@ class VideoManager {
       `<span class="tag removable" data-tag="${tag}">${tag}</span>`
     ).join('');
 
-    modalTags.querySelectorAll('.tag').forEach(element => {
-      element.addEventListener('click', () => {
-        this.removeVideoTag(element.dataset.tag);
+    // 使用事件委派綁定標籤移除事件（只綁定一次）
+    if (!this.modalTagsEventBound) {
+      modalTags.addEventListener('click', (e) => {
+        const tagElement = e.target.closest('.tag.removable');
+        if (tagElement) {
+          this.removeVideoTag(tagElement.dataset.tag);
+        }
       });
-    });
+      this.modalTagsEventBound = true;
+    }
   }
 
   async renderTagSelector() {
@@ -865,17 +875,21 @@ class VideoManager {
         </div>
       `).join('');
 
-      // 綁定標籤選擇事件
-      tagSelector.querySelectorAll('.tag-item-selector').forEach(tagItem => {
-        tagItem.addEventListener('click', () => {
-          const tagName = tagItem.dataset.tagName;
-          if (tagItem.classList.contains('selected')) {
-            this.removeVideoTag(tagName);
-          } else {
-            this.addVideoTag(tagName);
+      // 使用事件委派綁定標籤選擇事件（只綁定一次）
+      if (!this.tagSelectorEventBound) {
+        tagSelector.addEventListener('click', (e) => {
+          const tagItem = e.target.closest('.tag-item-selector');
+          if (tagItem) {
+            const tagName = tagItem.dataset.tagName;
+            if (tagItem.classList.contains('selected')) {
+              this.removeVideoTag(tagName);
+            } else {
+              this.addVideoTag(tagName);
+            }
           }
         });
-      });
+        this.tagSelectorEventBound = true;
+      }
     } catch (error) {
       console.error('載入標籤選擇器錯誤:', error);
       document.getElementById('tag-selector').innerHTML = '<p>載入標籤失敗</p>';
@@ -883,78 +897,59 @@ class VideoManager {
   }
 
   setModalRating(rating) {
-    const stars = document.querySelectorAll('.star');
+    const modal = document.getElementById('video-modal');
+    const stars = modal.querySelectorAll('.rating .star');
     stars.forEach((star, index) => {
       star.classList.toggle('active', index < rating);
     });
   }
 
   bindModalEvents() {
-    // 移除舊的事件監聽器
-    const addTagBtn = document.getElementById('add-tag-btn');
-    const newTagInput = document.getElementById('new-tag-input');
-    const saveChangesBtn = document.getElementById('save-changes');
-    const generateThumbnailBtn = document.getElementById('generate-thumbnail');
-    const deleteVideoBtn = document.getElementById('delete-video');
-    const deleteVideoFileBtn = document.getElementById('delete-video-file');
-    const openFileBtn = document.getElementById('open-file');
+    // 如果已經綁定過，不重複綁定
+    if (this.modalEventsBound) return;
 
-    // 克隆元素來移除所有事件監聽器
-    addTagBtn.replaceWith(addTagBtn.cloneNode(true));
-    newTagInput.replaceWith(newTagInput.cloneNode(true));
-    saveChangesBtn.replaceWith(saveChangesBtn.cloneNode(true));
-    generateThumbnailBtn.replaceWith(generateThumbnailBtn.cloneNode(true));
-    deleteVideoBtn.replaceWith(deleteVideoBtn.cloneNode(true));
-    deleteVideoFileBtn.replaceWith(deleteVideoFileBtn.cloneNode(true));
-    openFileBtn.replaceWith(openFileBtn.cloneNode(true));
+    const modal = document.getElementById('video-modal');
 
-    // 重新獲取元素引用
-    const newAddTagBtn = document.getElementById('add-tag-btn');
-    const newNewTagInput = document.getElementById('new-tag-input');
-    const newSaveChangesBtn = document.getElementById('save-changes');
-    const newGenerateThumbnailBtn = document.getElementById('generate-thumbnail');
-    const newDeleteVideoBtn = document.getElementById('delete-video');
-    const newDeleteVideoFileBtn = document.getElementById('delete-video-file');
-    const newOpenFileBtn = document.getElementById('open-file');
-
-    // 綁定星星評分事件
-    const stars = document.querySelectorAll('.star');
+    // 綁定星星評分事件（限定在模態框內）
+    const stars = modal.querySelectorAll('.rating .star');
     stars.forEach((star, index) => {
       star.addEventListener('click', () => {
         this.setModalRating(index + 1);
       });
     });
 
-    // 綁定新的事件監聽器
-    newAddTagBtn.addEventListener('click', () => {
+    // 綁定按鈕事件（使用事件委派）
+    const modalFooter = modal.querySelector('.modal-footer');
+    modalFooter.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target.id === 'save-changes') {
+        this.saveVideoChanges();
+      } else if (target.id === 'generate-thumbnail') {
+        this.generateThumbnailManually();
+      } else if (target.id === 'delete-video') {
+        this.deleteVideo();
+      } else if (target.id === 'delete-video-file') {
+        this.deleteVideoWithFile();
+      } else if (target.id === 'open-file') {
+        this.openVideoFile();
+      }
+    });
+
+    // 綁定新增標籤按鈕
+    const addTagBtn = document.getElementById('add-tag-btn');
+    addTagBtn.addEventListener('click', () => {
       this.addVideoTag();
     });
 
-    newNewTagInput.addEventListener('keypress', (e) => {
+    // 綁定輸入框 Enter 鍵
+    const newTagInput = document.getElementById('new-tag-input');
+    newTagInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         this.addVideoTag();
       }
     });
 
-    newSaveChangesBtn.addEventListener('click', () => {
-      this.saveVideoChanges();
-    });
-
-    newGenerateThumbnailBtn.addEventListener('click', () => {
-      this.generateThumbnailManually();
-    });
-
-    newDeleteVideoBtn.addEventListener('click', () => {
-      this.deleteVideo();
-    });
-
-    newDeleteVideoFileBtn.addEventListener('click', () => {
-      this.deleteVideoWithFile();
-    });
-
-    newOpenFileBtn.addEventListener('click', () => {
-      this.openVideoFile();
-    });
+    this.modalEventsBound = true;
   }
 
   async addVideoTag(tagName = null) {
@@ -1742,16 +1737,20 @@ class VideoManager {
   }
 
   bindEpisodePlayEvents() {
-    const playButtons = this.elements.collectionEpisodes.querySelectorAll('.btn-play');
-    playButtons.forEach(button => {
-      button.addEventListener('click', (e) => {
-        e.stopPropagation(); // 防止事件冒泡
-        const filepath = button.dataset.filepath;
-        if (filepath) {
-          shell.openPath(filepath);
+    // 使用事件委派綁定播放按鈕（只綁定一次）
+    if (!this.episodePlayEventBound) {
+      this.elements.collectionEpisodes.addEventListener('click', (e) => {
+        const playButton = e.target.closest('.btn-play');
+        if (playButton) {
+          e.stopPropagation(); // 防止事件冒泡
+          const filepath = playButton.dataset.filepath;
+          if (filepath) {
+            shell.openPath(filepath);
+          }
         }
       });
-    });
+      this.episodePlayEventBound = true;
+    }
   }
 
   // 清理資源 (當頁面卸載或重新載入時)
