@@ -7,6 +7,7 @@ class VideoManager {
     this.allTags = [];
     this.activeTags = new Set();
     this.selectedRating = 0; // 0 表示全部
+    this.selectedDrivePath = ''; // 選中的硬碟路徑
     this.currentSort = 'file_created_at';
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
@@ -34,6 +35,7 @@ class VideoManager {
       settingsBtn: document.getElementById('settings-btn'),
       scanBtn: document.getElementById('scan-btn'),
       searchInput: document.getElementById('search-input'),
+      driveFilterSelect: document.getElementById('drive-filter-select'),
       tagsFilter: document.getElementById('tags-filter'),
       resetTagsBtn: document.getElementById('reset-tags-btn'),
       videosContainer: document.getElementById('videos-container'),
@@ -85,6 +87,7 @@ class VideoManager {
     this.elements.settingsBtn.addEventListener('click', () => this.openSettings());
     this.elements.scanBtn.addEventListener('click', () => this.showScanModal());
     this.elements.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
+    this.elements.driveFilterSelect.addEventListener('change', (e) => this.handleDriveFilterChange(e.target.value));
     this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
     this.elements.gridViewBtn.addEventListener('click', () => this.setViewMode('grid'));
     this.elements.listViewBtn.addEventListener('click', () => this.setViewMode('list'));
@@ -136,7 +139,8 @@ class VideoManager {
     try {
       await Promise.all([
         this.loadVideos(),
-        this.loadTags()
+        this.loadTags(),
+        this.loadDrivePaths()
       ]);
       this.updateStats();
       this.renderVideos();
@@ -153,7 +157,8 @@ class VideoManager {
     const filters = {
       limit: this.pageSize,
       offset: (this.currentPage - 1) * this.pageSize,
-      rating: this.selectedRating
+      rating: this.selectedRating,
+      drivePath: this.selectedDrivePath
     };
 
     const result = await ipcRenderer.invoke('get-videos', filters);
@@ -186,6 +191,32 @@ class VideoManager {
     console.log('所有標籤:', this.allTags);
   }
 
+  async loadDrivePaths() {
+    try {
+      const drivePaths = await ipcRenderer.invoke('get-drive-paths');
+      console.log('載入的硬碟路徑:', drivePaths);
+
+      // 清空現有選項（保留"全部硬碟"）
+      this.elements.driveFilterSelect.innerHTML = '<option value="">全部硬碟</option>';
+
+      // 加入硬碟路徑選項
+      drivePaths.forEach(drive => {
+        const option = document.createElement('option');
+        option.value = drive.path;
+        option.textContent = `${drive.path} (${drive.count})`;
+        this.elements.driveFilterSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('載入硬碟路徑錯誤:', error);
+    }
+  }
+
+  handleDriveFilterChange(drivePath) {
+    this.selectedDrivePath = drivePath;
+    this.currentPage = 1; // 重置到第一頁
+    this.handleSearch(this.elements.searchInput.value);
+  }
+
   async handleSearch(searchTerm) {
     this.showLoading();
     try {
@@ -196,7 +227,8 @@ class VideoManager {
       const filters = {
         limit: this.pageSize,
         offset: (this.currentPage - 1) * this.pageSize,
-        rating: this.selectedRating
+        rating: this.selectedRating,
+        drivePath: this.selectedDrivePath
       };
 
       const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
@@ -1382,7 +1414,8 @@ class VideoManager {
         const filters = {
           limit: this.pageSize,
           offset: (this.currentPage - 1) * this.pageSize,
-          rating: this.selectedRating
+          rating: this.selectedRating,
+          drivePath: this.selectedDrivePath
         };
 
         const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);

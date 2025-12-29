@@ -330,6 +330,18 @@ ipcMain.handle('get-tags-by-group', async () => {
   }
 });
 
+ipcMain.handle('get-drive-paths', async () => {
+  try {
+    console.log('開始獲取硬碟路徑...');
+    const result = await database.getAllDrivePaths();
+    console.log('成功獲取硬碟路徑，數量:', result.length);
+    return result;
+  } catch (error) {
+    console.error('Error getting drive paths:', error);
+    return [];
+  }
+});
+
 ipcMain.handle('update-tag', async (event, tagId, updates) => {
   try {
     await database.updateTag(tagId, updates);

@@ -89,6 +89,32 @@ body {
     margin-bottom: 2rem;
 }
 
+.drive-filter {
+    margin-bottom: 2rem;
+}
+
+.drive-select {
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    background: white;
+    color: #333;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.drive-select:hover {
+    border-color: #667eea;
+}
+
+.drive-select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
 .rating-option {
     padding: 0.5rem 0.8rem;
     border-radius: 8px;

@@ -81,6 +81,10 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 getTagsByGroup 方法');
     }
 
+    async getAllDrivePaths() {
+        throw new Error('子類別必須實作 getAllDrivePaths 方法');
+    }
+
     close() {
         throw new Error('子類別必須實作 close 方法');
     }
@@ -243,6 +247,12 @@ class MongoDatabase extends DatabaseInterface {
         if (filters.rating && filters.rating > 0) {
             matchStage.rating = filters.rating;
         }
+        if (filters.drivePath && filters.drivePath.trim()) {
+            // 硬碟路徑篩選：匹配第二層路徑
+            // 例如：\\192.168.1.147\16tb-SN-2BH171AN\...
+            const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
+        }
         if (Object.keys(matchStage).length > 0) {
             pipeline.push({ $match: matchStage });
         }
@@ -381,6 +391,13 @@ class MongoDatabase extends DatabaseInterface {
 
         if (filters.rating && filters.rating > 0) {
             matchStage.rating = filters.rating;
+        }
+
+        if (filters.drivePath && filters.drivePath.trim()) {
+            // 硬碟路徑篩選：匹配第二層路徑
+            // 例如：\\192.168.1.147\16tb-SN-2BH171AN\...
+            const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
         }
 
         if (Object.keys(matchStage).length > 0) {
@@ -916,6 +933,62 @@ class MongoDatabase extends DatabaseInterface {
         }
 
         return result;
+    }
+
+    async getAllDrivePaths() {
+        try {
+            // 使用聚合管道提取所有影片的第二層路徑
+            const pipeline = [
+                {
+                    $project: {
+                        // 將路徑分割成陣列
+                        pathParts: {
+                            $split: [
+                                // 先統一替換成反斜線
+                                { $replaceAll: { input: "$filepath", find: "/", replacement: "\\" } },
+                                "\\"
+                            ]
+                        }
+                    }
+                },
+                {
+                    $project: {
+                        // 提取第二層路徑（索引 1）
+                        // 對於 \\192.168.1.147\16tb-SN-2BH171AN\... 路徑
+                        // 分割後: ["", "", "192.168.1.147", "16tb-SN-2BH171AN", ...]
+                        // 我們需要索引 3
+                        drivePath: { $arrayElemAt: ["$pathParts", 3] }
+                    }
+                },
+                {
+                    $match: {
+                        drivePath: { $ne: null, $ne: "" }
+                    }
+                },
+                {
+                    $group: {
+                        _id: "$drivePath",
+                        count: { $sum: 1 }
+                    }
+                },
+                {
+                    $sort: { count: -1 }
+                },
+                {
+                    $project: {
+                        _id: 0,
+                        path: "$_id",
+                        count: 1
+                    }
+                }
+            ];
+
+            const drives = await this.db.collection('videos').aggregate(pipeline).toArray();
+            return drives;
+        } catch (error) {
+            console.error('獲取硬碟路徑失敗:', error);
+            return [];
+        }
     }
 
 
