@@ -153,6 +153,30 @@ class VideoManager {
     }
   }
 
+  async refreshCurrentView() {
+    // 保持當前搜尋條件重新載入資料
+    const searchTerm = this.elements.searchInput.value.trim();
+
+    // 重新載入標籤和硬碟路徑列表
+    await Promise.all([
+      this.loadTags(),
+      this.loadDrivePaths()
+    ]);
+
+    // 如果有搜尋條件或篩選，使用 handleSearch 保持條件
+    if (searchTerm || this.activeTags.size > 0 || this.selectedRating > 0 || this.selectedDrivePath) {
+      await this.handleSearch(searchTerm);
+    } else {
+      // 沒有任何條件，直接載入
+      await this.loadVideos();
+      this.renderVideos();
+      this.renderPagination();
+    }
+
+    this.updateStats();
+    this.renderTagsFilter();
+  }
+
   async loadVideos() {
     const filters = {
       limit: this.pageSize,
@@ -1136,7 +1160,8 @@ class VideoManager {
     try {
       await ipcRenderer.invoke('delete-video', this.selectedVideo.id);
       this.hideVideoModal();
-      await this.loadData();
+      // 保持搜尋條件重新載入
+      await this.refreshCurrentView();
     } catch (error) {
       console.error('刪除影片錯誤:', error);
     }
@@ -1174,7 +1199,8 @@ class VideoManager {
         }
 
         this.hideVideoModal();
-        await this.loadData();
+        // 保持搜尋條件重新載入
+        await this.refreshCurrentView();
       } else {
         alert(`刪除失敗：${result.error}`);
       }
