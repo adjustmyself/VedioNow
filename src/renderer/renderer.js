@@ -38,6 +38,7 @@ class VideoManager {
       driveFilterSelect: document.getElementById('drive-filter-select'),
       tagsFilter: document.getElementById('tags-filter'),
       resetTagsBtn: document.getElementById('reset-tags-btn'),
+      resetAllBtn: document.getElementById('reset-all-btn'),
       videosContainer: document.getElementById('videos-container'),
       totalVideos: document.getElementById('total-videos'),
       totalTags: document.getElementById('total-tags'),
@@ -89,6 +90,7 @@ class VideoManager {
     this.elements.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
     this.elements.driveFilterSelect.addEventListener('change', (e) => this.handleDriveFilterChange(e.target.value));
     this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
+    this.elements.resetAllBtn.addEventListener('click', () => this.resetAllFilters());
     this.elements.gridViewBtn.addEventListener('click', () => this.setViewMode('grid'));
     this.elements.listViewBtn.addEventListener('click', () => this.setViewMode('list'));
     this.elements.sortSelect.addEventListener('change', (e) => this.setSortField(e.target.value));
@@ -842,6 +844,32 @@ class VideoManager {
     this.activeTags.clear();
     this.renderTagsFilter();
     this.handleSearch(this.elements.searchInput.value);
+  }
+
+  resetAllFilters() {
+    // 清空所有篩選條件
+    this.activeTags.clear();
+    this.selectedRating = 0;
+    this.selectedDrivePath = '';
+    this.elements.searchInput.value = '';
+
+    // 重置 UI 元素
+    this.elements.driveFilterSelect.value = '';
+
+    // 重置評分篩選 UI
+    const allOption = document.querySelector('.rating-option[data-rating="0"]');
+    if (allOption) {
+      allOption.classList.add('active');
+    }
+    const filterStars = document.querySelectorAll('.filter-star');
+    filterStars.forEach((star) => {
+      star.classList.remove('active');
+      star.textContent = '☆';
+    });
+
+    // 重新載入資料
+    this.renderTagsFilter();
+    this.handleSearch('');
   }
 
   async showVideoModal(videoId) {
