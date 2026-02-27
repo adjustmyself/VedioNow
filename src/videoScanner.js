@@ -26,7 +26,15 @@ class VideoScanner {
   }
 
   async scanFolder(folderPath, options = {}) {
-    const { recursive = true, watchChanges = false, cleanupMissing = false, progressCallback = null } = options;
+    const { recursive = true, watchChanges = false, cleanupMissing = false, progressCallback = null, dateFilter = 'all' } = options;
+
+    // 計算日期過濾的截止時間
+    let dateThreshold = null;
+    if (dateFilter === 'week') {
+      dateThreshold = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    } else if (dateFilter === 'month') {
+      dateThreshold = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    }
 
     if (!await fs.pathExists(folderPath)) {
       throw new Error(`路徑不存在: ${folderPath}`);
@@ -50,7 +58,7 @@ class VideoScanner {
     }
 
     const videos = [];
-    await this._scanDirectory(folderPath, videos, recursive, progressCallback);
+    await this._scanDirectory(folderPath, videos, recursive, progressCallback, dateThreshold);
 
     if (progressCallback) {
       progressCallback({
@@ -111,7 +119,7 @@ class VideoScanner {
     };
   }
 
-  async _scanDirectory(dirPath, videos, recursive, progressCallback = null) {
+  async _scanDirectory(dirPath, videos, recursive, progressCallback = null, dateThreshold = null) {
     try {
       const items = await fs.readdir(dirPath);
 
@@ -131,8 +139,16 @@ class VideoScanner {
                 currentFile: itemPath
               });
             }
-            await this._scanDirectory(itemPath, videos, recursive, progressCallback);
+            await this._scanDirectory(itemPath, videos, recursive, progressCallback, dateThreshold);
           } else if (stat.isFile() && this._isVideoFile(item)) {
+            // 日期過濾：只處理在截止時間之後的檔案（取 mtime 與 birthtime 的較新值）
+            if (dateThreshold) {
+              const birthtimeMs = stat.birthtime && stat.birthtime.getTime() > 0 ? stat.birthtime.getTime() : 0;
+              const fileTimeMs = Math.max(stat.mtime.getTime(), birthtimeMs);
+              if (fileTimeMs < dateThreshold.getTime()) {
+                continue;
+              }
+            }
             const videoInfo = await this._getVideoInfo(itemPath, stat);
             videos.push(videoInfo);
 

@@ -59,6 +59,9 @@ class VideoManager {
       recursiveScan: document.getElementById('recursive-scan'),
       watchChanges: document.getElementById('watch-changes'),
       cleanupMissing: document.getElementById('cleanup-missing'),
+      scanDateFilterAll: document.getElementById('scan-range-all'),
+      scanDateFilterWeek: document.getElementById('scan-range-week'),
+      scanDateFilterMonth: document.getElementById('scan-range-month'),
       scanProgress: document.getElementById('scan-progress'),
       scanStatus: document.getElementById('scan-status'),
       scanPhase: document.getElementById('scan-phase'),
@@ -1379,10 +1382,15 @@ class VideoManager {
       return;
     }
 
+    const dateFilter = this.elements.scanDateFilterWeek.checked ? 'week'
+      : this.elements.scanDateFilterMonth.checked ? 'month'
+      : 'all';
+
     const options = {
       recursive: this.elements.recursiveScan.checked,
       watchChanges: this.elements.watchChanges.checked,
-      cleanupMissing: this.elements.cleanupMissing.checked
+      cleanupMissing: this.elements.cleanupMissing.checked,
+      dateFilter
     };
 
     this.elements.scanProgress.classList.remove('hidden');
