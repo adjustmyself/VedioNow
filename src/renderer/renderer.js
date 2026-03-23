@@ -23,6 +23,7 @@ class VideoManager {
     this.tagSelectorEventBound = false;
     this.modalTagsEventBound = false;
     this.episodePlayEventBound = false;
+    this.tagFilterEventBound = false;
 
     this.initializeElements();
     this.bindEvents();
@@ -770,18 +771,16 @@ class VideoManager {
     this.elements.tagsFilter.innerHTML = html;
     console.log('🎯 [DEBUG] HTML 已設定到 DOM');
 
-    this.bindTagEvents();
-    console.log('🎯 [DEBUG] 事件綁定完成');
-  }
-
-  bindTagEvents() {
-    const tagElements = this.elements.tagsFilter.querySelectorAll('.tag');
-    tagElements.forEach(element => {
-      element.addEventListener('click', () => {
-        const tagName = element.dataset.tag;
-        this.toggleTagFilter(tagName);
+    if (!this.tagFilterEventBound) {
+      this.elements.tagsFilter.addEventListener('click', (e) => {
+        const tag = e.target.closest('.tag');
+        if (tag && tag.dataset.tag) {
+          this.toggleTagFilter(tag.dataset.tag);
+        }
       });
-    });
+      this.tagFilterEventBound = true;
+    }
+    console.log('🎯 [DEBUG] 事件綁定完成');
   }
 
   bindRatingFilterEvents() {

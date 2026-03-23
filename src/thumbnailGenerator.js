@@ -46,9 +46,12 @@ class ThumbnailGenerator {
       let currentOffsetIndex = 0;
 
       const tryGenerateThumbnail = (offset) => {
-        // 標準化路徑：將反斜線轉為正斜線（FFmpeg 在 Windows 上兩者都支援）
-        // 這樣可以避免路徑中的反斜線轉義問題
-        const normalizedVideoPath = videoPath.replace(/\\/g, '/');
+        // 標準化路徑：UNC 網路路徑（\\server\share）必須保留反斜線，
+        // FFmpeg 在 Windows 上無法識別 //server/share 格式
+        const isUNC = videoPath.startsWith('\\\\') || videoPath.startsWith('//');
+        const normalizedVideoPath = isUNC
+          ? videoPath.replace(/\//g, '\\')
+          : videoPath.replace(/\\/g, '/');
         const normalizedThumbnailPath = thumbnailPath.replace(/\\/g, '/');
 
         // 針對不同格式調整 FFmpeg 參數
@@ -190,9 +193,9 @@ class ThumbnailGenerator {
     try {
       return await this.generateWithFFmpeg(videoPath, thumbnailPath);
     } catch (ffmpegError) {
-      console.warn('FFmpeg 生成縮圖失敗，將使用瀏覽器方法:', ffmpegError.message);
-      // FFmpeg 失敗時返回 null，讓前端處理
-      return null;
+      console.error('FFmpeg 生成縮圖失敗:', ffmpegError.message);
+      // 重新拋出以便呼叫端能看到實際錯誤
+      throw ffmpegError;
     }
   }
 

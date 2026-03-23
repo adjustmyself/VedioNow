@@ -306,7 +306,12 @@ class VideoScanner {
 
   async verifyNetworkPath(filepath) {
     try {
-      await fs.access(filepath);
+      await Promise.race([
+        fs.access(filepath),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Network path timeout after 8s')), 8000)
+        )
+      ]);
       return true;
     } catch (error) {
       console.warn(`網路路徑無法存取: ${filepath}`, error.message);

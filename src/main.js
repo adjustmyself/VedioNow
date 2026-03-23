@@ -10,6 +10,7 @@ let mainWindow;
 let database;
 let videoScanner;
 let thumbnailGenerator;
+let config;
 
 function createWindow() {
   // 根據平台選擇正確的 icon 格式
@@ -41,8 +42,8 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   try {
-    // 初始化配置
-    const config = new Config();
+    // 初始化配置（全域單一實例）
+    config = new Config();
     await config.init();
 
     // 使用工廠創建資料庫實例
@@ -120,8 +121,6 @@ ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
 
     // 掃描成功後，將路徑保存到最近掃描記錄
     if (result) {
-      const config = new Config();
-      await config.init();
       await config.addRecentScanPath(folderPath);
     }
 
@@ -563,8 +562,6 @@ ipcMain.handle('open-settings', async () => {
 // 獲取配置
 ipcMain.handle('get-config', async () => {
   try {
-    const config = new Config();
-    await config.init();
     return await config.load();
   } catch (error) {
     console.error('獲取配置失敗:', error);
@@ -575,8 +572,6 @@ ipcMain.handle('get-config', async () => {
 // 儲存配置
 ipcMain.handle('save-config', async (event, settings) => {
   try {
-    const config = new Config();
-    await config.init();
     const success = await config.save(settings);
 
     if (success) {
@@ -606,9 +601,6 @@ ipcMain.handle('save-config', async (event, settings) => {
 // 重置配置
 ipcMain.handle('reset-config', async () => {
   try {
-    const config = new Config();
-    await config.init();
-
     // 刪除配置檔案
     if (await fs.pathExists(config.getConfigPath())) {
       await fs.remove(config.getConfigPath());
@@ -634,9 +626,6 @@ ipcMain.handle('reset-config', async () => {
 // 測試MongoDB連線
 ipcMain.handle('test-mongodb-connection', async (event, mongoConfig) => {
   try {
-    const config = new Config();
-    await config.init();
-
     // 暫時更新MongoDB配置
     const tempConfig = await config.load();
     tempConfig.database.mongodb = { ...tempConfig.database.mongodb, ...mongoConfig };
@@ -691,8 +680,6 @@ ipcMain.handle('migrate-legacy-tags', async () => {
 // 獲取最近掃描路徑
 ipcMain.handle('get-recent-scan-paths', async () => {
   try {
-    const config = new Config();
-    await config.init();
     const paths = await config.getRecentScanPaths();
     return { success: true, paths };
   } catch (error) {
@@ -704,8 +691,6 @@ ipcMain.handle('get-recent-scan-paths', async () => {
 // 清空最近掃描路徑
 ipcMain.handle('clear-recent-scan-paths', async () => {
   try {
-    const config = new Config();
-    await config.init();
     const success = await config.clearRecentScanPaths();
     return { success };
   } catch (error) {
