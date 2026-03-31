@@ -121,7 +121,7 @@ class MongoDatabase extends DatabaseInterface {
         // 為videos集合創建索引
         await this.db.collection('videos').createIndex({ filepath: 1 }, { unique: true });
         await this.db.collection('videos').createIndex({ fingerprint: 1 }, { unique: true, sparse: true });
-        await this.db.collection('videos').createIndex({ filename: 'text', description: 'text' });
+        await this.db.collection('videos').createIndex({ filename: 1 });
         await this.db.collection('videos').createIndex({ created_at: -1 });
         await this.db.collection('videos').createIndex({ is_master: 1 });
         // 複合索引：支援常見的 is_master + 排序查詢
@@ -324,8 +324,12 @@ class MongoDatabase extends DatabaseInterface {
         const matchStage = {};
 
         if (searchTerm && searchTerm.trim()) {
-            // 使用全文索引搜尋，效能遠優於 RegExp 全表掃描
-            matchStage.$text = { $search: searchTerm };
+            // 使用 RegExp 支援部分字串比對與中文搜尋
+            // $text 全文索引不支援子字串匹配且與 $lookup 管道不相容
+            matchStage.$or = [
+                { filename: new RegExp(searchTerm, 'i') },
+                { description: new RegExp(searchTerm, 'i') }
+            ];
         }
 
         if (tags.length > 0) {
