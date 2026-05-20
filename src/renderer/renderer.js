@@ -1,6 +1,21 @@
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
 
+// 模組常數：影片格式判斷（避免每次呼叫重建陣列）
+const FULLY_SUPPORTED_FORMATS = new Set(['mp4', 'webm', 'ogg', 'ogv', 'm4v']);
+const UNSUPPORTED_FORMATS = new Set(['avi', 'wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts']);
+
+// HTML escape，避免 filename / tag name 中的 <、>、" 等字元破壞畫面或造成 XSS
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 class VideoManager {
   constructor() {
     this.currentVideos = [];
@@ -13,6 +28,9 @@ class VideoManager {
     this.viewMode = 'grid';
     this.selectedVideo = null;
     this.loadingThumbnails = new Set(); // 追蹤正在載入的縮圖
+    // 縮圖前端快取：filepath -> thumbnailPath（命中快取）或 null（已確認沒快取）
+    // 切換排序/檢視模式或翻頁回來時直接用，省掉 N 個 check-thumbnail IPC
+    this.thumbnailCache = new Map();
     // 分頁相關狀態
     this.currentPage = 1;
     this.pageSize = 9;
@@ -217,14 +235,11 @@ class VideoManager {
         this.allTags.push(...group.tags);
       }
     });
-    console.log('載入的標籤群組:', this.tagsByGroup);
-    console.log('所有標籤:', this.allTags);
   }
 
   async loadDrivePaths() {
     try {
       const drivePaths = await ipcRenderer.invoke('get-drive-paths');
-      console.log('載入的硬碟路徑:', drivePaths);
 
       // 清空現有選項（保留"全部硬碟"）
       this.elements.driveFilterSelect.innerHTML = '<option value="">全部硬碟</option>';
@@ -345,127 +360,100 @@ class VideoManager {
     this.loadAllThumbnails();
   }
 
-  createVideoCard(video) {
+  _buildVideoFields(video) {
     const tags = video.tags && video.tags.length > 0
       ? video.tags.map(tag => {
-          // 支援舊格式（字串）和新格式（物件）
           if (typeof tag === 'string') {
-            return `<span class="tag" style="--tag-color: #3b82f6;">${tag}</span>`;
-          } else {
-            return `<span class="tag" style="--tag-color: ${tag.color};">${tag.name}</span>`;
+            return `<span class="tag" style="--tag-color: #3b82f6;">${escapeHtml(tag)}</span>`;
           }
+          return `<span class="tag" style="--tag-color: ${escapeHtml(tag.color)};">${escapeHtml(tag.name)}</span>`;
         }).join('')
       : '<span class="no-tags">無標籤</span>';
 
-    const filename = video.filename || '未知檔名';
+    const filename = escapeHtml(video.filename || '未知檔名');
+    const filepath = escapeHtml(video.filepath || '');
     const filesize = this.formatFileSize(video.filesize);
     const createdDate = video.file_created_at
       ? new Date(video.file_created_at).toLocaleDateString()
       : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
+    const stars = this.generateStars(video.rating || 0);
 
-    // 生成星星評分
-    const rating = video.rating || 0;
-    const stars = this.generateStars(rating);
+    return { tags, filename, filepath, filesize, createdDate, stars, videoId: escapeHtml(video.id) };
+  }
 
+  createVideoCard(video) {
+    const f = this._buildVideoFields(video);
     return `
-      <div class="video-card" data-video-id="${video.id}">
-        <div class="video-thumbnail" data-filepath="${video.filepath}">
-          <video class="thumbnail-video" preload="metadata" muted>
-            <source src="${video.filepath}">
-          </video>
+      <div class="video-card" data-video-id="${f.videoId}">
+        <div class="video-thumbnail" data-filepath="${f.filepath}">
           <div class="thumbnail-fallback">
             <span>🎬</span>
           </div>
           <div class="thumbnail-toolbar">
-            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${video.id}" data-filepath="${video.filepath}" title="重新產生縮圖">
+            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${f.videoId}" data-filepath="${f.filepath}" title="重新產生縮圖">
               🖼️ 產生縮圖
             </button>
           </div>
         </div>
         <div class="video-card-content">
-          <div class="video-title" title="${filename}">${filename}</div>
+          <div class="video-title" title="${f.filename}">${f.filename}</div>
           <div class="video-meta">
-            ${filesize} • ${createdDate}
+            ${f.filesize} • ${f.createdDate}
           </div>
-          <div class="video-rating">${stars}</div>
-          <div class="video-tags">${tags}</div>
+          <div class="video-rating">${f.stars}</div>
+          <div class="video-tags">${f.tags}</div>
         </div>
       </div>
     `;
   }
 
   createVideoListItem(video) {
-    const tags = video.tags && video.tags.length > 0
-      ? video.tags.map(tag => {
-          // 支援舊格式（字串）和新格式（物件）
-          if (typeof tag === 'string') {
-            return `<span class="tag" style="--tag-color: #3b82f6;">${tag}</span>`;
-          } else {
-            return `<span class="tag" style="--tag-color: ${tag.color};">${tag.name}</span>`;
-          }
-        }).join('')
-      : '<span class="no-tags">無標籤</span>';
-
-    const filename = video.filename || '未知檔名';
-    const filesize = this.formatFileSize(video.filesize);
-    const createdDate = video.file_created_at
-      ? new Date(video.file_created_at).toLocaleDateString()
-      : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
-
-    // 生成星星評分
-    const rating = video.rating || 0;
-    const stars = this.generateStars(rating);
-
+    const f = this._buildVideoFields(video);
     return `
-      <div class="video-list-item" data-video-id="${video.id}">
-        <div class="video-list-thumbnail" data-filepath="${video.filepath}">
-          <video class="thumbnail-video-small" preload="metadata" muted>
-            <source src="${video.filepath}">
-          </video>
+      <div class="video-list-item" data-video-id="${f.videoId}">
+        <div class="video-list-thumbnail" data-filepath="${f.filepath}">
           <div class="thumbnail-fallback-small">
             <span>🎬</span>
           </div>
           <div class="thumbnail-toolbar">
-            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${video.id}" data-filepath="${video.filepath}" title="重新產生縮圖">
+            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${f.videoId}" data-filepath="${f.filepath}" title="重新產生縮圖">
               🖼️
             </button>
           </div>
         </div>
         <div class="video-list-content">
-          <div class="video-title">${filename}</div>
+          <div class="video-title">${f.filename}</div>
           <div class="video-meta">
-            ${filesize} • ${createdDate}
+            ${f.filesize} • ${f.createdDate}
           </div>
-          <div class="video-rating">${stars}</div>
-          <div class="video-tags">${tags}</div>
+          <div class="video-rating">${f.stars}</div>
+          <div class="video-tags">${f.tags}</div>
         </div>
       </div>
     `;
   }
 
   bindVideoEvents() {
-    const videoElements = this.elements.videosContainer.querySelectorAll('[data-video-id]');
-    videoElements.forEach(element => {
-      element.addEventListener('click', (e) => {
-        // 如果點擊的是工具欄按鈕，不觸發卡片點擊
-        if (e.target.closest('.thumbnail-toolbar')) {
-          return;
-        }
-        const videoId = element.dataset.videoId;
-        this.showVideoModal(videoId);
-      });
+    // 一次性事件委派到 videosContainer，DOM 重 render 時不需重綁
+    if (this.videoEventsBound) return;
+
+    this.elements.videosContainer.addEventListener('click', async (e) => {
+      const thumbBtn = e.target.closest('.btn-generate-thumb');
+      if (thumbBtn) {
+        e.stopPropagation();
+        await this.generateThumbnailForCard(thumbBtn.dataset.filepath, thumbBtn.dataset.videoId, thumbBtn);
+        return;
+      }
+      // 點到工具欄其他區域也不要觸發卡片點擊
+      if (e.target.closest('.thumbnail-toolbar')) return;
+
+      const card = e.target.closest('[data-video-id]');
+      if (card) {
+        this.showVideoModal(card.dataset.videoId);
+      }
     });
 
-    // 綁定縮圖生成按鈕事件
-    const generateThumbButtons = this.elements.videosContainer.querySelectorAll('.btn-generate-thumb');
-    generateThumbButtons.forEach(button => {
-      button.addEventListener('click', async (e) => {
-        e.stopPropagation(); // 防止觸發卡片點擊事件
-        const videoPath = button.dataset.filepath;
-        const videoId = button.dataset.videoId;
-        await this.generateThumbnailForCard(videoPath, videoId, button);
-      });
-    });
+    this.videoEventsBound = true;
   }
 
   loadAllThumbnails() {
@@ -474,20 +462,46 @@ class VideoManager {
 
     const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
 
-    // 立即載入所有縮圖（移除懶載入機制）
-    thumbnailContainers.forEach((container, index) => {
+    // 收集所有需要查詢的路徑（已快取的略過 IPC）
+    const pathsToCheck = [];
+    const containerByPath = new Map();
+    thumbnailContainers.forEach((container) => {
       const videoPath = container.dataset.filepath;
-      if (videoPath) {
-        // 添加載入中的視覺提示
-        this.addLoadingPlaceholder(container);
-
-        console.log(`立即載入縮圖: ${videoPath}`);
-        this.loadingThumbnails.add(videoPath);
-        this.loadThumbnail(container, videoPath);
+      if (!videoPath) return;
+      this.addLoadingPlaceholder(container);
+      this.loadingThumbnails.add(videoPath);
+      if (!this.thumbnailCache.has(videoPath)) {
+        pathsToCheck.push(videoPath);
       }
+      // 同一路徑可能對應多個 container（不太會發生但保險）
+      if (!containerByPath.has(videoPath)) containerByPath.set(videoPath, []);
+      containerByPath.get(videoPath).push(container);
     });
 
-    console.log(`開始載入 ${thumbnailContainers.length} 個縮圖`);
+    // 一次性批次查詢
+    if (pathsToCheck.length > 0) {
+      ipcRenderer.invoke('check-thumbnails-batch', pathsToCheck).then(res => {
+        if (res && res.success && res.results) {
+          for (const [p, thumb] of Object.entries(res.results)) {
+            this.thumbnailCache.set(p, thumb || null);
+          }
+        }
+        // 批次查詢回來後，再去逐個 render
+        containerByPath.forEach((containers, videoPath) => {
+          containers.forEach(c => this.loadThumbnail(c, videoPath));
+        });
+      }).catch(err => {
+        console.error('批次縮圖查詢失敗，改逐個查詢:', err);
+        containerByPath.forEach((containers, videoPath) => {
+          containers.forEach(c => this.loadThumbnail(c, videoPath));
+        });
+      });
+    } else {
+      // 全部命中快取，直接 render
+      containerByPath.forEach((containers, videoPath) => {
+        containers.forEach(c => this.loadThumbnail(c, videoPath));
+      });
+    }
   }
 
   addLoadingPlaceholder(container) {
@@ -502,48 +516,43 @@ class VideoManager {
 
   async loadThumbnail(container, videoPath) {
     try {
-      // 檢查是否已有快取的縮圖
-      const result = await ipcRenderer.invoke('check-thumbnail', videoPath);
-      if (result.success && result.exists) {
-        // 使用快取的縮圖
-        this.showCachedThumbnail(container, result.path);
-      } else {
-        // 檢查影片格式相容性
-        if (this.isVideoFormatSupported(videoPath)) {
-          // 支援的格式使用影片預覽
+      // 先看前端快取：已知有縮圖路徑直接用、已知沒有就直接走 fallback，省一次 IPC
+      if (this.thumbnailCache.has(videoPath)) {
+        const cached = this.thumbnailCache.get(videoPath);
+        if (cached) {
+          this.showCachedThumbnail(container, cached);
+        } else if (this.isVideoFormatSupported(videoPath)) {
           this.setupVideoThumbnail(container, videoPath);
         } else {
-          // 不支援的格式嘗試使用 FFmpeg 後端生成
+          await this.generateThumbnailWithBackend(container, videoPath);
+        }
+        return;
+      }
+
+      const result = await ipcRenderer.invoke('check-thumbnail', videoPath);
+      if (result.success && result.exists) {
+        this.thumbnailCache.set(videoPath, result.path);
+        this.showCachedThumbnail(container, result.path);
+      } else {
+        this.thumbnailCache.set(videoPath, null);
+        if (this.isVideoFormatSupported(videoPath)) {
+          this.setupVideoThumbnail(container, videoPath);
+        } else {
           console.warn(`格式可能不支援瀏覽器播放: ${videoPath}`);
           await this.generateThumbnailWithBackend(container, videoPath);
         }
       }
     } catch (error) {
       console.error('載入縮圖失敗:', error);
-      // 出錯時顯示預設縮圖
       this.showDefaultThumbnail(container, videoPath);
     } finally {
-      // 載入完成後從追蹤集合中移除
       this.loadingThumbnails.delete(videoPath);
     }
   }
 
   isVideoFormatSupported(videoPath) {
     const extension = videoPath.toLowerCase().split('.').pop();
-    // Chromium/Electron 較好支援的格式
-    const supportedFormats = ['mp4', 'webm', 'ogg', 'ogv', 'm4v'];
-    // 部分支援的格式 (讓瀏覽器嘗試，失敗時回退)
-    const partialSupport = ['mov', 'mkv', '3gp', 'mpg', 'mpeg'];
-    // 通常不支援的格式 (直接使用後端處理)
-    const unsupportedFormats = ['avi', 'wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts'];
-
-    if (supportedFormats.includes(extension)) {
-      return true;
-    }
-    if (unsupportedFormats.includes(extension)) {
-      return false;
-    }
-    // 其他格式讓瀏覽器嘗試
+    if (UNSUPPORTED_FORMATS.has(extension)) return false;
     return true;
   }
 
@@ -552,6 +561,7 @@ class VideoManager {
       // 嘗試使用後端 FFmpeg 生成縮圖
       const result = await ipcRenderer.invoke('get-thumbnail', videoPath);
       if (result.success && result.thumbnail) {
+        this.thumbnailCache.set(videoPath, result.thumbnail);
         this.showCachedThumbnail(container, result.thumbnail);
       } else {
         throw new Error('後端縮圖生成失敗');
@@ -728,17 +738,12 @@ class VideoManager {
   }
 
   renderTagsFilter() {
-    console.log('🎯 [DEBUG] 渲染標籤篩選器開始');
-    console.log('🎯 [DEBUG] 群組數量:', this.tagsByGroup.length);
-    console.log('🎯 [DEBUG] 標籤群組詳情:', JSON.stringify(this.tagsByGroup, null, 2));
-
     if (!this.elements.tagsFilter) {
-      console.error('🎯 [ERROR] tagsFilter 元素不存在！');
+      console.error('tagsFilter 元素不存在');
       return;
     }
 
     if (this.tagsByGroup.length === 0) {
-      console.log('🎯 [DEBUG] 無標籤群組，顯示空狀態');
       this.elements.tagsFilter.innerHTML = `
         <div class="no-tags-container">
           <span class="no-tags">尚無標籤</span>
@@ -751,25 +756,23 @@ class VideoManager {
     const html = this.tagsByGroup.map(group => `
       <div class="tag-group-filter">
         <div class="tag-group-header">
-          <span class="tag-group-color" style="background-color: ${group.color};"></span>
-          <span class="tag-group-name">${group.name}</span>
+          <span class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></span>
+          <span class="tag-group-name">${escapeHtml(group.name)}</span>
           <span class="tag-group-count">(${(group.tags || []).length})</span>
         </div>
         <div class="tag-group-tags">
           ${(group.tags || []).map(tag =>
             `<span class="tag ${this.activeTags.has(tag.name) ? 'active' : ''}"
-                   data-tag="${tag.name}"
-                   style="--tag-color: ${tag.color};">
-              ${tag.name} (${tag.video_count})
+                   data-tag="${escapeHtml(tag.name)}"
+                   style="--tag-color: ${escapeHtml(tag.color)};">
+              ${escapeHtml(tag.name)} (${tag.video_count})
             </span>`
           ).join('')}
         </div>
       </div>
     `).join('');
 
-    console.log('🎯 [DEBUG] 生成的 HTML:', html);
     this.elements.tagsFilter.innerHTML = html;
-    console.log('🎯 [DEBUG] HTML 已設定到 DOM');
 
     if (!this.tagFilterEventBound) {
       this.elements.tagsFilter.addEventListener('click', (e) => {
@@ -780,7 +783,6 @@ class VideoManager {
       });
       this.tagFilterEventBound = true;
     }
-    console.log('🎯 [DEBUG] 事件綁定完成');
   }
 
   bindRatingFilterEvents() {
@@ -892,12 +894,19 @@ class VideoManager {
     this.setModalRating(this.selectedVideo.rating || 0);
     this.bindModalEvents();
 
-    // 載入合集資訊
-    if (this.selectedVideo.fingerprint) {
-      await this.loadCollectionInfo(this.selectedVideo.fingerprint);
-    }
+    // 先隱藏合集區，避免顯示上一部影片的殘留資料
+    this.elements.collectionList.classList.add('hidden');
+    this.elements.removeCollectionBtn.classList.add('hidden');
 
+    // 立即顯示彈窗，合集資訊在背景載入
     this.elements.videoModal.classList.remove('hidden');
+
+    if (this.selectedVideo.fingerprint) {
+      const fingerprint = this.selectedVideo.fingerprint;
+      this.loadCollectionInfo(fingerprint).catch(err => {
+        console.error('背景載入合集資訊失敗:', err);
+      });
+    }
   }
 
   hideVideoModal() {
@@ -908,7 +917,7 @@ class VideoManager {
   renderModalTags() {
     const modalTags = document.getElementById('modal-tags');
     modalTags.innerHTML = this.selectedVideo.tags.map(tag =>
-      `<span class="tag removable" data-tag="${tag}">${tag}</span>`
+      `<span class="tag removable" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`
     ).join('');
 
     // 使用事件委派綁定標籤移除事件（只綁定一次）
@@ -925,10 +934,12 @@ class VideoManager {
 
   async renderTagSelector() {
     try {
-      const tagsByGroup = await ipcRenderer.invoke('get-tags-by-group');
+      // 直接使用既有快取（loadTags 已在啟動與標籤變動時更新），避免每次開彈窗都重 IPC
+      if (!this.tagsByGroup) {
+        await this.loadTags();
+      }
+      const tagsByGroup = this.tagsByGroup;
       const tagSelector = document.getElementById('tag-selector');
-
-      console.log('載入的標籤群組數據:', tagsByGroup);
 
       if (!tagsByGroup || tagsByGroup.length === 0) {
         tagSelector.innerHTML = `
@@ -946,15 +957,15 @@ class VideoManager {
       tagSelector.innerHTML = tagsByGroup.map(group => `
         <div class="tag-group-selector">
           <div class="tag-group-header-selector">
-            <div class="tag-group-color-selector" style="background-color: ${group.color};"></div>
-            <div class="tag-group-name-selector">${group.name}</div>
+            <div class="tag-group-color-selector" style="background-color: ${escapeHtml(group.color)};"></div>
+            <div class="tag-group-name-selector">${escapeHtml(group.name)}</div>
           </div>
           <div class="tags-list-selector">
             ${(group.tags || []).map(tag => `
               <div class="tag-item-selector ${this.selectedVideo.tags.includes(tag.name) ? 'selected' : ''}"
-                   data-tag-name="${tag.name}">
-                <div class="tag-color-selector" style="background-color: ${tag.color};"></div>
-                <div class="tag-name-selector">${tag.name}</div>
+                   data-tag-name="${escapeHtml(tag.name)}">
+                <div class="tag-color-selector" style="background-color: ${escapeHtml(tag.color)};"></div>
+                <div class="tag-name-selector">${escapeHtml(tag.name)}</div>
               </div>
             `).join('')}
           </div>
@@ -1260,14 +1271,12 @@ class VideoManager {
       generateBtn.textContent = '⏳ 生成中...';
       generateBtn.disabled = true;
 
-      console.log('開始手動生成縮圖:', videoPath);
-
       // 呼叫後端使用 FFmpeg 生成縮圖
       const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath);
 
       if (result.success && result.thumbnail) {
+        this.thumbnailCache.set(videoPath, result.thumbnail);
         alert('縮圖生成成功！');
-        console.log('縮圖已儲存至:', result.thumbnail);
 
         // 重新載入頁面上的縮圖（如果當前影片在列表中顯示）
         const videoCard = document.querySelector(`[data-video-id="${this.selectedVideo.id}"]`);
@@ -1299,14 +1308,11 @@ class VideoManager {
       button.disabled = true;
       button.style.opacity = '0.6';
 
-      console.log('從卡片生成縮圖:', videoPath);
-
       // 呼叫後端使用 FFmpeg 生成縮圖
       const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath);
 
       if (result.success && result.thumbnail) {
-        console.log('縮圖生成成功:', result.thumbnail);
-
+        this.thumbnailCache.set(videoPath, result.thumbnail);
         // 立即更新當前卡片的縮圖
         const videoCard = document.querySelector(`[data-video-id="${videoId}"]`);
         if (videoCard) {
@@ -1511,33 +1517,27 @@ class VideoManager {
 
   renderPagination() {
     const paginationContainer = document.getElementById('pagination-container');
-    console.log('分頁容器:', paginationContainer);
-    console.log('總頁數:', this.totalPages, '當前頁:', this.currentPage, '總影片數:', this.totalVideos);
-
     if (!paginationContainer) {
-      console.error('找不到分頁容器元素！');
+      console.error('找不到分頁容器元素');
       return;
     }
 
     if (this.totalPages <= 1) {
-      console.log('只有一頁或沒有資料，隱藏分頁控制器');
       paginationContainer.innerHTML = '';
       return;
     }
 
     let paginationHTML = '';
 
-    // 上一頁按鈕
     if (this.currentPage > 1) {
-      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(${this.currentPage - 1})">◀ 上一頁</button>`;
+      paginationHTML += `<button class="pagination-btn" data-page="${this.currentPage - 1}">◀ 上一頁</button>`;
     }
 
-    // 頁碼按鈕
     const startPage = Math.max(1, this.currentPage - 2);
     const endPage = Math.min(this.totalPages, this.currentPage + 2);
 
     if (startPage > 1) {
-      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(1)">1</button>`;
+      paginationHTML += `<button class="pagination-btn" data-page="1">1</button>`;
       if (startPage > 2) {
         paginationHTML += `<span class="pagination-ellipsis">...</span>`;
       }
@@ -1545,27 +1545,36 @@ class VideoManager {
 
     for (let i = startPage; i <= endPage; i++) {
       const isActive = i === this.currentPage ? 'active' : '';
-      paginationHTML += `<button class="pagination-btn ${isActive}" onclick="videoManager.goToPage(${i})">${i}</button>`;
+      paginationHTML += `<button class="pagination-btn ${isActive}" data-page="${i}">${i}</button>`;
     }
 
     if (endPage < this.totalPages) {
       if (endPage < this.totalPages - 1) {
         paginationHTML += `<span class="pagination-ellipsis">...</span>`;
       }
-      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(${this.totalPages})">${this.totalPages}</button>`;
+      paginationHTML += `<button class="pagination-btn" data-page="${this.totalPages}">${this.totalPages}</button>`;
     }
 
-    // 下一頁按鈕
     if (this.currentPage < this.totalPages) {
-      paginationHTML += `<button class="pagination-btn" onclick="videoManager.goToPage(${this.currentPage + 1})">下一頁 ▶</button>`;
+      paginationHTML += `<button class="pagination-btn" data-page="${this.currentPage + 1}">下一頁 ▶</button>`;
     }
 
-    // 分頁資訊
     const startItem = (this.currentPage - 1) * this.pageSize + 1;
     const endItem = Math.min(this.currentPage * this.pageSize, this.totalVideos);
     paginationHTML += `<div class="pagination-info">顯示第 ${startItem}-${endItem} 筆，共 ${this.totalVideos} 筆影片</div>`;
 
     paginationContainer.innerHTML = paginationHTML;
+
+    // 一次性事件委派
+    if (!this.paginationEventBound) {
+      paginationContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest('.pagination-btn');
+        if (btn && btn.dataset.page) {
+          this.goToPage(parseInt(btn.dataset.page, 10));
+        }
+      });
+      this.paginationEventBound = true;
+    }
   }
 
   showLoading() {

@@ -43,8 +43,6 @@ class FileFingerprint {
       }
 
       const fingerprint = hash.digest('hex');
-      console.log(`計算檔案指紋: ${filepath.substring(filepath.lastIndexOf('/') + 1)} -> ${fingerprint.substring(0, 8)}...`);
-
       return fingerprint;
     } catch (error) {
       console.error(`計算檔案指紋失敗: ${filepath}`, error);

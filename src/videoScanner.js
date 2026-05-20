@@ -73,21 +73,11 @@ class VideoScanner {
 
     let addedCount = 0;
     let updatedCount = 0;
+    let processed = 0;
 
-    for (let i = 0; i < videos.length; i++) {
-      const video = videos[i];
+    // 並行寫入（併發 8）。Mongo 在指紋上有 unique 索引，並行不會破壞唯一性
+    await this._runWithConcurrency(videos, 8, async (video) => {
       try {
-        if (progressCallback) {
-          progressCallback({
-            phase: 'processing',
-            message: `正在處理影片... (${i + 1}/${videos.length})`,
-            progress: ((i + 1) / videos.length) * 100,
-            filesFound: videos.length,
-            processed: i + 1,
-            currentFile: video.filename
-          });
-        }
-
         const result = await this.database.addVideo(video);
         if (result === 'updated') {
           updatedCount++;
@@ -96,8 +86,20 @@ class VideoScanner {
         }
       } catch (error) {
         console.error(`添加影片失敗: ${video.filepath}`, error);
+      } finally {
+        processed++;
+        if (progressCallback) {
+          progressCallback({
+            phase: 'processing',
+            message: `正在處理影片... (${processed}/${videos.length})`,
+            progress: (processed / videos.length) * 100,
+            filesFound: videos.length,
+            processed,
+            currentFile: video.filename
+          });
+        }
       }
-    }
+    });
 
     // 可選：清理已刪除的檔案記錄
     let cleanupCount = 0;
@@ -121,54 +123,81 @@ class VideoScanner {
 
   async _scanDirectory(dirPath, videos, recursive, progressCallback = null, dateThreshold = null) {
     try {
-      const items = await fs.readdir(dirPath);
+      // withFileTypes 省去額外的 stat 呼叫來判斷檔案/資料夾類型
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
-      for (const item of items) {
-        const itemPath = path.join(dirPath, item);
+      // 先分類：子資料夾、可能的影片檔
+      const subDirs = [];
+      const videoFileEntries = [];
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (recursive) subDirs.push(path.join(dirPath, entry.name));
+        } else if (entry.isFile() && this._isVideoFile(entry.name)) {
+          videoFileEntries.push(entry.name);
+        }
+      }
 
+      if (progressCallback) {
+        progressCallback({
+          phase: 'scanning',
+          message: '正在掃描資料夾...',
+          progress: 0,
+          filesFound: videos.length,
+          currentFile: dirPath
+        });
+      }
+
+      // 同一層的影片並行處理（限制併發 8，避免網路硬碟過載）
+      await this._runWithConcurrency(videoFileEntries, 8, async (name) => {
+        const itemPath = path.join(dirPath, name);
         try {
           const stat = await fs.stat(itemPath);
+          if (dateThreshold) {
+            const birthtimeMs = stat.birthtime && stat.birthtime.getTime() > 0 ? stat.birthtime.getTime() : 0;
+            const fileTimeMs = Math.max(stat.mtime.getTime(), birthtimeMs);
+            if (fileTimeMs < dateThreshold.getTime()) return;
+          }
+          const videoInfo = await this._getVideoInfo(itemPath, stat);
+          videos.push(videoInfo);
 
-          if (stat.isDirectory() && recursive) {
-            if (progressCallback) {
-              progressCallback({
-                phase: 'scanning',
-                message: '正在掃描資料夾...',
-                progress: 0,
-                filesFound: videos.length,
-                currentFile: itemPath
-              });
-            }
-            await this._scanDirectory(itemPath, videos, recursive, progressCallback, dateThreshold);
-          } else if (stat.isFile() && this._isVideoFile(item)) {
-            // 日期過濾：只處理在截止時間之後的檔案（取 mtime 與 birthtime 的較新值）
-            if (dateThreshold) {
-              const birthtimeMs = stat.birthtime && stat.birthtime.getTime() > 0 ? stat.birthtime.getTime() : 0;
-              const fileTimeMs = Math.max(stat.mtime.getTime(), birthtimeMs);
-              if (fileTimeMs < dateThreshold.getTime()) {
-                continue;
-              }
-            }
-            const videoInfo = await this._getVideoInfo(itemPath, stat);
-            videos.push(videoInfo);
-
-            if (progressCallback) {
-              progressCallback({
-                phase: 'scanning',
-                message: `找到影片檔案... (已找到 ${videos.length} 個)`,
-                progress: 0,
-                filesFound: videos.length,
-                currentFile: item
-              });
-            }
+          if (progressCallback) {
+            progressCallback({
+              phase: 'scanning',
+              message: `找到影片檔案... (已找到 ${videos.length} 個)`,
+              progress: 0,
+              filesFound: videos.length,
+              currentFile: name
+            });
           }
         } catch (error) {
           console.warn(`無法讀取項目: ${itemPath}`, error.message);
         }
-      }
+      });
+
+      // 子資料夾遞迴，限制併發避免遞迴爆炸
+      await this._runWithConcurrency(subDirs, 4, (sub) =>
+        this._scanDirectory(sub, videos, recursive, progressCallback, dateThreshold)
+      );
     } catch (error) {
       console.error(`掃描資料夾錯誤: ${dirPath}`, error);
     }
+  }
+
+  async _runWithConcurrency(items, limit, worker) {
+    if (items.length === 0) return;
+    let cursor = 0;
+    const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (cursor < items.length) {
+        const idx = cursor++;
+        try {
+          await worker(items[idx], idx);
+        } catch (e) {
+          // worker 內部應自行處理錯誤，這裡只是保險
+          console.warn('worker error:', e && e.message);
+        }
+      }
+    });
+    await Promise.all(runners);
   }
 
   _isVideoFile(filename) {

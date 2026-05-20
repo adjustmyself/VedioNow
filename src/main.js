@@ -464,6 +464,29 @@ ipcMain.handle('check-thumbnail', async (event, videoPath) => {
   }
 });
 
+// 批次檢查縮圖：渲染一頁時用，避免 N 次 IPC 來回
+ipcMain.handle('check-thumbnails-batch', async (event, videoPaths) => {
+  try {
+    if (!Array.isArray(videoPaths) || videoPaths.length === 0) {
+      return { success: true, results: {} };
+    }
+    const entries = await Promise.all(
+      videoPaths.map(async (p) => {
+        try {
+          const existing = await thumbnailGenerator.thumbnailExists(p);
+          return [p, existing || null];
+        } catch {
+          return [p, null];
+        }
+      })
+    );
+    const results = Object.fromEntries(entries);
+    return { success: true, results };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // 強制重新生成縮圖
 ipcMain.handle('generate-thumbnail-force', async (event, videoPath) => {
   try {
