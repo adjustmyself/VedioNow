@@ -219,6 +219,16 @@ ipcMain.handle('search-videos', async (event, searchTerm, tags = [], filters = {
   }
 });
 
+// 取得目前篩選條件下每個標籤的影片計數（多面向篩選）
+ipcMain.handle('get-filtered-tag-counts', async (event, searchTerm, tags = [], filters = {}) => {
+  try {
+    return await database.getTagCountsForFilter(searchTerm, tags, filters);
+  } catch (error) {
+    console.error('Error getting filtered tag counts:', error);
+    return {};
+  }
+});
+
 ipcMain.handle('delete-video', async (event, videoId) => {
   try {
     await database.deleteVideo(videoId);
@@ -718,6 +728,17 @@ ipcMain.handle('clear-recent-scan-paths', async () => {
     return { success };
   } catch (error) {
     console.error('清空最近掃描路徑失敗:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 移除單一掃描路徑
+ipcMain.handle('remove-recent-scan-path', async (event, folderPath) => {
+  try {
+    const success = await config.removeRecentScanPath(folderPath);
+    return { success };
+  } catch (error) {
+    console.error('移除最近掃描路徑失敗:', error);
     return { success: false, error: error.message };
   }
 });

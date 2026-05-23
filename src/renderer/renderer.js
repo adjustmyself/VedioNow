@@ -21,6 +21,11 @@ class VideoManager {
     this.currentVideos = [];
     this.allTags = [];
     this.activeTags = new Set();
+    this.tagSearchQuery = '';
+    this.collapsedGroups = this.loadCollapsedGroups();
+    // 多面向篩選：當前條件下每個標籤的命中計數；null = 無篩選，使用原始 video_count
+    this.filteredTagCounts = null;
+    this._tagCountsReqId = 0;
     this.selectedRating = 0; // 0 表示全部
     this.selectedDrivePath = ''; // 選中的硬碟路徑
     this.currentSort = 'file_created_at';
@@ -56,6 +61,8 @@ class VideoManager {
       searchInput: document.getElementById('search-input'),
       driveFilterSelect: document.getElementById('drive-filter-select'),
       tagsFilter: document.getElementById('tags-filter'),
+      tagFilterSearch: document.getElementById('tag-filter-search'),
+      tagFilterSearchClear: document.getElementById('tag-filter-search-clear'),
       resetTagsBtn: document.getElementById('reset-tags-btn'),
       resetAllBtn: document.getElementById('reset-all-btn'),
       videosContainer: document.getElementById('videos-container'),
@@ -112,6 +119,18 @@ class VideoManager {
     this.elements.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
     this.elements.driveFilterSelect.addEventListener('change', (e) => this.handleDriveFilterChange(e.target.value));
     this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
+    this.elements.tagFilterSearch?.addEventListener('input', (e) => {
+      this.tagSearchQuery = e.target.value.trim().toLowerCase();
+      this.elements.tagFilterSearchClear?.classList.toggle('hidden', !this.tagSearchQuery);
+      this.renderTagsFilter();
+    });
+    this.elements.tagFilterSearchClear?.addEventListener('click', () => {
+      this.elements.tagFilterSearch.value = '';
+      this.tagSearchQuery = '';
+      this.elements.tagFilterSearchClear.classList.add('hidden');
+      this.renderTagsFilter();
+      this.elements.tagFilterSearch.focus();
+    });
     this.elements.resetAllBtn.addEventListener('click', () => this.resetAllFilters());
     this.elements.gridViewBtn.addEventListener('click', () => this.setViewMode('grid'));
     this.elements.listViewBtn.addEventListener('click', () => this.setViewMode('list'));
@@ -295,6 +314,10 @@ class VideoManager {
       this.updateStats();
       this.renderVideos();
       this.renderPagination();
+
+      // 更新每個標籤在目前篩選條件下的命中計數
+      await this.fetchFilteredTagCounts();
+      this.renderTagsFilter();
     } catch (error) {
       console.error('搜尋錯誤:', error);
     } finally {
@@ -753,35 +776,172 @@ class VideoManager {
       return;
     }
 
-    const html = this.tagsByGroup.map(group => `
-      <div class="tag-group-filter">
-        <div class="tag-group-header">
-          <span class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></span>
-          <span class="tag-group-name">${escapeHtml(group.name)}</span>
-          <span class="tag-group-count">(${(group.tags || []).length})</span>
-        </div>
-        <div class="tag-group-tags">
-          ${(group.tags || []).map(tag =>
-            `<span class="tag ${this.activeTags.has(tag.name) ? 'active' : ''}"
-                   data-tag="${escapeHtml(tag.name)}"
-                   style="--tag-color: ${escapeHtml(tag.color)};">
-              ${escapeHtml(tag.name)} (${tag.video_count})
-            </span>`
-          ).join('')}
-        </div>
-      </div>
-    `).join('');
+    const query = this.tagSearchQuery;
+    // 沒有任何篩選條件時，強制使用原始計數，避免顯示舊資料
+    if (!this.isAnyFilterActive()) {
+      this.filteredTagCounts = null;
+    }
+    const useFiltered = this.filteredTagCounts !== null;
 
-    this.elements.tagsFilter.innerHTML = html;
+    // 取得標籤顯示計數 + class（多面向篩選用）
+    const tagDisplay = (tag) => {
+      if (!useFiltered) {
+        return { countText: `${tag.video_count}`, empty: false };
+      }
+      const filteredCount = this.filteredTagCounts[tag.name] || 0;
+      const empty = filteredCount === 0 && !this.activeTags.has(tag.name);
+      const countText = filteredCount === tag.video_count
+        ? `${tag.video_count}`
+        : `${filteredCount}/${tag.video_count}`;
+      return { countText, empty };
+    };
+
+    // 已選標籤置頂區（彙整所有 group 裡被選中的）
+    let pinnedHtml = '';
+    if (this.activeTags.size > 0) {
+      const allTagsFlat = this.tagsByGroup.flatMap(g => g.tags || []);
+      const selected = allTagsFlat.filter(t => this.activeTags.has(t.name));
+      if (selected.length > 0) {
+        pinnedHtml = `
+          <div class="tag-pinned-section">
+            <div class="tag-pinned-header">已選 (${selected.length})</div>
+            <div class="tag-group-tags">
+              ${selected.map(tag => {
+                const d = tagDisplay(tag);
+                return `
+                <span class="tag active"
+                      data-tag="${escapeHtml(tag.name)}"
+                      style="--tag-color: ${escapeHtml(tag.color)};">
+                  ${escapeHtml(tag.name)} (${d.countText})
+                </span>
+              `;}).join('')}
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    // 各群組：套用搜尋過濾、摺疊狀態
+    const groupsHtml = this.tagsByGroup.map(group => {
+      const allTags = group.tags || [];
+      const filtered = query
+        ? allTags.filter(t => t.name.toLowerCase().includes(query))
+        : allTags;
+
+      // 搜尋中且整組無命中 → 不渲染
+      if (query && filtered.length === 0) return '';
+
+      // 搜尋中強制展開以便看到結果；否則依摺疊狀態
+      const isCollapsed = !query && this.collapsedGroups.has(group.name);
+      const groupKey = escapeHtml(group.name);
+
+      return `
+        <div class="tag-group-filter ${isCollapsed ? 'collapsed' : ''}" data-group="${groupKey}">
+          <div class="tag-group-header" data-group="${groupKey}" role="button">
+            <span class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></span>
+            <span class="tag-group-name">${escapeHtml(group.name)}</span>
+            <span class="tag-group-count">(${filtered.length}${query && filtered.length !== allTags.length ? '/' + allTags.length : ''})</span>
+          </div>
+          <div class="tag-group-tags">
+            ${filtered.map(tag => {
+              const d = tagDisplay(tag);
+              const classes = ['tag'];
+              if (this.activeTags.has(tag.name)) classes.push('active');
+              if (d.empty) classes.push('empty-result');
+              return `<span class="${classes.join(' ')}"
+                     data-tag="${escapeHtml(tag.name)}"
+                     style="--tag-color: ${escapeHtml(tag.color)};">
+                ${escapeHtml(tag.name)} (${d.countText})
+              </span>`;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const emptySearchHtml = (query && !groupsHtml)
+      ? `<div class="no-tags-container"><span class="no-tags">找不到符合「${escapeHtml(this.elements.tagFilterSearch?.value || '')}」的標籤</span></div>`
+      : '';
+
+    this.elements.tagsFilter.innerHTML = pinnedHtml + groupsHtml + emptySearchHtml;
 
     if (!this.tagFilterEventBound) {
       this.elements.tagsFilter.addEventListener('click', (e) => {
+        const header = e.target.closest('.tag-group-header');
+        if (header && header.dataset.group) {
+          this.toggleGroupCollapse(header.dataset.group);
+          return;
+        }
         const tag = e.target.closest('.tag');
         if (tag && tag.dataset.tag) {
           this.toggleTagFilter(tag.dataset.tag);
         }
       });
       this.tagFilterEventBound = true;
+    }
+  }
+
+  toggleGroupCollapse(groupName) {
+    if (this.collapsedGroups.has(groupName)) {
+      this.collapsedGroups.delete(groupName);
+    } else {
+      this.collapsedGroups.add(groupName);
+    }
+    this.saveCollapsedGroups();
+    this.renderTagsFilter();
+  }
+
+  loadCollapsedGroups() {
+    try {
+      const raw = localStorage.getItem('videonow.collapsedTagGroups');
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  saveCollapsedGroups() {
+    try {
+      localStorage.setItem('videonow.collapsedTagGroups', JSON.stringify(Array.from(this.collapsedGroups)));
+    } catch (e) {
+      console.warn('儲存摺疊狀態失敗:', e);
+    }
+  }
+
+  isAnyFilterActive() {
+    return !!(
+      (this.elements.searchInput?.value || '').trim() ||
+      this.activeTags.size > 0 ||
+      this.selectedRating > 0 ||
+      this.selectedDrivePath
+    );
+  }
+
+  // 取得目前條件下每個標籤的影片計數
+  // 用 requestId 避免快速點擊時舊回應覆蓋新狀態
+  async fetchFilteredTagCounts() {
+    if (!this.isAnyFilterActive()) {
+      this.filteredTagCounts = null;
+      return;
+    }
+    const reqId = ++this._tagCountsReqId;
+    try {
+      const counts = await ipcRenderer.invoke(
+        'get-filtered-tag-counts',
+        this.elements.searchInput.value,
+        Array.from(this.activeTags),
+        { rating: this.selectedRating, drivePath: this.selectedDrivePath }
+      );
+      if (reqId === this._tagCountsReqId) {
+        this.filteredTagCounts = counts || {};
+      }
+    } catch (e) {
+      console.error('取得標籤篩選計數失敗:', e);
+      if (reqId === this._tagCountsReqId) {
+        this.filteredTagCounts = null;
+      }
     }
   }
 
@@ -1882,22 +2042,47 @@ class VideoManager {
     const recentPathsList = document.getElementById('recent-paths-list');
     if (!recentPathsList) return;
 
-    recentPathsList.innerHTML = paths.map(path => `
-      <div class="recent-path-item" data-path="${path}" title="${path}">
+    recentPathsList.innerHTML = paths.map(path => {
+      const safePath = escapeHtml(path);
+      return `
+      <div class="recent-path-item" data-path="${safePath}" title="${safePath}">
         <span class="recent-path-icon">📁</span>
-        <span class="recent-path-text">${path}</span>
+        <span class="recent-path-text">${safePath}</span>
+        <button class="recent-path-remove" data-path="${safePath}" title="刪除此記憶路徑">✕</button>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
-    // 綁定點擊事件
+    // 綁定點擊事件（選取路徑）
     recentPathsList.querySelectorAll('.recent-path-item').forEach(item => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (e) => {
+        // 點到刪除按鈕時不要觸發選取
+        if (e.target.classList.contains('recent-path-remove')) return;
         const path = item.dataset.path;
         this.elements.folderPath.value = path;
-        // 可選：自動聚焦到路徑輸入框
         this.elements.folderPath.focus();
       });
     });
+
+    // 綁定刪除事件
+    recentPathsList.querySelectorAll('.recent-path-remove').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const path = btn.dataset.path;
+        await this.removeRecentScanPath(path);
+      });
+    });
+  }
+
+  async removeRecentScanPath(folderPath) {
+    try {
+      const result = await ipcRenderer.invoke('remove-recent-scan-path', folderPath);
+      if (result.success) {
+        await this.loadRecentScanPaths();
+      }
+    } catch (error) {
+      console.error('移除最近掃描路徑失敗:', error);
+    }
   }
 }
 

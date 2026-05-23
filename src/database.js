@@ -401,6 +401,44 @@ class MongoDatabase extends DatabaseInterface {
         }
     }
 
+    // 多面向篩選用：依目前篩選條件回傳每個標籤的影片計數
+    // 回傳 { tagName: count } 物件，渲染端可即時更新側邊欄計數
+    async getTagCountsForFilter(searchTerm, tags = [], filters = {}) {
+        const pipeline = this._buildBasePipeline();
+        const matchStage = {};
+
+        if (searchTerm && searchTerm.trim()) {
+            matchStage.$or = [
+                { filename: new RegExp(searchTerm, 'i') },
+                { description: new RegExp(searchTerm, 'i') }
+            ];
+        }
+        if (tags.length > 0) {
+            matchStage.tags = { $all: tags };
+        }
+        if (filters.rating && filters.rating > 0) {
+            matchStage.rating = filters.rating;
+        }
+        if (filters.drivePath && filters.drivePath.trim()) {
+            const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
+        }
+
+        if (Object.keys(matchStage).length > 0) {
+            pipeline.push({ $match: matchStage });
+        }
+
+        pipeline.push({ $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } });
+        pipeline.push({ $group: { _id: '$tags', count: { $sum: 1 } } });
+
+        const results = await this.db.collection('videos').aggregate(pipeline).toArray();
+        const counts = {};
+        for (const r of results) {
+            counts[r._id] = r.count;
+        }
+        return counts;
+    }
+
     async updateVideo(videoId, updates) {
         const objectId = new ObjectId(videoId);
         const updateDoc = {
