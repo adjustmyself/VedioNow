@@ -439,6 +439,24 @@ class MongoDatabase extends DatabaseInterface {
         return counts;
     }
 
+    // 統計孤兒標籤關聯數量：video_tag_relations 中，指紋已不存在於 videos 集合者
+    // （影片已刪除，或重新掃描後指紋改變所殘留）。這類關聯會讓標籤計數虛高。
+    async countOrphanTagRelations() {
+        const videoFingerprints = await this.db.collection('videos').distinct('fingerprint');
+        return this.db.collection('video_tag_relations').countDocuments({
+            fingerprint: { $nin: videoFingerprints }
+        });
+    }
+
+    // 清理孤兒標籤關聯，回傳實際刪除筆數
+    async cleanupOrphanTagRelations() {
+        const videoFingerprints = await this.db.collection('videos').distinct('fingerprint');
+        const result = await this.db.collection('video_tag_relations').deleteMany({
+            fingerprint: { $nin: videoFingerprints }
+        });
+        return { removed: result.deletedCount };
+    }
+
     async updateVideo(videoId, updates) {
         const objectId = new ObjectId(videoId);
         const updateDoc = {
@@ -832,12 +850,16 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async getTagsByGroup() {
-        // 一次聚合取得所有標籤的影片計數，避免 N+1 查詢
+        // 一次聚合取得所有標籤的影片計數，避免 N+1 查詢。
+        // 計數須從 videos 集合出發並套用 _buildBasePipeline（排除子影片、只算實際存在的影片），
+        // 才會與列表篩選 / getTagCountsForFilter 的結果一致；
+        // 直接數 video_tag_relations 會把子影片與孤兒關聯也算進去，導致「總數 > 實際搜到的數量」。
         const [groups, allTags, tagCounts] = await Promise.all([
             this.db.collection('tag_groups').find().sort({ sort_order: 1, name: 1 }).toArray(),
             this.db.collection('tags').find().toArray(),
-            this.db.collection('video_tag_relations').aggregate([
-                { $unwind: '$tags' },
+            this.db.collection('videos').aggregate([
+                ...this._buildBasePipeline(),
+                { $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } },
                 { $group: { _id: '$tags', count: { $sum: 1 } } }
             ]).toArray()
         ]);

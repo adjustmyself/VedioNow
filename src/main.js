@@ -235,6 +235,20 @@ ipcMain.handle('get-filtered-tag-counts', async (event, searchTerm, tags = [], f
   }
 });
 
+// 清理孤兒標籤關聯（指紋已不存在於 videos 集合的 video_tag_relations）
+ipcMain.handle('cleanup-orphan-tag-relations', async () => {
+  try {
+    const { removed } = await database.cleanupOrphanTagRelations();
+    const message = removed > 0
+      ? `已清理 ${removed} 筆孤兒標籤關聯。`
+      : '沒有發現孤兒標籤關聯，資料很乾淨。';
+    return { success: true, removed, message };
+  } catch (error) {
+    console.error('Error cleaning orphan tag relations:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('delete-video', async (event, videoId) => {
   try {
     await database.deleteVideo(videoId);

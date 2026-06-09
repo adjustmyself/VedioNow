@@ -70,6 +70,11 @@ class SettingsManager {
             this.migrateThumbnails();
         });
 
+        // 資料維護：清理孤兒標籤關聯
+        document.getElementById('cleanup-orphan-relations-btn').addEventListener('click', () => {
+            this.cleanupOrphanRelations();
+        });
+
         // MongoDB設定變更監聽
         this.setupMongoDBFieldListeners();
     }
@@ -375,6 +380,44 @@ class SettingsManager {
                 statusEl.className = 'cleanup-status';
                 statusEl.textContent = '';
             }, 5000);
+        }
+    }
+
+    // 清理孤兒標籤關聯
+    async cleanupOrphanRelations() {
+        const statusEl = document.getElementById('cleanup-relations-status');
+        const btn = document.getElementById('cleanup-orphan-relations-btn');
+
+        if (!confirm('確定要清理孤兒標籤關聯嗎？這會刪除資料庫中已不存在影片所殘留的標籤關聯（不會刪到任何影片或縮圖）。')) {
+            return;
+        }
+
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在清理孤兒標籤關聯...';
+        btn.disabled = true;
+
+        try {
+            const result = await ipcRenderer.invoke('cleanup-orphan-tag-relations');
+
+            if (result.success) {
+                statusEl.className = 'cleanup-status success';
+                statusEl.textContent = result.message;
+            } else {
+                statusEl.className = 'cleanup-status error';
+                statusEl.textContent = '清理失敗: ' + result.error;
+            }
+        } catch (error) {
+            console.error('清理孤兒標籤關聯失敗:', error);
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '清理失敗: ' + error.message;
+        } finally {
+            btn.disabled = false;
+
+            // 8秒後清除狀態訊息
+            setTimeout(() => {
+                statusEl.className = 'cleanup-status';
+                statusEl.textContent = '';
+            }, 8000);
         }
     }
 
