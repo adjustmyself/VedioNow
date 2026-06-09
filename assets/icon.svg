@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#667eea"/>
+      <stop offset="1" stop-color="#764ba2"/>
+    </linearGradient>
+    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="22" stdDeviation="34" flood-color="#1b0f3a" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <!-- 圓角方塊背景（紫色漸層，與介面主色一致） -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" ry="232" fill="url(#bg)"/>
+
+  <!-- 頂部高光，增加質感 -->
+  <rect x="0" y="0" width="1024" height="512" rx="232" ry="232" fill="#ffffff" opacity="0.08"/>
+
+  <!-- 播放鍵背後的柔光圓 -->
+  <circle cx="512" cy="512" r="312" fill="#ffffff" opacity="0.12"/>
+
+  <!-- 白色播放鍵（圓角三角形） -->
+  <g filter="url(#softShadow)">
+    <path d="M430 332 L726 512 L430 692 Z"
+          fill="#ffffff"
+          stroke="#ffffff"
+          stroke-width="56"
+          stroke-linejoin="round"/>
+  </g>
+</svg>

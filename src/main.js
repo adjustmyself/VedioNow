@@ -6,6 +6,12 @@ const VideoScanner = require('./videoScanner');
 const ThumbnailGenerator = require('./thumbnailGenerator');
 const Config = require('./config');
 
+// Windows：明確設定 AppUserModelID，否則打包後工作列圖示不會套用自訂 icon
+// （需與 package.json build.appId 一致）
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.videonow.app');
+}
+
 let mainWindow;
 let database;
 let videoScanner;
@@ -497,8 +503,8 @@ ipcMain.handle('check-thumbnails-batch', async (event, videoPaths) => {
   }
 });
 
-// 強制重新生成縮圖
-ipcMain.handle('generate-thumbnail-force', async (event, videoPath) => {
+// 強制重新生成縮圖（可指定擷取秒數）
+ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset) => {
   try {
     const thumbnailPath = thumbnailGenerator.getThumbnailPath(videoPath);
 
@@ -510,7 +516,7 @@ ipcMain.handle('generate-thumbnail-force', async (event, videoPath) => {
     }
 
     // 使用 FFmpeg 生成新縮圖
-    const result = await thumbnailGenerator.generateThumbnail(videoPath);
+    const result = await thumbnailGenerator.generateThumbnail(videoPath, timeOffset);
 
     if (result) {
       return { success: true, thumbnail: result };
@@ -675,6 +681,55 @@ ipcMain.handle('test-mongodb-connection', async (event, mongoConfig) => {
       success: false,
       message: error.message || '測試連線失敗'
     };
+  }
+});
+
+// 上傳字幕：選擇字幕檔並複製到影片所在資料夾，重新命名成影片檔名
+ipcMain.handle('upload-subtitle', async (event, videoPath) => {
+  try {
+    if (!videoPath) {
+      return { success: false, error: '未指定影片' };
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      title: '選擇字幕檔',
+      filters: [
+        { name: '字幕檔', extensions: ['srt', 'vtt', 'ass', 'ssa', 'sub', 'idx', 'sup', 'smi', 'txt'] },
+        { name: '所有檔案', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+
+    const subtitlePath = result.filePaths[0];
+    const folder = path.dirname(videoPath);
+    const videoBase = path.basename(videoPath, path.extname(videoPath));
+    const subtitleExt = path.extname(subtitlePath);
+    const targetPath = path.join(folder, videoBase + subtitleExt);
+
+    if (await fs.pathExists(targetPath)) {
+      const confirm = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['取消', '覆寫'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '字幕檔已存在',
+        message: `已存在同名字幕：${path.basename(targetPath)}`,
+        detail: '是否覆寫？'
+      });
+      if (confirm.response !== 1) {
+        return { success: false, canceled: true };
+      }
+    }
+
+    await fs.copy(subtitlePath, targetPath, { overwrite: true });
+    return { success: true, targetPath };
+  } catch (error) {
+    console.error('上傳字幕失敗:', error);
+    return { success: false, error: error.message };
   }
 });
 

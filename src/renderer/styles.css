@@ -349,7 +349,10 @@ body {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 1.5rem;
+    row-gap: calc(1.5rem + 6px);
     min-height: 0;
+    align-content: start;
+    align-items: start;
 }
 
 .videos-list {
@@ -380,7 +383,11 @@ body {
 
 .video-thumbnail {
     width: 100%;
-    height: 160px;
+    /* 用固定高度而非 aspect-ratio：縮圖內容皆為 position:absolute，
+       aspect-ratio 在 flex 欄狀卡片中的假想高度會干擾卡片總高計算，
+       使卡片長不夠高、底部標籤列被 overflow:hidden 裁掉。 */
+    height: 200px;
+    flex-shrink: 0;
     background: linear-gradient(45deg, #667eea, #764ba2);
     display: flex;
     align-items: center;
@@ -413,6 +420,35 @@ body {
 .video-list-thumbnail:hover .thumbnail-toolbar {
     opacity: 1;
     transform: translateY(0);
+}
+
+/* 擷取秒數選單 */
+.thumb-seconds-menu {
+    position: fixed;
+    z-index: 3000;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    min-width: 130px;
+}
+
+.thumb-seconds-item {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    color: #333;
+    transition: background 0.15s;
+}
+
+.thumb-seconds-item:hover {
+    background: #f0f0f5;
 }
 
 .btn-thumbnail-action {
@@ -493,17 +529,24 @@ body {
     display: block;
 }
 
+.video-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
 .video-meta {
     font-size: 0.85rem;
     color: #666;
-    margin-bottom: 0.4rem;
     line-height: 1.3;
 }
 
 .video-rating {
     display: flex;
     gap: 0.05rem;
-    margin-bottom: 0.3rem;
+    flex-shrink: 0;
     font-size: 0.75rem;
 }
 
@@ -921,9 +964,15 @@ select {
     padding: 1.5rem 2rem;
     border-top: 1px solid #e0e0e0;
     display: flex;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     justify-content: flex-end;
     background: #f8f9fa;
+}
+
+.modal-footer .btn {
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .info-group {
@@ -1059,6 +1108,60 @@ select {
 
 .tag-selector {
     overflow-y: visible;
+}
+
+.tag-search-container {
+    position: relative;
+    margin-bottom: 0.75rem;
+}
+
+.tag-search-input {
+    width: 100%;
+    padding: 0.4rem 2rem 0.4rem 0.6rem;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background: white;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    box-sizing: border-box;
+}
+
+.tag-search-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.tag-search-clear {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #6c757d;
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.3rem;
+    border-radius: 50%;
+}
+
+.tag-search-clear:hover {
+    color: #343a40;
+    background: #e9ecef;
+}
+
+.tag-item-selector.hidden,
+.tag-group-selector.hidden {
+    display: none;
+}
+
+.tag-search-empty {
+    text-align: center;
+    color: #6c757d;
+    padding: 0.75rem;
+    font-size: 0.85rem;
 }
 
 .tag-group-selector {
@@ -1261,6 +1364,7 @@ select {
     .videos-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 1rem;
+        row-gap: calc(1rem + 16px);
         padding: 1.5rem;
     }
 }
@@ -1280,15 +1384,12 @@ select {
     .videos-grid {
         grid-template-columns: repeat(1, 1fr);
         gap: 1rem;
+        row-gap: calc(1rem + 6px);
         padding: 1rem;
     }
 
     .video-card {
         min-height: 240px;
-    }
-
-    .video-thumbnail {
-        height: 120px;
     }
 
     .header-actions {
@@ -1321,10 +1422,6 @@ select {
 
     .video-card {
         min-height: 220px;
-    }
-
-    .video-thumbnail {
-        height: 100px;
     }
 
     .video-card-content {

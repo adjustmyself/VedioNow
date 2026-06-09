@@ -154,6 +154,10 @@
                         <!-- 標籤選擇器 -->
                         <div class="tag-selector-container">
                             <label>從現有標籤選擇:</label>
+                            <div class="tag-search-container">
+                                <input type="text" id="tag-search-input" class="tag-search-input" placeholder="🔍 搜尋標籤名稱或群組...">
+                                <button type="button" id="tag-search-clear" class="tag-search-clear hidden" title="清除搜尋">&times;</button>
+                            </div>
                             <div id="tag-selector" class="tag-selector">
                                 <!-- 標籤群組會動態載入到這裡 -->
                             </div>
@@ -186,11 +190,12 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="save-changes" class="btn btn-primary">儲存變更</button>
-                <button id="generate-thumbnail" class="btn btn-secondary">🖼️ 產生縮圖</button>
-                <button id="delete-video" class="btn btn-danger">刪除影片記錄</button>
+                <button id="save-changes" class="btn btn-primary">儲存</button>
+                <button id="generate-thumbnail" class="btn btn-secondary">🖼️ 縮圖</button>
+                <button id="delete-video" class="btn btn-danger">刪除記錄</button>
                 <button id="delete-video-file" class="btn btn-danger-alt">🗑️ 刪除檔案</button>
-                <button id="open-file" class="btn btn-secondary">開啟檔案</button>
+                <button id="upload-subtitle" class="btn btn-secondary">📝 上傳字幕</button>
+                <button id="open-file" class="btn btn-secondary">開啟</button>
             </div>
         </div>
     </div>

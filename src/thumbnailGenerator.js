@@ -41,8 +41,11 @@ class ThumbnailGenerator {
   // 使用 FFmpeg 生成縮圖 (如果系統有安裝)
   async generateWithFFmpeg(videoPath, thumbnailPath, timeOffset = 30) {
     return new Promise((resolve, reject) => {
-      // 嘗試多個時間點，避免黑幀
-      const timeOffsets = [30, 60, 90, 120, 15, 5];
+      // 指定的秒數優先，後面接續其他時間點作為後備（避免黑幀 / 影片過短）
+      const fallbackOffsets = [30, 60, 90, 120, 15, 5];
+      const primary = Number(timeOffset);
+      const startOffset = Number.isFinite(primary) && primary >= 0 ? primary : 30;
+      const timeOffsets = [startOffset, ...fallbackOffsets.filter(o => o !== startOffset)];
       let currentOffsetIndex = 0;
 
       const tryGenerateThumbnail = (offset) => {
@@ -59,11 +62,15 @@ class ThumbnailGenerator {
         let ffmpegArgs = [];
 
         // AVI 格式需要先解析再擷取
+        // 縮放到寬 640px、維持比例（高為奇數時自動補成偶數）
+        const scaleFilter = 'scale=640:-2:flags=lanczos';
+
         if (extension === 'avi') {
           ffmpegArgs = [
             '-ss', offset.toString(),
             '-i', normalizedVideoPath,
             '-vframes', '1',
+            '-vf', scaleFilter,
             '-q:v', '2',
             '-f', 'image2',
             '-update', '1',
@@ -74,6 +81,7 @@ class ThumbnailGenerator {
             '-i', normalizedVideoPath,
             '-ss', offset.toString(),
             '-vframes', '1',
+            '-vf', scaleFilter,
             '-q:v', '2',
             '-f', 'image2',
             '-update', '1',
@@ -147,9 +155,16 @@ class ThumbnailGenerator {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
 
-        canvas.width = 320;
-        canvas.height = 180;
+        // 依影片原始比例縮放，目標寬度 640px（高 DPI / 加高縮圖也夠清楚）
+        const TARGET_WIDTH = 640;
+        const srcW = videoElement.videoWidth || 1280;
+        const srcH = videoElement.videoHeight || 720;
+        canvas.width = TARGET_WIDTH;
+        canvas.height = Math.round(TARGET_WIDTH * (srcH / srcW));
 
+        // 較佳的縮放品質
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
         canvas.toBlob((blob) => {
@@ -169,15 +184,15 @@ class ThumbnailGenerator {
           } else {
             reject(new Error('Failed to create blob'));
           }
-        }, 'image/jpeg', 0.8);
+        }, 'image/jpeg', 0.92);
       } catch (error) {
         reject(error);
       }
     });
   }
 
-  // 主要生成縮圖方法
-  async generateThumbnail(videoPath) {
+  // 主要生成縮圖方法（timeOffset：指定擷取秒數，未指定則預設 30 秒）
+  async generateThumbnail(videoPath, timeOffset) {
     // 先檢查縮圖是否已存在
     const existingThumbnail = await this.thumbnailExists(videoPath);
     if (existingThumbnail) {
@@ -191,7 +206,7 @@ class ThumbnailGenerator {
 
     // 嘗試使用 FFmpeg
     try {
-      return await this.generateWithFFmpeg(videoPath, thumbnailPath);
+      return await this.generateWithFFmpeg(videoPath, thumbnailPath, timeOffset);
     } catch (ffmpegError) {
       console.error('FFmpeg 生成縮圖失敗:', ffmpegError.message);
       // 重新拋出以便呼叫端能看到實際錯誤
