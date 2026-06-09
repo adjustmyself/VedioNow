@@ -451,6 +451,51 @@ body {
     background: #f0f0f5;
 }
 
+.thumb-seconds-custom {
+    display: flex;
+    gap: 0.3rem;
+    padding: 0.3rem;
+    margin-top: 0.2rem;
+    border-top: 1px solid #eee;
+}
+
+.thumb-seconds-input {
+    width: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.85rem;
+    border: 1px solid #ced4da;
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+.thumb-seconds-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.thumb-seconds-input.invalid {
+    border-color: #e53935;
+    box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.2);
+}
+
+.thumb-seconds-confirm {
+    flex: 0 0 auto;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.85rem;
+    background: #667eea;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.thumb-seconds-confirm:hover {
+    background: #5568d3;
+}
+
 .btn-thumbnail-action {
     padding: 0.25rem 0.5rem;
     font-size: 0.7rem;

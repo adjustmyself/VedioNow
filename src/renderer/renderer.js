@@ -1599,39 +1599,68 @@ class VideoManager {
     // 移除已開啟的選單
     this.closeThumbnailSecondsMenu();
 
-    const options = [
+    const presets = [
       { label: '30 秒（預設）', value: 30 },
       { label: '60 秒', value: 60 },
       { label: '90 秒', value: 90 },
-      { label: '120 秒', value: 120 },
-      { label: '自訂…', value: 'custom' }
+      { label: '120 秒', value: 120 }
     ];
 
     const menu = document.createElement('div');
     menu.className = 'thumb-seconds-menu';
 
-    options.forEach((opt) => {
+    const pick = (seconds) => {
+      this.closeThumbnailSecondsMenu();
+      onPick(seconds);
+    };
+
+    presets.forEach((opt) => {
       const item = document.createElement('button');
       item.className = 'thumb-seconds-item';
       item.textContent = opt.label;
       item.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.closeThumbnailSecondsMenu();
-
-        let seconds = opt.value;
-        if (seconds === 'custom') {
-          const input = prompt('請輸入要擷取的秒數：', '30');
-          if (input === null) return; // 取消
-          seconds = parseInt(input, 10);
-          if (!Number.isFinite(seconds) || seconds < 0) {
-            alert('請輸入有效的秒數（0 或正整數）');
-            return;
-          }
-        }
-        onPick(seconds);
+        pick(opt.value);
       });
       menu.appendChild(item);
     });
+
+    // 自訂秒數：內嵌輸入框（Electron 不支援 window.prompt，故不能用它）
+    const customRow = document.createElement('div');
+    customRow.className = 'thumb-seconds-custom';
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.placeholder = '自訂秒數';
+    input.className = 'thumb-seconds-input';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'thumb-seconds-confirm';
+    confirmBtn.textContent = '確定';
+
+    const submitCustom = () => {
+      const seconds = parseInt(input.value, 10);
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        input.classList.add('invalid');
+        input.focus();
+        return;
+      }
+      pick(seconds);
+    };
+
+    // 在輸入框內攔截鍵盤事件，避免冒泡觸發全域快捷鍵或關閉選單
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') submitCustom();
+      else if (e.key === 'Escape') this.closeThumbnailSecondsMenu();
+    });
+    input.addEventListener('input', () => input.classList.remove('invalid'));
+    confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); submitCustom(); });
+
+    customRow.appendChild(input);
+    customRow.appendChild(confirmBtn);
+    menu.appendChild(customRow);
 
     document.body.appendChild(menu);
 
@@ -1645,19 +1674,20 @@ class VideoManager {
     menu.style.top = `${top}px`;
     menu.style.left = `${left}px`;
 
-    // 點擊他處或按 Esc 關閉
+    // 點到選單以外或按 Esc 才關閉（點選單內部不關，才能在輸入框輸入）
+    const onDocClick = (ev) => { if (!menu.contains(ev.target)) this.closeThumbnailSecondsMenu(); };
+    const onKey = (ev) => { if (ev.key === 'Escape') this.closeThumbnailSecondsMenu(); };
     this._thumbMenuCleanup = () => {
-      document.removeEventListener('click', this._thumbMenuCleanup);
+      document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onKey);
       if (menu.parentNode) menu.parentNode.removeChild(menu);
       this._thumbMenuEl = null;
       this._thumbMenuCleanup = null;
     };
-    const onKey = (ev) => { if (ev.key === 'Escape') this.closeThumbnailSecondsMenu(); };
     this._thumbMenuEl = menu;
     // 延後綁定，避免本次點擊立即觸發關閉
     setTimeout(() => {
-      document.addEventListener('click', this._thumbMenuCleanup);
+      document.addEventListener('click', onDocClick);
       document.addEventListener('keydown', onKey);
     }, 0);
   }
