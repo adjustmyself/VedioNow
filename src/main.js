@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const DatabaseFactory = require('./database');
@@ -57,19 +57,6 @@ app.whenReady().then(async () => {
 
     videoScanner = new VideoScanner(database);
     thumbnailGenerator = new ThumbnailGenerator();
-
-    // 執行縮圖遷移 (如果需要)
-    try {
-      const result = await database.getVideos({ count: false }); // 不需要計算總數
-      const videos = Array.isArray(result) ? result : result.videos || [];
-      const videoPaths = videos.map(video => video.filepath);
-      const migrationResult = await thumbnailGenerator.migrateThumbnails(videoPaths);
-      if (migrationResult.migrated > 0) {
-        console.log(`縮圖遷移完成：已遷移 ${migrationResult.migrated} 個檔案`);
-      }
-    } catch (error) {
-      console.warn('縮圖遷移失敗:', error);
-    }
 
     // 執行舊標籤系統遷移 (如果需要)
     try {
@@ -546,9 +533,9 @@ ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset) 
 // 縮圖清理
 ipcMain.handle('cleanup-thumbnails', async () => {
   try {
-    // 獲取所有影片的路徑
-    const videos = await database.getVideos();
-    const validVideoPaths = videos.map(video => video.filepath);
+    // 必須取得「全部」影片路徑（不可用分頁的 getVideos，否則會誤刪有效縮圖）
+    const refs = await database.getAllVideoRefs();
+    const validVideoPaths = refs.map(ref => ref.filepath);
 
     await thumbnailGenerator.cleanupThumbnails(validVideoPaths);
     return { success: true, message: '縮圖清理完成' };
@@ -561,10 +548,7 @@ ipcMain.handle('cleanup-thumbnails', async () => {
 // 縮圖統計資訊
 ipcMain.handle('get-thumbnail-stats', async () => {
   try {
-    // 獲取所有影片的路徑來計算縮圖統計
-    const videos = await database.getVideos();
-    const videoPaths = videos.map(video => video.filepath);
-    const stats = await thumbnailGenerator.getThumbnailStats(videoPaths);
+    const stats = await thumbnailGenerator.getThumbnailStats();
     return { success: true, stats };
   } catch (error) {
     console.error('獲取縮圖統計錯誤:', error);
@@ -572,12 +556,10 @@ ipcMain.handle('get-thumbnail-stats', async () => {
   }
 });
 
-// 縮圖遷移
+// 縮圖遷移（縮圖已統一存於本地目錄，保留 IPC 以相容設定頁按鈕）
 ipcMain.handle('migrate-thumbnails', async () => {
   try {
-    const videos = await database.getVideos();
-    const videoPaths = videos.map(video => video.filepath);
-    const result = await thumbnailGenerator.migrateThumbnails(videoPaths);
+    const result = await thumbnailGenerator.migrateThumbnails();
     return {
       success: true,
       message: `已遷移 ${result.migrated} 個縮圖檔案，${result.errors} 個錯誤`,
@@ -625,23 +607,17 @@ ipcMain.handle('get-config', async () => {
 // 儲存配置
 ipcMain.handle('save-config', async (event, settings) => {
   try {
+    // 必須在儲存前讀取舊設定，存檔後再讀只會讀到新值，永遠偵測不到類型變更
+    const previousConfig = await config.load();
     const success = await config.save(settings);
 
-    if (success) {
-      // 如果資料庫類型改變，需要重新初始化資料庫
-      const currentConfig = await config.load();
-      if (currentConfig.database.type !== settings.database.type) {
-        // 關閉當前資料庫連線
-        if (database) {
-          database.close();
-        }
-
-        // 重新創建資料庫實例
-        database = await DatabaseFactory.create();
-
-        // 重新初始化 VideoScanner
-        videoScanner = new VideoScanner(database);
+    if (success && previousConfig.database.type !== settings.database.type) {
+      // 資料庫類型改變，重新初始化資料庫
+      if (database) {
+        database.close();
       }
+      database = await DatabaseFactory.create();
+      videoScanner = new VideoScanner(database);
     }
 
     return success;
@@ -755,6 +731,39 @@ ipcMain.handle('dialog-save-file', async (event, options) => {
   } catch (error) {
     console.error('檔案對話框錯誤:', error);
     throw error;
+  }
+});
+
+// 以系統預設程式開啟檔案（renderer 不直接使用 shell，統一走 IPC）
+ipcMain.handle('open-path', async (event, targetPath) => {
+  try {
+    const result = await shell.openPath(targetPath);
+    // shell.openPath 成功時回傳空字串，失敗時回傳錯誤訊息
+    return { success: result === '', error: result || null };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// MongoDB → SQLite 一鍵資料遷移
+ipcMain.handle('migrate-mongodb-to-sqlite', async () => {
+  try {
+    const { migrateMongoToSqlite } = require('./mongoToSqliteMigration');
+    const connectionString = await config.getMongoDBConnectionString();
+    const sqlitePath = DatabaseFactory.getSQLiteDbPath();
+
+    const counts = await migrateMongoToSqlite(connectionString, sqlitePath);
+
+    return {
+      success: true,
+      counts,
+      message: `遷移完成：${counts.videos} 部影片、${counts.tags} 個標籤（${counts.tagGroups} 個群組）、` +
+        `${counts.tagRelations} 筆標籤關聯、${counts.collections} 筆合集記錄。` +
+        `請將資料庫類型切換為 SQLite 並重新啟動。`
+    };
+  } catch (error) {
+    console.error('MongoDB → SQLite 遷移失敗:', error);
+    return { success: false, error: error.message };
   }
 });
 

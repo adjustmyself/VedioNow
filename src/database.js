@@ -85,6 +85,14 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 getAllDrivePaths 方法');
     }
 
+    async getAllVideoRefs() {
+        throw new Error('子類別必須實作 getAllVideoRefs 方法');
+    }
+
+    async getVideoByPath(filepath) {
+        throw new Error('子類別必須實作 getVideoByPath 方法');
+    }
+
     close() {
         throw new Error('子類別必須實作 close 方法');
     }
@@ -159,8 +167,14 @@ class MongoDatabase extends DatabaseInterface {
             }
 
             if (existingVideo) {
+                // 指紋改變時（檔案內容變動或指紋演算法升級），先把標籤關聯與合集記錄
+                // 一併搬到新指紋，否則會留下孤兒關聯、標籤直接消失
+                if (fingerprint && existingVideo.fingerprint && existingVideo.fingerprint !== fingerprint) {
+                    await this._migrateFingerprintReferences(existingVideo.fingerprint, fingerprint);
+                }
+
                 // 檔案已存在，更新基本檔案資訊，保留用戶設定
-                const updateResult = await this.db.collection('videos').updateOne(
+                await this.db.collection('videos').updateOne(
                     { _id: existingVideo._id },
                     {
                         $set: {
@@ -200,6 +214,65 @@ class MongoDatabase extends DatabaseInterface {
         } catch (error) {
             throw error;
         }
+    }
+
+    // 指紋變更時，把舊指紋的標籤關聯與合集記錄搬到新指紋
+    async _migrateFingerprintReferences(oldFingerprint, newFingerprint) {
+        try {
+            // 標籤關聯：若新指紋已有關聯（理論上不會），合併標籤後刪除舊記錄
+            const oldRelation = await this.db.collection('video_tag_relations').findOne({ fingerprint: oldFingerprint });
+            if (oldRelation) {
+                const newRelation = await this.db.collection('video_tag_relations').findOne({ fingerprint: newFingerprint });
+                if (newRelation) {
+                    const mergedTags = Array.from(new Set([...(newRelation.tags || []), ...(oldRelation.tags || [])]));
+                    await this.db.collection('video_tag_relations').updateOne(
+                        { fingerprint: newFingerprint },
+                        { $set: { tags: mergedTags, updated_at: new Date() } }
+                    );
+                    await this.db.collection('video_tag_relations').deleteOne({ fingerprint: oldFingerprint });
+                } else {
+                    await this.db.collection('video_tag_relations').updateOne(
+                        { fingerprint: oldFingerprint },
+                        { $set: { fingerprint: newFingerprint, updated_at: new Date() } }
+                    );
+                }
+            }
+
+            // 合集記錄：主影片指紋與子影片的 main_fingerprint 都要跟著改
+            await this.db.collection('video_collections').updateMany(
+                { fingerprint: oldFingerprint },
+                { $set: { fingerprint: newFingerprint, updated_at: new Date() } }
+            );
+            await this.db.collection('video_collections').updateMany(
+                { main_fingerprint: oldFingerprint },
+                { $set: { main_fingerprint: newFingerprint, updated_at: new Date() } }
+            );
+
+            console.log(`指紋變更，已遷移關聯資料: ${oldFingerprint} -> ${newFingerprint}`);
+        } catch (error) {
+            console.error('遷移指紋關聯資料失敗:', error);
+        }
+    }
+
+    // 取得所有影片的基本參照（id/filepath/fingerprint），不分頁、不 join。
+    // 供縮圖清理、缺檔清理等需要「全部影片」的維護功能使用，
+    // 不可用 getVideos()（預設分頁只回傳一頁）。
+    async getAllVideoRefs() {
+        const docs = await this.db.collection('videos')
+            .find({}, { projection: { filepath: 1, fingerprint: 1 } })
+            .toArray();
+        return docs.map(d => ({
+            id: d._id.toString(),
+            filepath: d.filepath,
+            fingerprint: d.fingerprint || null
+        }));
+    }
+
+    // 以路徑查單一影片（檔案監控的刪除事件用）
+    async getVideoByPath(filepath) {
+        const video = await this.db.collection('videos').findOne({ filepath });
+        if (!video) return null;
+        return { ...video, id: video._id.toString() };
     }
 
     // 共用的基礎聚合管道：過濾子影片、join 標籤
@@ -978,6 +1051,22 @@ class MongoDatabase extends DatabaseInterface {
         return true;
     }
 
+    async deleteTagGroup(groupId) {
+        const objectId = new ObjectId(groupId);
+
+        // 群組內的標籤移到未分類，而不是連帶刪除
+        await this.db.collection('tags').updateMany(
+            { group_id: objectId },
+            { $set: { group_id: null, updated_at: new Date() } }
+        );
+
+        const result = await this.db.collection('tag_groups').deleteOne({ _id: objectId });
+        if (result.deletedCount === 0) {
+            throw new Error('標籤群組不存在');
+        }
+        return true;
+    }
+
     async updateTagGroup(groupId, updates) {
         try {
             console.log('更新標籤群組:', { groupId, updates });
@@ -1241,6 +1330,10 @@ class MongoDatabase extends DatabaseInterface {
 
 // 資料庫工廠類別
 class DatabaseFactory {
+    static getSQLiteDbPath() {
+        return path.join(__dirname, '../data/videonow.db');
+    }
+
     static async create() {
         const config = new Config();
         await config.init();
@@ -1251,10 +1344,17 @@ class DatabaseFactory {
             const database = new MongoDatabase(connectionString);
             await database.init();
             return database;
+        } else if (dbConfig.type === 'sqlite') {
+            // 延遲載入，避免使用 MongoDB 時也要求 better-sqlite3 原生模組
+            const SQLiteDatabase = require('./sqliteDatabase');
+            const database = new SQLiteDatabase(DatabaseFactory.getSQLiteDbPath());
+            await database.init();
+            return database;
         } else {
-            throw new Error('僅支援 MongoDB 資料庫。請在設定中配置 MongoDB 連線。');
+            throw new Error(`不支援的資料庫類型: ${dbConfig.type}。請在設定中選擇 SQLite 或 MongoDB。`);
         }
     }
 }
 
 module.exports = DatabaseFactory;
+module.exports.MongoDatabase = MongoDatabase;

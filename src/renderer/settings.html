@@ -46,6 +46,29 @@
                         <p class="section-description">選擇資料庫類型並配置連線參數</p>
                     </div>
 
+                    <!-- 資料庫類型選擇 -->
+                    <div class="settings-card">
+                        <h3>資料庫類型</h3>
+                        <div class="form-group">
+                            <label for="db-type">使用的資料庫:</label>
+                            <select id="db-type">
+                                <option value="sqlite">SQLite（本機檔案，推薦）</option>
+                                <option value="mongodb">MongoDB（外部伺服器）</option>
+                            </select>
+                            <p class="field-description">SQLite 免安裝、速度快，資料庫存於 data/videonow.db；MongoDB 適合多台電腦共用同一個資料庫伺服器。切換後需儲存設定並重新啟動。</p>
+                        </div>
+                    </div>
+
+                    <!-- MongoDB → SQLite 資料遷移 -->
+                    <div class="settings-card">
+                        <h3>資料遷移（MongoDB → SQLite）</h3>
+                        <p class="field-description">把現有 MongoDB 中的影片、標籤、合集資料完整複製到本機 SQLite 資料庫。可重複執行，不會產生重複資料。遷移完成後，把上方資料庫類型切換為 SQLite 並重新啟動。</p>
+                        <div class="cleanup-actions">
+                            <button id="migrate-to-sqlite-btn" class="btn btn-secondary">開始遷移到 SQLite</button>
+                            <div id="migrate-sqlite-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
                     <!-- MongoDB 設定 -->
                     <div id="mongodb-config" class="settings-card">
                         <h3>MongoDB 連線設定</h3>

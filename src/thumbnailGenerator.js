@@ -3,6 +3,23 @@ const fs = require('fs-extra');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 
+// 優先使用打包的 ffmpeg-static，使用者不必自行安裝 FFmpeg；
+// 取不到（極少數平台）時退回 PATH 上的 ffmpeg
+function resolveFfmpegPath() {
+  try {
+    const ffmpegStatic = require('ffmpeg-static');
+    if (ffmpegStatic) {
+      // 打包成 asar 後，執行檔必須從 app.asar.unpacked 取得才能 spawn
+      return ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+    }
+  } catch (e) {
+    console.warn('ffmpeg-static 不可用，改用系統 PATH 中的 ffmpeg:', e.message);
+  }
+  return 'ffmpeg';
+}
+
+const FFMPEG_PATH = resolveFfmpegPath();
+
 class ThumbnailGenerator {
   constructor() {
     // 縮圖將儲存在本地快取目錄中，避免網路磁碟權限問題
@@ -93,11 +110,11 @@ class ThumbnailGenerator {
         console.log('原始影片路徑:', videoPath);
         console.log('標準化路徑:', normalizedVideoPath);
         console.log('縮圖路徑:', normalizedThumbnailPath);
-        console.log('完整命令:', 'ffmpeg ' + ffmpegArgs.map(arg =>
+        console.log('完整命令:', FFMPEG_PATH + ' ' + ffmpegArgs.map(arg =>
           arg.includes(' ') || arg.includes('(') || arg.includes(')') ? `"${arg}"` : arg
         ).join(' '));
 
-        const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
+        const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs, {
           windowsVerbatimArguments: false,
           shell: false
         });
@@ -318,72 +335,12 @@ class ThumbnailGenerator {
     }
   }
 
-  // 遷移舊的縮圖（現在所有縮圖都在本地目錄，無需遷移）
-  async migrateThumbnails(videoPaths = []) {
+  // 遷移舊的縮圖（現在所有縮圖都在本地目錄，無需遷移；保留方法以相容設定頁）
+  async migrateThumbnails() {
     try {
-      // 確保本地縮圖目錄存在
       await fs.ensureDir(this.thumbnailsDir);
-
       console.log('縮圖已統一存儲在本地目錄，無需遷移');
       return { migrated: 0, errors: 0 };
-
-      const oldThumbnailFiles = await fs.readdir(oldThumbnailDir);
-      const jpgFiles = oldThumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
-
-      let migratedCount = 0;
-      let errorCount = 0;
-
-      console.log(`開始遷移 ${jpgFiles.length} 個縮圖檔案...`);
-
-      for (const thumbnailFile of jpgFiles) {
-        const fileHash = path.basename(thumbnailFile, '.jpg');
-        const oldThumbnailPath = path.join(oldThumbnailDir, thumbnailFile);
-
-        // 尋找對應的影片檔案
-        const matchingVideo = videoPaths.find(videoPath =>
-          this.generateFileHash(videoPath) === fileHash
-        );
-
-        if (matchingVideo) {
-          try {
-            const newThumbnailPath = this.getThumbnailPath(matchingVideo);
-            const newThumbnailDir = path.dirname(newThumbnailPath);
-
-            // 確保新目錄存在
-            await fs.ensureDir(newThumbnailDir);
-
-            // 移動檔案
-            await fs.move(oldThumbnailPath, newThumbnailPath, { overwrite: false });
-            console.log(`已遷移縮圖: ${thumbnailFile} -> ${newThumbnailPath}`);
-            migratedCount++;
-          } catch (error) {
-            console.error(`遷移縮圖失敗 ${thumbnailFile}:`, error.message);
-            errorCount++;
-          }
-        } else {
-          // 沒有對應的影片，刪除過期縮圖
-          try {
-            await fs.remove(oldThumbnailPath);
-            console.log(`已刪除過期縮圖: ${thumbnailFile}`);
-          } catch (error) {
-            console.warn(`刪除過期縮圖失敗 ${thumbnailFile}:`, error.message);
-          }
-        }
-      }
-
-      // 檢查舊目錄是否為空，如果是則刪除
-      try {
-        const remainingFiles = await fs.readdir(oldThumbnailDir);
-        if (remainingFiles.length === 0) {
-          await fs.remove(oldThumbnailDir);
-          console.log('已刪除空的舊縮圖目錄');
-        }
-      } catch (error) {
-        console.warn('無法刪除舊縮圖目錄:', error.message);
-      }
-
-      console.log(`縮圖遷移完成：已遷移 ${migratedCount} 個檔案，${errorCount} 個錯誤`);
-      return { migrated: migratedCount, errors: errorCount };
     } catch (error) {
       console.error('縮圖遷移失敗:', error);
       return { migrated: 0, errors: 1 };

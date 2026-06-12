@@ -36,10 +36,12 @@ This is an Electron application with a main/renderer process architecture:
 
 ### Core Components
 
-**Database (`src/database.js`)**
-- MongoDB database wrapper class
-- Manages video metadata, tags, and tag groups
-- Handles CRUD operations for videos and tagging system
+**Database (`src/database.js`, `src/sqliteDatabase.js`)**
+- Dual backend: SQLite (better-sqlite3, default for new installs, stored at `data/videonow.db`) and MongoDB
+- `DatabaseFactory.create()` picks the backend from `data/config.json` (`database.type`: `sqlite` | `mongodb`)
+- Both implement the same `DatabaseInterface`; all methods return identical shapes (string ids, paginated `{videos, total, page, pageSize, totalPages}`)
+- `src/mongoToSqliteMigration.js` provides one-shot MongoDB→SQLite data migration (triggered from settings UI)
+- Video identity is a content fingerprint (`src/fileFingerprint.js`): MD5 of size + first/last 64KB, deliberately excluding mtime; when a video's fingerprint changes, `addVideo` cascades the change into tag relations and collections
 
 **VideoScanner (`src/videoScanner.js`)**
 - Scans directories for video files
@@ -64,11 +66,12 @@ This is an Electron application with a main/renderer process architecture:
 
 ## Database Schema
 
-The MongoDB database includes these main collections:
+Main collections/tables (Mongo name / SQLite name):
 - `videos` - Video file metadata, ratings, descriptions
 - `tag_groups` - Tag categories with colors and sorting
 - `tags` - Individual tags linked to groups
-- `video_tag_relations` - Tag relationships for videos based on fingerprint
+- `video_tag_relations` / `video_tags` - Tag relationships keyed by fingerprint (Mongo: one doc with tags array; SQLite: one row per fingerprint+tag)
+- `video_collections` - Series/collection grouping (main video + ordered child videos)
 
 ## File Structure
 
@@ -88,12 +91,15 @@ dist/                    # Build output directory
 
 ## Development Notes
 
-- The application uses Node.js integration in renderer processes
+- The application uses Node.js integration in renderer processes; all dynamic HTML must go through `escapeHtml()` (filenames from disk are untrusted input)
+- Renderer never uses `shell` directly — file opening goes through the `open-path` IPC handler
 - Chinese language interface and comments throughout codebase
 - Supports Windows, macOS, and Linux builds via electron-builder
 - Uses fs-extra for enhanced file operations
 - Chokidar provides cross-platform file watching
-- No test framework currently configured (Jest listed but no tests present)
+- FFmpeg is bundled via `ffmpeg-static` (PATH `ffmpeg` is the fallback); `asarUnpack` in package.json keeps the binary spawnable after packaging
+- Tests live in `tests/` and run via `npm test`, which executes Jest through Electron's Node (`ELECTRON_RUN_AS_NODE`) so native modules (better-sqlite3) match the Electron ABI — plain `npx jest` will fail with ABI errors
+- `getVideos()`/`searchVideos()` are paginated (default 9/page); maintenance code that needs every video must use `getAllVideoRefs()`
 
 ## Supported Video Formats
 

@@ -54,7 +54,8 @@ class SettingsManager {
         });
 
         document.getElementById('restart-app').addEventListener('click', () => {
-            ipcRenderer.send('restart-app');
+            // restart-app 在 main 是 ipcMain.handle，必須用 invoke（send 不會觸發）
+            ipcRenderer.invoke('restart-app');
         });
 
         // 縮圖管理相關按鈕
@@ -73,6 +74,11 @@ class SettingsManager {
         // 資料維護：清理孤兒標籤關聯
         document.getElementById('cleanup-orphan-relations-btn').addEventListener('click', () => {
             this.cleanupOrphanRelations();
+        });
+
+        // MongoDB → SQLite 資料遷移
+        document.getElementById('migrate-to-sqlite-btn').addEventListener('click', () => {
+            this.migrateToSqlite();
         });
 
         // MongoDB設定變更監聽
@@ -132,6 +138,9 @@ class SettingsManager {
         try {
             this.config = await ipcRenderer.invoke('get-config');
 
+            // 資料庫類型
+            document.getElementById('db-type').value = this.config.database?.type || 'sqlite';
+
             // MongoDB 設定
             const mongodb = this.config.database?.mongodb || {};
             document.getElementById('mongodb-host').value = mongodb.host || '127.0.0.1';
@@ -176,7 +185,7 @@ class SettingsManager {
     collectSettings() {
         const settings = {
             database: {
-                type: 'mongodb',
+                type: document.getElementById('db-type').value || 'sqlite',
                 mongodb: {
                     host: document.getElementById('mongodb-host').value,
                     port: parseInt(document.getElementById('mongodb-port').value),
@@ -380,6 +389,38 @@ class SettingsManager {
                 statusEl.className = 'cleanup-status';
                 statusEl.textContent = '';
             }, 5000);
+        }
+    }
+
+    // MongoDB → SQLite 資料遷移
+    async migrateToSqlite() {
+        const statusEl = document.getElementById('migrate-sqlite-status');
+        const btn = document.getElementById('migrate-to-sqlite-btn');
+
+        if (!confirm('確定要把 MongoDB 的資料遷移到本機 SQLite 嗎？\n\nMongoDB 的資料不會被刪除或修改，可重複執行。')) {
+            return;
+        }
+
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在遷移資料，資料量大時可能需要數分鐘...';
+        btn.disabled = true;
+
+        try {
+            const result = await ipcRenderer.invoke('migrate-mongodb-to-sqlite');
+
+            if (result.success) {
+                statusEl.className = 'cleanup-status success';
+                statusEl.textContent = result.message;
+            } else {
+                statusEl.className = 'cleanup-status error';
+                statusEl.textContent = '遷移失敗: ' + result.error;
+            }
+        } catch (error) {
+            console.error('遷移到 SQLite 失敗:', error);
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '遷移失敗: ' + error.message;
+        } finally {
+            btn.disabled = false;
         }
     }
 

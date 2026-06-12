@@ -294,9 +294,9 @@ class VideoScanner {
       })
       .on('unlink', async (filepath) => {
         try {
-          const videos = await this.database.getVideos({ filepath });
-          if (videos.length > 0) {
-            await this.database.deleteVideo(videos[0].id);
+          const video = await this.database.getVideoByPath(filepath);
+          if (video) {
+            await this.database.deleteVideo(video.id);
             console.log(`刪除影片記錄: ${filepath}`);
           }
         } catch (error) {
@@ -366,8 +366,8 @@ class VideoScanner {
 
   async _cleanupMissingFiles(scanPath, recursive) {
     try {
-      // 獲取資料庫中所有在掃描路徑下的影片
-      const allVideos = await this.database.getVideos();
+      // 獲取資料庫中所有在掃描路徑下的影片（不可用分頁的 getVideos，會漏掉一頁以外的全部）
+      const allVideos = await this.database.getAllVideoRefs();
       const pathVideos = allVideos.filter(video => {
         if (recursive) {
           return video.filepath.startsWith(scanPath);

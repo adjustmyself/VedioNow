@@ -1,5 +1,16 @@
 const { ipcRenderer } = require('electron');
 
+// HTML escape，避免群組/標籤名稱中的 <、>、" 等字元破壞畫面或造成 XSS
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 class TagManager {
   constructor() {
     this.groups = [];
@@ -169,16 +180,16 @@ class TagManager {
     }
 
     this.elements.groupsList.innerHTML = this.groups.map(group => `
-      <div class="group-item ${this.selectedGroup?.id === group.id ? 'active' : ''}" data-group-id="${group.id}">
+      <div class="group-item ${this.selectedGroup?.id === group.id ? 'active' : ''}" data-group-id="${escapeHtml(group.id)}">
         <div class="group-header">
-          <div class="group-name">${group.name}</div>
-          <div class="group-color" style="background-color: ${group.color};"></div>
+          <div class="group-name">${escapeHtml(group.name)}</div>
+          <div class="group-color" style="background-color: ${escapeHtml(group.color)};"></div>
         </div>
         <div class="group-stats">${group.tag_count} 個標籤</div>
-        ${group.description ? `<div class="group-description">${group.description}</div>` : ''}
+        ${group.description ? `<div class="group-description">${escapeHtml(group.description)}</div>` : ''}
         <div class="group-actions">
-          <button class="btn-icon" data-action="edit-group" data-group-id="${group.id}" title="編輯">✏️</button>
-          <button class="btn-icon" data-action="delete-group" data-group-id="${group.id}" title="刪除">🗑️</button>
+          <button class="btn-icon" data-action="edit-group" data-group-id="${escapeHtml(group.id)}" title="編輯">✏️</button>
+          <button class="btn-icon" data-action="delete-group" data-group-id="${escapeHtml(group.id)}" title="刪除">🗑️</button>
         </div>
       </div>
     `).join('');
@@ -187,8 +198,8 @@ class TagManager {
     this.elements.groupsList.querySelectorAll('.group-item').forEach(item => {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.group-actions')) return;
-        const groupId = parseInt(item.dataset.groupId);
-        this.selectGroup(groupId);
+        // id 是字串（Mongo ObjectId 或 SQLite 數字字串），不可 parseInt
+        this.selectGroup(item.dataset.groupId);
       });
     });
   }
@@ -207,23 +218,23 @@ class TagManager {
     this.elements.tagsByGroup.innerHTML = this.tagsByGroup.map(group => `
       <div class="tag-group-section">
         <div class="tag-group-header">
-          <div class="tag-group-color" style="background-color: ${group.color};"></div>
-          <div class="tag-group-title">${group.name}</div>
+          <div class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></div>
+          <div class="tag-group-title">${escapeHtml(group.name)}</div>
           <div class="tag-group-count">${group.tags.length} 個標籤</div>
         </div>
         <div class="tags-grid">
           ${group.tags.length === 0
             ? '<div class="empty-state"><p>此群組尚無標籤</p></div>'
             : group.tags.map(tag => `
-                <div class="tag-item" data-tag-id="${tag.id}">
+                <div class="tag-item" data-tag-id="${escapeHtml(tag.id)}">
                   <div class="tag-header">
                     <div class="tag-name">
-                      <div class="tag-color" style="background-color: ${tag.color};"></div>
-                      ${tag.name}
+                      <div class="tag-color" style="background-color: ${escapeHtml(tag.color)};"></div>
+                      ${escapeHtml(tag.name)}
                     </div>
                     <div class="tag-actions">
-                      <button class="btn-icon" data-action="edit-tag" data-tag-id="${tag.id}" title="編輯">✏️</button>
-                      <button class="btn-icon" data-action="delete-tag" data-tag-id="${tag.id}" title="刪除">🗑️</button>
+                      <button class="btn-icon" data-action="edit-tag" data-tag-id="${escapeHtml(tag.id)}" title="編輯">✏️</button>
+                      <button class="btn-icon" data-action="delete-tag" data-tag-id="${escapeHtml(tag.id)}" title="刪除">🗑️</button>
                     </div>
                   </div>
                   <div class="tag-stats">${tag.video_count} 個影片</div>
@@ -239,7 +250,7 @@ class TagManager {
     const options = [
       '<option value="">未分類</option>',
       ...this.groups.map(group =>
-        `<option value="${group.id}">${group.name}</option>`
+        `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`
       )
     ].join('');
     this.elements.tagGroup.innerHTML = options;

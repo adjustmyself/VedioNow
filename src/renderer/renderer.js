@@ -1,5 +1,4 @@
 const { ipcRenderer } = require('electron');
-const { shell } = require('electron');
 
 // 模組常數：影片格式判斷（避免每次呼叫重建陣列）
 const FULLY_SUPPORTED_FORMATS = new Set(['mp4', 'webm', 'ogg', 'ogv', 'm4v']);
@@ -1407,9 +1406,9 @@ class VideoManager {
         ? video.tags.map(tag => {
             // 支援舊格式（字串）和新格式（物件）
             if (typeof tag === 'string') {
-              return `<span class="tag" style="--tag-color: #3b82f6;">${tag}</span>`;
+              return `<span class="tag" style="--tag-color: #3b82f6;">${escapeHtml(tag)}</span>`;
             } else {
-              return `<span class="tag" style="--tag-color: ${tag.color};">${tag.name}</span>`;
+              return `<span class="tag" style="--tag-color: ${escapeHtml(tag.color)};">${escapeHtml(tag.name)}</span>`;
             }
           }).join('')
         : '<span class="no-tags">無標籤</span>';
@@ -1515,7 +1514,7 @@ class VideoManager {
 
   openVideoFile() {
     if (this.selectedVideo) {
-      shell.openPath(this.selectedVideo.filepath);
+      ipcRenderer.invoke('open-path', this.selectedVideo.filepath);
     }
   }
 
@@ -2103,8 +2102,8 @@ class VideoManager {
 
       // 填充主影片選擇器
       this.elements.mainVideoSelect.innerHTML = folderVideos.map(v =>
-        `<option value="${v.fingerprint}" ${v.fingerprint === this.selectedVideo.fingerprint ? 'selected' : ''}>
-          ${v.filename}
+        `<option value="${escapeHtml(v.fingerprint)}" ${v.fingerprint === this.selectedVideo.fingerprint ? 'selected' : ''}>
+          ${escapeHtml(v.filename)}
         </option>`
       ).join('');
 
@@ -2132,9 +2131,9 @@ class VideoManager {
     this.elements.childVideosList.innerHTML = videos
       .filter(v => v.fingerprint !== mainFingerprint)
       .map(v => `
-        <div class="child-video-item" data-fingerprint="${v.fingerprint}">
+        <div class="child-video-item" data-fingerprint="${escapeHtml(v.fingerprint)}">
           <input type="checkbox" checked>
-          <span>${v.filename}</span>
+          <span>${escapeHtml(v.filename)}</span>
         </div>
       `).join('');
   }
@@ -2237,10 +2236,10 @@ class VideoManager {
         // 顯示子影片清單
         const collection = result.data;
         this.elements.collectionEpisodes.innerHTML = collection.child_videos.map((v, index) => `
-          <div class="episode-item" data-filepath="${v.filepath}">
+          <div class="episode-item" data-filepath="${escapeHtml(v.filepath)}">
             <span class="episode-number">${index + 1}</span>
-            <span class="episode-name">${v.filename}</span>
-            <button class="btn btn-play" data-filepath="${v.filepath}">▶ 播放</button>
+            <span class="episode-name">${escapeHtml(v.filename)}</span>
+            <button class="btn btn-play" data-filepath="${escapeHtml(v.filepath)}">▶ 播放</button>
           </div>
         `).join('');
 
@@ -2265,7 +2264,7 @@ class VideoManager {
           e.stopPropagation(); // 防止事件冒泡
           const filepath = playButton.dataset.filepath;
           if (filepath) {
-            shell.openPath(filepath);
+            ipcRenderer.invoke('open-path', filepath);
           }
         }
       });
