@@ -295,6 +295,8 @@ class VideoManager {
       // 重置到第一頁
       this.currentPage = 1;
 
+      const trimmedTerm = (searchTerm || '').trim();
+
       const activeTagsArray = Array.from(this.activeTags);
       const filters = {
         limit: this.pageSize,
@@ -303,7 +305,7 @@ class VideoManager {
         drivePath: this.selectedDrivePath
       };
 
-      const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
+      const result = await ipcRenderer.invoke('search-videos', trimmedTerm, activeTagsArray, filters);
 
       if (Array.isArray(result)) {
         // 向下兼容舊格式 - 但這不應該發生在分頁模式下
