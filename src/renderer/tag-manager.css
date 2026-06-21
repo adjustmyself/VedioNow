@@ -242,6 +242,57 @@ body {
     opacity: 1;
 }
 
+.tag-description {
+    font-size: 0.8rem;
+    color: #64748b;
+    margin: 0.25rem 0;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+/* 標籤說明圖片上傳區 */
+.tag-image-uploader {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.tag-image-preview {
+    width: 120px;
+    height: 90px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f8fafc;
+    flex-shrink: 0;
+}
+
+.tag-image-preview.empty {
+    border-style: dashed;
+}
+
+.tag-image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.tag-image-placeholder {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    text-align: center;
+    padding: 0 0.5rem;
+}
+
+.tag-image-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
 .tag-stats {
     font-size: 0.875rem;
     color: #64748b;
@@ -336,6 +387,13 @@ body {
     max-height: 90%;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header,
+.modal-footer {
+    flex-shrink: 0;
 }
 
 .modal-header {
@@ -375,6 +433,8 @@ body {
 
 .modal-body {
     padding: 2rem;
+    overflow-y: auto;
+    flex: 1;
 }
 
 .modal-footer {
@@ -472,3 +532,95 @@ body {
 .empty-state p {
     font-size: 0.875rem;
 }
+
+/* ===================== 深色主題 ===================== */
+[data-theme="dark"] body {
+    background-color: #16181d;
+    color: #cdd0d6;
+}
+
+/* 表面：群組欄、標籤區、卡片、彈窗 */
+[data-theme="dark"] .groups-section,
+[data-theme="dark"] .tag-group-section,
+[data-theme="dark"] .modal-content {
+    background: #23262e;
+    border-color: #353944;
+}
+
+[data-theme="dark"] .groups-section { border-right-color: #353944; }
+[data-theme="dark"] .tags-section { background: #1a1c22; }
+
+/* 標題與文字 */
+[data-theme="dark"] .groups-section h2,
+[data-theme="dark"] .tags-section h2,
+[data-theme="dark"] .group-name,
+[data-theme="dark"] .tag-group-title,
+[data-theme="dark"] .tag-name,
+[data-theme="dark"] .modal-header h3,
+[data-theme="dark"] .form-group label {
+    color: #e4e6eb;
+}
+
+[data-theme="dark"] .group-stats,
+[data-theme="dark"] .group-description,
+[data-theme="dark"] .tag-stats,
+[data-theme="dark"] .tag-description,
+[data-theme="dark"] .empty-state {
+    color: #9aa0aa;
+}
+
+/* 群組項目 / 標籤項目 */
+[data-theme="dark"] .group-item,
+[data-theme="dark"] .tag-item {
+    background: #2d313b;
+    border-color: #3f4452;
+}
+
+[data-theme="dark"] .group-item:hover,
+[data-theme="dark"] .tag-item:hover {
+    background: #363b46;
+    border-color: #555b69;
+}
+
+[data-theme="dark"] .group-item.active {
+    background: #1e2a44;
+    border-color: #3b82f6;
+}
+
+/* 表單元素 */
+[data-theme="dark"] .form-group input,
+[data-theme="dark"] .form-group select,
+[data-theme="dark"] .form-group textarea,
+[data-theme="dark"] .tag-image-preview {
+    background: #2d313b;
+    color: #e4e6eb;
+    border-color: #3f4452;
+}
+
+/* 計數徽章、icon 鈕、彈窗 header/footer */
+[data-theme="dark"] .tag-group-count {
+    background: #2d313b;
+    color: #b6bac2;
+}
+
+[data-theme="dark"] .tag-group-header { border-bottom-color: #353944; }
+
+[data-theme="dark"] .btn-icon {
+    border-color: #3f4452;
+    color: #a0a4ad;
+}
+
+[data-theme="dark"] .btn-icon:hover {
+    background: #363b46;
+    border-color: #555b69;
+    color: #e4e6eb;
+}
+
+[data-theme="dark"] .modal-header,
+[data-theme="dark"] .modal-footer {
+    background: #1c1f26;
+    border-color: #353944;
+}
+
+[data-theme="dark"] .btn-close { color: #a0a4ad; }
+[data-theme="dark"] .btn-close:hover { background: #363b46; color: #fff; }

@@ -81,6 +81,13 @@ class SettingsManager {
             this.migrateToSqlite();
         });
 
+        // 主題即時預覽（儲存後才會套用到其他視窗）
+        document.getElementById('app-theme').addEventListener('change', (e) => {
+            if (typeof window.applyTheme === 'function') {
+                window.applyTheme(e.target.value);
+            }
+        });
+
         // MongoDB設定變更監聽
         this.setupMongoDBFieldListeners();
     }
@@ -156,6 +163,7 @@ class SettingsManager {
             const app = this.config.app || {};
             document.getElementById('app-theme').value = app.theme || 'light';
             document.getElementById('app-language').value = app.language || 'zh-TW';
+            document.getElementById('app-page-size').value = app.pageSize || 9;
 
             // 載入縮圖統計
             this.loadThumbnailStats();
@@ -169,10 +177,13 @@ class SettingsManager {
     async saveSettings() {
         try {
             const settings = this.collectSettings();
+            // 只有資料庫類型變更才需要重啟；主題、語言等變更即時生效
+            const needsRestart = (this.config?.database?.type || 'sqlite') !== settings.database.type;
             const success = await ipcRenderer.invoke('save-config', settings);
 
             if (success) {
-                this.showModal('save-modal');
+                this.config = settings;
+                this.showSaveResult(needsRestart);
             } else {
                 this.showError('儲存設定失敗');
             }
@@ -199,11 +210,19 @@ class SettingsManager {
             },
             app: {
                 theme: document.getElementById('app-theme').value,
-                language: document.getElementById('app-language').value
+                language: document.getElementById('app-language').value,
+                pageSize: this.collectPageSize()
             }
         };
 
         return settings;
+    }
+
+    // 解析並限制單頁顯示數量（1～200，非法值回退 9）
+    collectPageSize() {
+        const raw = parseInt(document.getElementById('app-page-size').value, 10);
+        if (isNaN(raw)) return 9;
+        return Math.min(200, Math.max(1, raw));
     }
 
     async resetSettings() {
@@ -268,6 +287,24 @@ class SettingsManager {
         const statusEl = document.getElementById('connection-status');
         statusEl.className = 'connection-status';
         statusEl.textContent = '';
+    }
+
+    // 顯示儲存結果：需要重啟才出現重啟提問與按鈕，否則只顯示成功訊息
+    showSaveResult(needsRestart) {
+        const restartQuestion = document.getElementById('save-modal-restart-question');
+        const restartBtn = document.getElementById('restart-app');
+        const continueBtn = document.getElementById('continue-without-restart');
+
+        if (needsRestart) {
+            restartQuestion.classList.remove('hidden');
+            restartBtn.classList.remove('hidden');
+            continueBtn.textContent = '稍後重啟';
+        } else {
+            restartQuestion.classList.add('hidden');
+            restartBtn.classList.add('hidden');
+            continueBtn.textContent = '確定';
+        }
+        this.showModal('save-modal');
     }
 
     showModal(modalId) {

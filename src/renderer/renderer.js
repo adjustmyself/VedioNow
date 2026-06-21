@@ -21,7 +21,8 @@ class VideoManager {
     this.allTags = [];
     this.activeTags = new Set();
     this.tagSearchQuery = '';
-    this.collapsedGroups = this.loadCollapsedGroups();
+    // tab 模式：目前選取（展開顯示標籤）的群組名稱；null = 未選取
+    this.activeGroup = this.loadActiveGroup();
     // 多面向篩選：當前條件下每個標籤的命中計數；null = 無篩選，使用原始 video_count
     this.filteredTagCounts = null;
     this._tagCountsReqId = 0;
@@ -51,7 +52,26 @@ class VideoManager {
 
     this.initializeElements();
     this.bindEvents();
-    this.loadData();
+    this.init();
+  }
+
+  async init() {
+    // 先讀設定（單頁顯示數量）再載入影片，避免用預設值多算一次分頁
+    await this.loadAppConfig();
+    await this.loadData();
+  }
+
+  // 從設定檔讀取應用程式設定（目前：單頁顯示數量）
+  async loadAppConfig() {
+    try {
+      const cfg = await ipcRenderer.invoke('get-config');
+      const size = parseInt(cfg?.app?.pageSize, 10);
+      if (!isNaN(size) && size > 0) {
+        this.pageSize = size;
+      }
+    } catch (e) {
+      console.warn('讀取應用程式設定失敗，使用預設單頁數量:', e);
+    }
   }
 
   initializeElements() {
@@ -162,6 +182,15 @@ class VideoManager {
       this.updateScanProgress(progressData);
     });
 
+    // 設定變更：單頁顯示數量即時生效（不需重啟）
+    ipcRenderer.on('page-size-changed', (event, size) => {
+      const n = parseInt(size, 10);
+      if (isNaN(n) || n <= 0 || n === this.pageSize) return;
+      this.pageSize = n;
+      this.currentPage = 1;
+      this.refreshCurrentView();
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target === this.elements.videoModal) {
         this.hideVideoModal();
@@ -181,6 +210,72 @@ class VideoManager {
         this.hideCollectionModal();
       }
     });
+
+    this.setupTagTooltip();
+  }
+
+  // 自訂標籤 hover 提示框：顯示標籤說明文字與說明圖片
+  setupTagTooltip() {
+    if (this._tagTooltipBound) return;
+
+    const tip = document.createElement('div');
+    tip.className = 'tag-tooltip hidden';
+    document.body.appendChild(tip);
+
+    let currentName = null;
+
+    const hide = () => {
+      tip.classList.add('hidden');
+      currentName = null;
+    };
+
+    const position = (anchorEl) => {
+      const rect = anchorEl.getBoundingClientRect();
+      const tipRect = tip.getBoundingClientRect();
+      let left = rect.left;
+      let top = rect.bottom + 8;
+      if (left + tipRect.width > window.innerWidth - 8) {
+        left = window.innerWidth - tipRect.width - 8;
+      }
+      if (left < 8) left = 8;
+      // 下方放不下就改放上方
+      if (top + tipRect.height > window.innerHeight - 8) {
+        top = rect.top - tipRect.height - 8;
+      }
+      if (top < 8) top = 8;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+    };
+
+    const show = (name, anchorEl) => {
+      const desc = this.tagDescriptions?.get(name);
+      const img = this.tagImages?.get(name);
+      if (!desc && !img) { hide(); return; }
+      let html = '';
+      if (img) html += `<img class="tag-tooltip-img" src="file://${escapeHtml(img)}" alt="">`;
+      if (desc) html += `<div class="tag-tooltip-text">${escapeHtml(desc)}</div>`;
+      tip.innerHTML = html;
+      tip.classList.remove('hidden');
+      currentName = name;
+      position(anchorEl);
+    };
+
+    document.addEventListener('mouseover', (e) => {
+      const tagEl = e.target.closest('.tag[data-tag]');
+      if (!tagEl) return;
+      const name = tagEl.dataset.tag;
+      if (name === currentName) return;
+      show(name, tagEl);
+    });
+
+    document.addEventListener('mouseout', (e) => {
+      if (e.target.closest('.tag[data-tag]')) hide();
+    });
+
+    // 捲動時提示位置會跑掉，直接隱藏
+    document.addEventListener('scroll', () => { if (currentName) hide(); }, true);
+
+    this._tagTooltipBound = true;
   }
 
 
@@ -256,9 +351,18 @@ class VideoManager {
     this.tagsByGroup = await ipcRenderer.invoke('get-tags-by-group');
     // 展平標籤用於統計
     this.allTags = [];
+    // 標籤名稱 -> 顏色 / 說明 / 說明圖片，供只有名稱字串的標籤（影片卡片、詳情）查詢
+    this.tagColors = new Map();
+    this.tagDescriptions = new Map();
+    this.tagImages = new Map();
     this.tagsByGroup.forEach(group => {
       if (group.tags && Array.isArray(group.tags)) {
         this.allTags.push(...group.tags);
+        group.tags.forEach(tag => {
+          if (tag.color) this.tagColors.set(tag.name, tag.color);
+          if (tag.description) this.tagDescriptions.set(tag.name, tag.description);
+          if (tag.description_image) this.tagImages.set(tag.name, tag.description_image);
+        });
       }
     });
   }
@@ -393,14 +497,17 @@ class VideoManager {
     this.loadAllThumbnails();
   }
 
+  // 影片卡片上的單一標籤；帶 data-tag 供自訂 hover 提示（說明＋圖片）查詢
+  _videoTagHtml(tag) {
+    const name = typeof tag === 'string' ? tag : tag.name;
+    // 字串標籤從顏色對照表查；查不到才用預設色
+    const color = (typeof tag === 'string' ? this.tagColors?.get(tag) : tag.color) || '#3b82f6';
+    return `<span class="tag" data-tag="${escapeHtml(name)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(name)}</span>`;
+  }
+
   _buildVideoFields(video) {
     const tags = video.tags && video.tags.length > 0
-      ? video.tags.map(tag => {
-          if (typeof tag === 'string') {
-            return `<span class="tag" style="--tag-color: #3b82f6;">${escapeHtml(tag)}</span>`;
-          }
-          return `<span class="tag" style="--tag-color: ${escapeHtml(tag.color)};">${escapeHtml(tag.name)}</span>`;
-        }).join('')
+      ? video.tags.map(tag => this._videoTagHtml(tag)).join('')
       : '<span class="no-tags">無標籤</span>';
 
     const filename = escapeHtml(video.filename || '未知檔名');
@@ -815,6 +922,19 @@ class VideoManager {
       return { countText, empty };
     };
 
+    // 單一標籤 chip
+    const renderTag = (tag) => {
+      const d = tagDisplay(tag);
+      const classes = ['tag'];
+      if (this.activeTags.has(tag.name)) classes.push('active');
+      if (d.empty) classes.push('empty-result');
+      return `<span class="${classes.join(' ')}"
+             data-tag="${escapeHtml(tag.name)}"
+             style="--tag-color: ${escapeHtml(tag.color)};">
+        ${escapeHtml(tag.name)} (${d.countText})
+      </span>`;
+    };
+
     // 已選標籤置頂區（彙整所有 group 裡被選中的）
     let pinnedHtml = '';
     if (this.activeTags.size > 0) {
@@ -825,79 +945,69 @@ class VideoManager {
           <div class="tag-pinned-section">
             <div class="tag-pinned-header">已選 (${selected.length})</div>
             <div class="tag-group-tags">
-              ${selected.map(tag => {
-                const d = tagDisplay(tag);
-                return `
-                <span class="tag active"
-                      data-tag="${escapeHtml(tag.name)}"
-                      style="--tag-color: ${escapeHtml(tag.color)};">
-                  ${escapeHtml(tag.name)} (${d.countText})
-                </span>
-              `;}).join('')}
+              ${selected.map(renderTag).join('')}
             </div>
           </div>
         `;
       }
     }
 
-    // 各群組：套用搜尋過濾、摺疊狀態
-    const groupsHtml = this.tagsByGroup.map(group => {
+    // 群組分頁列（tab）：固定在最上面一排，不隨選取移動
+    const tabsHtml = this.tagsByGroup.map(group => {
       const allTags = group.tags || [];
-      const filtered = query
-        ? allTags.filter(t => t.name.toLowerCase().includes(query))
-        : [...allTags];
-
-      // 進階篩選時，把 0 命中的標籤（且未選中）排到群組末端
-      if (useFiltered) {
-        filtered.sort((a, b) => {
-          const aEmpty = (this.filteredTagCounts[a.name] || 0) === 0 && !this.activeTags.has(a.name) ? 1 : 0;
-          const bEmpty = (this.filteredTagCounts[b.name] || 0) === 0 && !this.activeTags.has(b.name) ? 1 : 0;
-          return aEmpty - bEmpty;
-        });
-      }
-
-      // 搜尋中且整組無命中 → 不渲染
-      if (query && filtered.length === 0) return '';
-
-      // 搜尋中強制展開以便看到結果；否則依摺疊狀態
-      const isCollapsed = !query && this.collapsedGroups.has(group.name);
+      const matchCount = query
+        ? allTags.filter(t => t.name.toLowerCase().includes(query)).length
+        : allTags.length;
+      // 搜尋中且整組無命中 → 不顯示該分頁
+      if (query && matchCount === 0) return '';
+      const isActive = !query && this.activeGroup === group.name;
       const groupKey = escapeHtml(group.name);
-
+      const countText = query && matchCount !== allTags.length
+        ? `${matchCount}/${allTags.length}`
+        : `${allTags.length}`;
       return `
-        <div class="tag-group-filter ${isCollapsed ? 'collapsed' : ''}" data-group="${groupKey}">
-          <div class="tag-group-header" data-group="${groupKey}" role="button">
-            <span class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></span>
-            <span class="tag-group-name">${escapeHtml(group.name)}</span>
-            <span class="tag-group-count">(${filtered.length}${query && filtered.length !== allTags.length ? '/' + allTags.length : ''})</span>
-          </div>
-          <div class="tag-group-tags">
-            ${filtered.map(tag => {
-              const d = tagDisplay(tag);
-              const classes = ['tag'];
-              if (this.activeTags.has(tag.name)) classes.push('active');
-              if (d.empty) classes.push('empty-result');
-              return `<span class="${classes.join(' ')}"
-                     data-tag="${escapeHtml(tag.name)}"
-                     style="--tag-color: ${escapeHtml(tag.color)};">
-                ${escapeHtml(tag.name)} (${d.countText})
-              </span>`;
-            }).join('')}
-          </div>
+        <div class="tag-tab ${isActive ? 'active' : ''}" data-group="${groupKey}" role="button">
+          <span class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></span>
+          <span class="tag-group-name">${escapeHtml(group.name)}</span>
+          <span class="tag-group-count">(${countText})</span>
         </div>
       `;
     }).join('');
 
-    const emptySearchHtml = (query && !groupsHtml)
-      ? `<div class="no-tags-container"><span class="no-tags">找不到符合「${escapeHtml(this.elements.tagFilterSearch?.value || '')}」的標籤</span></div>`
-      : '';
+    // 內容區：搜尋時顯示跨群組命中；否則顯示目前選取群組的標籤
+    let contentHtml = '';
+    if (query) {
+      const matched = this.tagsByGroup.flatMap(g =>
+        (g.tags || []).filter(t => t.name.toLowerCase().includes(query)));
+      contentHtml = matched.length
+        ? `<div class="tag-group-tags">${matched.map(renderTag).join('')}</div>`
+        : `<div class="no-tags-container"><span class="no-tags">找不到符合「${escapeHtml(this.elements.tagFilterSearch?.value || '')}」的標籤</span></div>`;
+    } else if (this.activeGroup) {
+      const group = this.tagsByGroup.find(g => g.name === this.activeGroup);
+      if (group) {
+        const tags = [...(group.tags || [])];
+        // 進階篩選時，把 0 命中的標籤（且未選中）排到末端
+        if (useFiltered) {
+          tags.sort((a, b) => {
+            const aEmpty = (this.filteredTagCounts[a.name] || 0) === 0 && !this.activeTags.has(a.name) ? 1 : 0;
+            const bEmpty = (this.filteredTagCounts[b.name] || 0) === 0 && !this.activeTags.has(b.name) ? 1 : 0;
+            return aEmpty - bEmpty;
+          });
+        }
+        contentHtml = `<div class="tag-group-tags">${tags.map(renderTag).join('')}</div>`;
+      }
+    }
 
-    this.elements.tagsFilter.innerHTML = pinnedHtml + groupsHtml + emptySearchHtml;
+    this.elements.tagsFilter.innerHTML =
+      pinnedHtml +
+      `<div class="tag-tabs">${tabsHtml}</div>` +
+      `<div class="tag-tab-content">${contentHtml}</div>`;
 
     if (!this.tagFilterEventBound) {
       this.elements.tagsFilter.addEventListener('click', (e) => {
-        const header = e.target.closest('.tag-group-header');
-        if (header && header.dataset.group) {
-          this.toggleGroupCollapse(header.dataset.group);
+        const tab = e.target.closest('.tag-tab');
+        if (tab && tab.dataset.group) {
+          this.setActiveGroup(tab.dataset.group);
           return;
         }
         const tag = e.target.closest('.tag');
@@ -909,32 +1019,30 @@ class VideoManager {
     }
   }
 
-  toggleGroupCollapse(groupName) {
-    if (this.collapsedGroups.has(groupName)) {
-      this.collapsedGroups.delete(groupName);
-    } else {
-      this.collapsedGroups.add(groupName);
-    }
-    this.saveCollapsedGroups();
+  // 切換目前選取的群組分頁；再次點選同一個則收起
+  setActiveGroup(groupName) {
+    this.activeGroup = this.activeGroup === groupName ? null : groupName;
+    this.saveActiveGroup();
     this.renderTagsFilter();
   }
 
-  loadCollapsedGroups() {
+  loadActiveGroup() {
     try {
-      const raw = localStorage.getItem('videonow.collapsedTagGroups');
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      return new Set(Array.isArray(arr) ? arr : []);
+      return localStorage.getItem('videonow.activeTagGroup') || null;
     } catch {
-      return new Set();
+      return null;
     }
   }
 
-  saveCollapsedGroups() {
+  saveActiveGroup() {
     try {
-      localStorage.setItem('videonow.collapsedTagGroups', JSON.stringify(Array.from(this.collapsedGroups)));
+      if (this.activeGroup) {
+        localStorage.setItem('videonow.activeTagGroup', this.activeGroup);
+      } else {
+        localStorage.removeItem('videonow.activeTagGroup');
+      }
     } catch (e) {
-      console.warn('儲存摺疊狀態失敗:', e);
+      console.warn('儲存選取群組失敗:', e);
     }
   }
 
@@ -1104,9 +1212,10 @@ class VideoManager {
 
   renderModalTags() {
     const modalTags = document.getElementById('modal-tags');
-    modalTags.innerHTML = this.selectedVideo.tags.map(tag =>
-      `<span class="tag removable" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`
-    ).join('');
+    modalTags.innerHTML = this.selectedVideo.tags.map(tag => {
+      const color = this.tagColors?.get(tag) || '#3b82f6';
+      return `<span class="tag removable" data-tag="${escapeHtml(tag)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(tag)}</span>`;
+    }).join('');
 
     // 使用事件委派綁定標籤移除事件（只綁定一次）
     if (!this.modalTagsEventBound) {
@@ -1403,14 +1512,7 @@ class VideoManager {
     const tagsElement = videoCard.querySelector('.video-tags');
     if (tagsElement) {
       const tags = video.tags && video.tags.length > 0
-        ? video.tags.map(tag => {
-            // 支援舊格式（字串）和新格式（物件）
-            if (typeof tag === 'string') {
-              return `<span class="tag" style="--tag-color: #3b82f6;">${escapeHtml(tag)}</span>`;
-            } else {
-              return `<span class="tag" style="--tag-color: ${escapeHtml(tag.color)};">${escapeHtml(tag.name)}</span>`;
-            }
-          }).join('')
+        ? video.tags.map(tag => this._videoTagHtml(tag)).join('')
         : '<span class="no-tags">無標籤</span>';
       tagsElement.innerHTML = tags;
     }

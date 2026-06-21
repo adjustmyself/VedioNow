@@ -37,6 +37,20 @@ class SQLiteDatabase {
         });
 
         this._createSchema();
+        this._migrateSchema();
+    }
+
+    // 為既有資料庫補上後來新增的欄位（CREATE TABLE IF NOT EXISTS 不會改動既有表）
+    _migrateSchema() {
+        const hasColumn = (table, column) =>
+            this.db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
+
+        if (!hasColumn('tags', 'description')) {
+            this.db.exec("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
+        }
+        if (!hasColumn('tags', 'description_image')) {
+            this.db.exec("ALTER TABLE tags ADD COLUMN description_image TEXT DEFAULT ''");
+        }
     }
 
     _createSchema() {
@@ -73,6 +87,8 @@ class SQLiteDatabase {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 color TEXT DEFAULT '#3b82f6',
+                description TEXT DEFAULT '',
+                description_image TEXT DEFAULT '',
                 group_id INTEGER REFERENCES tag_groups(id) ON DELETE SET NULL,
                 created_at TEXT,
                 updated_at TEXT
@@ -510,10 +526,10 @@ class SQLiteDatabase {
     }
 
     async createTag(tagData) {
-        const { name, color, group_id } = tagData;
+        const { name, color, description, description_image, group_id } = tagData;
         const result = this.db.prepare(`
-            INSERT INTO tags (name, color, group_id, created_at) VALUES (?, ?, ?, ?)
-        `).run(name, color || '#3b82f6', group_id ? Number(group_id) : null, this._now());
+            INSERT INTO tags (name, color, description, description_image, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(name, color || '#3b82f6', description || '', description_image || '', group_id ? Number(group_id) : null, this._now());
         return String(result.lastInsertRowid);
     }
 
@@ -523,7 +539,7 @@ class SQLiteDatabase {
             const tag = this.db.prepare('SELECT * FROM tags WHERE id = ?').get(Number(tagId));
             if (!tag) return false;
 
-            const allowed = ['name', 'color'];
+            const allowed = ['name', 'color', 'description', 'description_image'];
             const sets = [];
             const params = [];
             for (const key of allowed) {
@@ -582,6 +598,8 @@ class SQLiteDatabase {
             id: String(tag.id),
             name: tag.name,
             color: tag.color,
+            description: tag.description || '',
+            description_image: tag.description_image || '',
             video_count: countMap.get(tag.name) || 0
         });
 

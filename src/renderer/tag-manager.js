@@ -53,6 +53,10 @@ class TagManager {
       tagName: document.getElementById('tag-name'),
       tagGroup: document.getElementById('tag-group'),
       tagColor: document.getElementById('tag-color'),
+      tagDescription: document.getElementById('tag-description'),
+      tagImagePreview: document.getElementById('tag-image-preview'),
+      tagImagePick: document.getElementById('tag-image-pick'),
+      tagImageRemove: document.getElementById('tag-image-remove'),
       saveTag: document.getElementById('save-tag'),
       cancelTag: document.getElementById('cancel-tag'),
       tagModalClose: document.getElementById('tag-modal-close'),
@@ -80,6 +84,8 @@ class TagManager {
     this.elements.saveTag.addEventListener('click', () => this.saveTag());
     this.elements.cancelTag.addEventListener('click', () => this.hideTagModal());
     this.elements.tagModalClose.addEventListener('click', () => this.hideTagModal());
+    this.elements.tagImagePick.addEventListener('click', () => this.pickTagImage());
+    this.elements.tagImageRemove.addEventListener('click', () => this.setTagImage(''));
 
     // 確認刪除模態框
     this.elements.confirmDelete.addEventListener('click', () => this.executeDelete());
@@ -215,7 +221,12 @@ class TagManager {
       return;
     }
 
-    this.elements.tagsByGroup.innerHTML = this.tagsByGroup.map(group => `
+    // 有選取群組時只顯示該群組，否則顯示全部
+    const groupsToShow = this.selectedGroup
+      ? this.tagsByGroup.filter(g => g.id === this.selectedGroup.id)
+      : this.tagsByGroup;
+
+    this.elements.tagsByGroup.innerHTML = groupsToShow.map(group => `
       <div class="tag-group-section">
         <div class="tag-group-header">
           <div class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></div>
@@ -226,7 +237,7 @@ class TagManager {
           ${group.tags.length === 0
             ? '<div class="empty-state"><p>此群組尚無標籤</p></div>'
             : group.tags.map(tag => `
-                <div class="tag-item" data-tag-id="${escapeHtml(tag.id)}">
+                <div class="tag-item" data-tag-id="${escapeHtml(tag.id)}"${tag.description ? ` title="${escapeHtml(tag.description)}"` : ''}>
                   <div class="tag-header">
                     <div class="tag-name">
                       <div class="tag-color" style="background-color: ${escapeHtml(tag.color)};"></div>
@@ -237,6 +248,7 @@ class TagManager {
                       <button class="btn-icon" data-action="delete-tag" data-tag-id="${escapeHtml(tag.id)}" title="刪除">🗑️</button>
                     </div>
                   </div>
+                  ${tag.description ? `<div class="tag-description">${escapeHtml(tag.description)}</div>` : ''}
                   <div class="tag-stats">${tag.video_count} 個影片</div>
                 </div>
               `).join('')
@@ -257,8 +269,14 @@ class TagManager {
   }
 
   selectGroup(groupId) {
-    this.selectedGroup = this.groups.find(g => g.id === groupId);
+    // 再次點選同一群組 → 取消篩選，恢復顯示全部群組
+    if (this.selectedGroup?.id === groupId) {
+      this.selectedGroup = null;
+    } else {
+      this.selectedGroup = this.groups.find(g => g.id === groupId);
+    }
     this.renderGroups();
+    this.renderTagsByGroup();
   }
 
   // 群組管理方法
@@ -336,10 +354,13 @@ class TagManager {
       this.elements.tagName.value = tag.name;
       this.elements.tagColor.value = tag.color;
       this.elements.tagGroup.value = tag.group_id || '';
+      this.elements.tagDescription.value = tag.description || '';
+      this.setTagImage(tag.description_image || '');
     } else {
       this.elements.tagModalTitle.textContent = '新增標籤';
       this.elements.tagForm.reset();
       this.elements.tagColor.value = '#3b82f6';
+      this.setTagImage('');
     }
 
     this.elements.tagModal.classList.remove('hidden');
@@ -350,10 +371,44 @@ class TagManager {
     this.editingTag = null;
   }
 
+  // 透過主行程開啟檔案對話框選圖並複製到 data/tag-images，回傳的絕對路徑存進標籤
+  async pickTagImage() {
+    try {
+      const result = await ipcRenderer.invoke('pick-tag-image');
+      if (result && result.success) {
+        this.setTagImage(result.path);
+      } else if (result && result.error) {
+        alert('選取圖片失敗: ' + result.error);
+      }
+    } catch (error) {
+      console.error('選取標籤圖片錯誤:', error);
+      alert('選取圖片失敗，請重試');
+    }
+  }
+
+  // 設定目前標籤圖片路徑並更新預覽（空字串=清除）
+  setTagImage(imagePath) {
+    this.tagImagePath = imagePath || '';
+    const preview = this.elements.tagImagePreview;
+    if (this.tagImagePath) {
+      // 加上時間戳避免換圖後仍顯示舊快取
+      const src = `file://${this.tagImagePath}?t=${Date.now()}`;
+      preview.classList.remove('empty');
+      preview.innerHTML = `<img src="${escapeHtml(src)}" alt="標籤說明圖片">`;
+      this.elements.tagImageRemove.classList.remove('hidden');
+    } else {
+      preview.classList.add('empty');
+      preview.innerHTML = '<span class="tag-image-placeholder">尚未選擇圖片</span>';
+      this.elements.tagImageRemove.classList.add('hidden');
+    }
+  }
+
   async saveTag() {
     const tagData = {
       name: this.elements.tagName.value.trim(),
       color: this.elements.tagColor.value,
+      description: this.elements.tagDescription.value.trim(),
+      description_image: this.tagImagePath || '',
       group_id: this.elements.tagGroup.value || null
     };
 

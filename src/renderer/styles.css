@@ -175,11 +175,95 @@ body {
     margin-bottom: 2rem;
 }
 
-/* 側邊欄的標籤篩選需要群組逐列垂直排列 */
+/* 頂部標籤篩選列 */
+.tag-filter-bar {
+    background: white;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 0.75rem 1.5rem;
+    flex-shrink: 0;
+}
+
+.tag-filter-bar-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.tag-filter-bar-head h3 {
+    margin: 0;
+    color: #666;
+    font-weight: 500;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.tag-filter-bar-head .filter-controls {
+    margin-bottom: 0;
+    flex-shrink: 0;
+}
+
+.tag-filter-bar-head .tag-filter-search-wrap {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 180px;
+    max-width: 320px;
+}
+
+/* 頂部標籤列：tab 概念，群組標題固定一排，內容顯示在下方 */
 #tags-filter.tags-container {
     flex-direction: column;
     flex-wrap: nowrap;
-    gap: 0.25rem;
+    gap: 0.6rem;
+    margin-bottom: 0;
+}
+
+/* 群組分頁列：標題並排在最上面一排（過多時換行） */
+.tag-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.5rem;
+}
+
+.tag-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.7rem;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+
+.tag-tab:hover {
+    background: #e8edf3;
+}
+
+.tag-tab.active {
+    background: #ecfdf5;
+    border-color: #10b981;
+    box-shadow: 0 1px 4px rgba(16, 185, 129, 0.2);
+}
+
+.tag-tab .tag-group-name {
+    font-size: 0.85rem;
+}
+
+/* 選取群組的標籤內容：橫向鋪滿整行 */
+.tag-tab-content {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.tag-tab-content:empty {
+    display: none;
 }
 
 .tag-filter-search-wrap {
@@ -637,44 +721,6 @@ body {
     line-height: 1.3;
 }
 
-.tag-group-filter {
-    display: block;
-    width: 100%;
-    margin-bottom: 0.75rem;
-    clear: both;
-}
-
-.tag-group-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-    padding: 0.4rem 0.5rem;
-    border-left: 3px solid #10b981;
-    background: #ecfdf5;
-    cursor: pointer;
-    user-select: none;
-    transition: all 0.15s;
-    border-radius: 4px;
-}
-
-.tag-group-header:hover {
-    filter: brightness(0.96);
-}
-
-.tag-group-filter.collapsed .tag-group-header {
-    border-left-color: #cbd5e1;
-    background: #f1f5f9;
-}
-
-.tag-group-filter.collapsed .tag-group-name {
-    color: #64748b;
-}
-
-.tag-group-filter.collapsed .tag-group-tags {
-    display: none;
-}
-
 .tag-group-color {
     width: 12px;
     height: 12px;
@@ -1031,7 +1077,8 @@ select {
     color: #333;
 }
 
-.info-group span {
+/* 只套用在資訊值的直接 span（檔名、路徑…），避免影響巢狀的標籤與評分星星 */
+.info-group > span {
     display: block;
     padding: 0.5rem 0;
     color: #666;
@@ -1818,3 +1865,197 @@ select {
 #recent-paths-group.has-paths {
     display: block;
 }
+
+/* 標籤 hover 自訂提示框（說明文字＋說明圖片） */
+.tag-tooltip {
+    position: fixed;
+    z-index: 4000;
+    max-width: 320px;
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    padding: 0.5rem;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.tag-tooltip.hidden {
+    display: none !important;
+}
+
+.tag-tooltip-img {
+    max-width: 300px;
+    max-height: 220px;
+    width: auto;
+    height: auto;
+    border-radius: 4px;
+    object-fit: contain;
+    display: block;
+}
+
+.tag-tooltip-text {
+    font-size: 0.85rem;
+    color: #333;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ===================== 深色主題 ===================== */
+[data-theme="dark"] body {
+    background-color: #16181d;
+    color: #e4e6eb;
+}
+
+[data-theme="dark"] .tag-tooltip {
+    background: #23262e;
+    border-color: #3f4452;
+}
+
+[data-theme="dark"] .tag-tooltip-text {
+    color: #e4e6eb;
+}
+
+/* 主要表面：側邊欄、頂部標籤列、工具列、卡片、彈窗、選單 */
+[data-theme="dark"] .sidebar,
+[data-theme="dark"] .tag-filter-bar,
+[data-theme="dark"] .toolbar,
+[data-theme="dark"] .video-card,
+[data-theme="dark"] .video-card-content,
+[data-theme="dark"] .video-list-item,
+[data-theme="dark"] .modal-content,
+[data-theme="dark"] .thumb-seconds-menu {
+    background: #23262e;
+    color: #e4e6eb;
+}
+
+[data-theme="dark"] .sidebar { border-right-color: #353944; }
+[data-theme="dark"] .tag-filter-bar { border-bottom-color: #353944; }
+[data-theme="dark"] .toolbar { border-bottom-color: #353944; }
+
+/* 標題與主要／次要文字 */
+[data-theme="dark"] .sidebar h3,
+[data-theme="dark"] .stat-label,
+[data-theme="dark"] .video-meta,
+[data-theme="dark"] .video-title,
+[data-theme="dark"] .tag-group-name,
+[data-theme="dark"] .tag-group-count,
+[data-theme="dark"] .modal-header h2,
+[data-theme="dark"] .info-group label,
+[data-theme="dark"] .thumb-seconds-item {
+    color: #cdd0d6;
+}
+
+/* 表單元素：下拉、輸入、搜尋框、文字區 */
+[data-theme="dark"] .drive-select,
+[data-theme="dark"] .tag-filter-search,
+[data-theme="dark"] select,
+[data-theme="dark"] .info-group textarea,
+[data-theme="dark"] .form-input,
+[data-theme="dark"] .form-select,
+[data-theme="dark"] .tag-search-input,
+[data-theme="dark"] .thumb-seconds-input,
+[data-theme="dark"] .tag-input-container input,
+[data-theme="dark"] .path-input-container input,
+[data-theme="dark"] .collection-name-edit input {
+    background: #2d313b;
+    color: #e4e6eb;
+    border-color: #3f4452;
+}
+
+/* 淺灰底元件：評分選項、群組 tab、重置鈕 */
+[data-theme="dark"] .rating-option,
+[data-theme="dark"] .rating-filter-stars,
+[data-theme="dark"] .tag-tab,
+[data-theme="dark"] .btn-reset,
+[data-theme="dark"] .btn-reset-small {
+    background: #2d313b;
+    border-color: #3f4452;
+    color: #cdd0d6;
+}
+
+[data-theme="dark"] .rating-option:hover,
+[data-theme="dark"] .tag-tab:hover,
+[data-theme="dark"] .btn-reset:hover,
+[data-theme="dark"] .btn-reset-small:hover {
+    background: #363b46;
+}
+
+[data-theme="dark"] .rating-option.active {
+    background: #3a3320;
+    border-color: #ffc107;
+}
+
+[data-theme="dark"] .tag-tab.active {
+    background: #163a2c;
+    border-color: #10b981;
+}
+
+/* 較暗的巢狀區塊：彈窗 header/footer、選擇器容器、進度、清單容器 */
+[data-theme="dark"] .modal-header,
+[data-theme="dark"] .modal-footer,
+[data-theme="dark"] .tag-selector-container,
+[data-theme="dark"] .progress-container,
+[data-theme="dark"] .collection-list,
+[data-theme="dark"] .child-videos-list,
+[data-theme="dark"] .recent-paths-list,
+[data-theme="dark"] .progress-bar {
+    background: #1c1f26;
+    border-color: #353944;
+}
+
+/* 巢狀項目：保持比背景亮一點 */
+[data-theme="dark"] .episode-item,
+[data-theme="dark"] .video-select-item,
+[data-theme="dark"] .recent-path-item,
+[data-theme="dark"] .current-file,
+[data-theme="dark"] .tag-item-selector {
+    background: #2d313b;
+    border-color: #3f4452;
+    color: #e4e6eb;
+}
+
+[data-theme="dark"] .tag-pinned-section {
+    background: #23262e;
+    border-color: #2f3d63;
+}
+
+/* 其餘次要文字 */
+[data-theme="dark"] .info-group > span,
+[data-theme="dark"] .video-selection-hint,
+[data-theme="dark"] .folder-path-display,
+[data-theme="dark"] .episode-name,
+[data-theme="dark"] .video-select-name,
+[data-theme="dark"] .recent-path-text,
+[data-theme="dark"] .loading,
+[data-theme="dark"] .empty-state,
+[data-theme="dark"] .pagination-info,
+[data-theme="dark"] .pagination-ellipsis,
+[data-theme="dark"] .tag-selector-container label,
+[data-theme="dark"] .tag-group-header-selector {
+    color: #b6bac2;
+}
+
+/* 分頁按鈕 */
+[data-theme="dark"] .pagination-btn {
+    background: #2d313b;
+    color: #cdd0d6;
+    border-color: #3f4452;
+}
+
+[data-theme="dark"] .pagination-btn:hover {
+    background: #363b46;
+    border-color: #555b69;
+}
+
+[data-theme="dark"] .pagination-container {
+    border-top-color: #353944;
+}
+
+/* 關閉鈕、選單項 hover */
+[data-theme="dark"] .btn-close { color: #b6bac2; }
+[data-theme="dark"] .btn-close:hover { background: #363b46; color: #fff; }
+[data-theme="dark"] .thumb-seconds-item:hover { background: #363b46; }

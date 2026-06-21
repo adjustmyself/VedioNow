@@ -48,13 +48,13 @@ async function migrateMongoToSqlite(mongoConnectionString, sqliteDbPath) {
         // 2. 標籤
         const tags = await mongoDb.collection('tags').find().toArray();
         const insertTag = db.prepare(`
-            INSERT INTO tags (name, color, group_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET color = excluded.color, group_id = excluded.group_id
+            INSERT INTO tags (name, color, description, description_image, group_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET color = excluded.color, description = excluded.description, description_image = excluded.description_image, group_id = excluded.group_id
         `);
         for (const t of tags) {
             const groupId = t.group_id ? (groupIdMap.get(t.group_id.toString()) || null) : null;
-            insertTag.run(t.name, t.color || '#3b82f6', groupId, toIso(t.created_at), toIso(t.updated_at));
+            insertTag.run(t.name, t.color || '#3b82f6', t.description || '', t.description_image || '', groupId, toIso(t.created_at), toIso(t.updated_at));
             counts.tags++;
         }
 

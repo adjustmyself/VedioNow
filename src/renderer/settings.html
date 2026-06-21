@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>應用程式設定</title>
     <link rel="stylesheet" href="settings.css">
+    <script src="theme.js"></script>
 </head>
 <body>
     <div id="settings">
@@ -230,6 +231,12 @@
                                 <option value="en">English</option>
                             </select>
                         </div>
+
+                        <div class="form-group">
+                            <label for="app-page-size">單頁顯示數量:</label>
+                            <input type="number" id="app-page-size" min="1" max="200" step="1">
+                            <p class="field-description">每一頁要顯示幾部影片（1～200，預設 9）。儲存後即時生效，不需重啟。</p>
+                        </div>
                     </div>
                 </div>
 
@@ -262,8 +269,8 @@
                 <button id="save-modal-close" class="btn-close">&times;</button>
             </div>
             <div class="modal-body">
-                <p>設定已成功儲存。某些變更可能需要重新啟動應用程式才能生效。</p>
-                <p>是否現在重新啟動應用程式？</p>
+                <p id="save-modal-message">設定已成功儲存。</p>
+                <p id="save-modal-restart-question">變更資料庫類型需要重新啟動應用程式才能生效，是否現在重新啟動？</p>
             </div>
             <div class="modal-footer">
                 <button id="restart-app" class="btn btn-primary">重新啟動</button>

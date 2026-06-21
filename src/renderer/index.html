@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VideoNow - 影片管理程式</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="theme.js"></script>
 </head>
 <body>
     <div id="app">
@@ -17,6 +18,23 @@
                 <input type="text" id="search-input" placeholder="搜尋影片..." class="search-input">
             </div>
         </header>
+
+        <section class="tag-filter-bar">
+            <div class="tag-filter-bar-head">
+                <h3>標籤篩選</h3>
+                <div class="filter-controls">
+                    <button id="reset-tags-btn" class="btn btn-reset-small">重置標籤</button>
+                    <button id="reset-all-btn" class="btn btn-reset-all">全部重置</button>
+                </div>
+                <div class="tag-filter-search-wrap">
+                    <input type="text" id="tag-filter-search" class="tag-filter-search" placeholder="搜尋標籤...">
+                    <button id="tag-filter-search-clear" class="tag-filter-search-clear hidden" title="清除">✕</button>
+                </div>
+            </div>
+            <div id="tags-filter" class="tags-container">
+                <!-- 標籤會動態加載到這裡 -->
+            </div>
+        </section>
 
         <div class="main-container">
             <aside class="sidebar">
@@ -40,19 +58,6 @@
                         <option value="">全部硬碟</option>
                         <!-- 硬碟選項會動態加載到這裡 -->
                     </select>
-                </div>
-
-                <h3>標籤篩選</h3>
-                <div class="filter-controls">
-                    <button id="reset-tags-btn" class="btn btn-reset-small">重置標籤</button>
-                    <button id="reset-all-btn" class="btn btn-reset-all">全部重置</button>
-                </div>
-                <div class="tag-filter-search-wrap">
-                    <input type="text" id="tag-filter-search" class="tag-filter-search" placeholder="搜尋標籤...">
-                    <button id="tag-filter-search-clear" class="tag-filter-search-clear hidden" title="清除">✕</button>
-                </div>
-                <div id="tags-filter" class="tags-container">
-                    <!-- 標籤會動態加載到這裡 -->
                 </div>
 
                 <h3>統計資訊</h3>
@@ -290,16 +295,16 @@
                         <label>掃描範圍:</label>
                         <div class="scan-range-options">
                             <label class="radio-label">
-                                <input type="radio" name="scan-date-filter" id="scan-range-all" value="all" checked>
-                                全掃描
-                            </label>
-                            <label class="radio-label">
                                 <input type="radio" name="scan-date-filter" id="scan-range-week" value="week">
                                 近一周
                             </label>
                             <label class="radio-label">
                                 <input type="radio" name="scan-date-filter" id="scan-range-month" value="month">
                                 近一月
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="scan-date-filter" id="scan-range-all" value="all" checked>
+                                全掃描
                             </label>
                         </div>
                     </div>

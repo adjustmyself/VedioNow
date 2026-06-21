@@ -850,6 +850,8 @@ class MongoDatabase extends DatabaseInterface {
                 $project: {
                     name: 1,
                     color: 1,
+                    description: 1,
+                    description_image: 1,
                     group_id: 1,
                     created_at: 1,
                     video_count: { $size: '$videos' }
@@ -910,10 +912,12 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async createTag(tagData) {
-        const { name, color, group_id } = tagData;
+        const { name, color, description, description_image, group_id } = tagData;
         const tag = {
             name,
             color: color || '#3b82f6',
+            description: description || '',
+            description_image: description_image || '',
             group_id: group_id ? new ObjectId(group_id) : null,
             created_at: new Date()
         };
@@ -944,6 +948,8 @@ class MongoDatabase extends DatabaseInterface {
             id: tag._id.toString(),
             name: tag.name,
             color: tag.color,
+            description: tag.description || '',
+            description_image: tag.description_image || '',
             video_count: countMap.get(tag.name) || 0
         });
 
@@ -1093,6 +1099,10 @@ class MongoDatabase extends DatabaseInterface {
         try {
             console.log('更新標籤:', { tagId, updates });
 
+            // 先取得舊標籤，才能判斷名稱是否真的改變並同步關聯
+            const existing = await this.db.collection('tags').findOne({ _id: new ObjectId(tagId) });
+            if (!existing) return false;
+
             const updateDoc = { ...updates };
             if (updateDoc.updated_at === undefined) {
                 updateDoc.updated_at = new Date();
@@ -1110,8 +1120,35 @@ class MongoDatabase extends DatabaseInterface {
                 { $set: updateDoc }
             );
 
-            console.log('更新標籤結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
-            return result.modifiedCount > 0;
+            // 名稱有變更時，同步更新所有影片的標籤關聯（關聯以名稱存放）；沒變則完全不動關聯
+            const renamed = updates.name && updates.name !== existing.name;
+            if (renamed) {
+                const oldName = existing.name;
+                const newName = updates.name;
+                // 用聚合管線：把陣列中的舊名換成新名，並以 $setUnion 去重
+                // （避免影片原本就同時有新舊兩個標籤而造成重複）
+                const relResult = await this.db.collection('video_tag_relations').updateMany(
+                    { tags: oldName },
+                    [{
+                        $set: {
+                            tags: {
+                                $setUnion: [{
+                                    $map: {
+                                        input: '$tags',
+                                        as: 't',
+                                        in: { $cond: [{ $eq: ['$$t', oldName] }, newName, '$$t'] }
+                                    }
+                                }, []]
+                            },
+                            updated_at: new Date()
+                        }
+                    }]
+                );
+                console.log('標籤改名，已同步關聯數:', relResult.modifiedCount);
+            }
+
+            console.log('更新標籤結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount, renamed });
+            return result.modifiedCount > 0 || renamed;
         } catch (error) {
             console.error('更新標籤失敗:', error);
             throw error;

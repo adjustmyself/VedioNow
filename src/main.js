@@ -333,6 +333,32 @@ ipcMain.handle('create-tag', async (event, tagData) => {
   }
 });
 
+// 標籤說明圖片：開啟檔案對話框選圖，複製到 data/tag-images，回傳絕對路徑
+const TAG_IMAGES_DIR = path.join(__dirname, '../data/tag-images');
+ipcMain.handle('pick-tag-image', async () => {
+  try {
+    const parentWin = BrowserWindow.getFocusedWindow() || mainWindow;
+    const result = await dialog.showOpenDialog(parentWin, {
+      title: '選擇標籤說明圖片',
+      properties: ['openFile'],
+      filters: [{ name: '圖片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] }]
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+    const src = result.filePaths[0];
+    await fs.ensureDir(TAG_IMAGES_DIR);
+    const ext = path.extname(src) || '.png';
+    const filename = `tag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const dest = path.join(TAG_IMAGES_DIR, filename);
+    await fs.copy(src, dest);
+    return { success: true, path: dest };
+  } catch (error) {
+    console.error('選取標籤圖片失敗:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('get-tags-by-group', async () => {
   try {
     console.log('開始獲取標籤群組...');
@@ -620,6 +646,16 @@ ipcMain.handle('save-config', async (event, settings) => {
       videoScanner = new VideoScanner(database);
     }
 
+    if (success) {
+      // 通知所有視窗套用新主題與單頁顯示數量（皆即時生效，不需重啟）
+      const theme = settings.app && settings.app.theme ? settings.app.theme : 'light';
+      const pageSize = settings.app && settings.app.pageSize ? settings.app.pageSize : 9;
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send('theme-changed', theme);
+        win.webContents.send('page-size-changed', pageSize);
+      });
+    }
+
     return success;
   } catch (error) {
     console.error('儲存配置失敗:', error);
@@ -644,6 +680,15 @@ ipcMain.handle('reset-config', async () => {
     }
     database = await DatabaseFactory.create();
     videoScanner = new VideoScanner(database);
+
+    // 重置後套用預設主題與單頁顯示數量
+    const resetConfig = await config.load();
+    const theme = resetConfig.app && resetConfig.app.theme ? resetConfig.app.theme : 'light';
+    const pageSize = resetConfig.app && resetConfig.app.pageSize ? resetConfig.app.pageSize : 9;
+    BrowserWindow.getAllWindows().forEach((win) => {
+      win.webContents.send('theme-changed', theme);
+      win.webContents.send('page-size-changed', pageSize);
+    });
 
     return true;
   } catch (error) {

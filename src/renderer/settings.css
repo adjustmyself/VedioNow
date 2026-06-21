@@ -547,3 +547,93 @@ body {
 .info-item strong {
     color: #374151;
 }
+
+/* ===================== 深色主題 ===================== */
+[data-theme="dark"] body {
+    background-color: #16181d;
+    color: #cdd0d6;
+}
+
+/* 表面：側邊欄、卡片、內容區、彈窗 */
+[data-theme="dark"] .settings-sidebar,
+[data-theme="dark"] .settings-card,
+[data-theme="dark"] .modal-content {
+    background: #23262e;
+    border-color: #353944;
+}
+
+[data-theme="dark"] .settings-sidebar { border-right-color: #353944; }
+[data-theme="dark"] .settings-content { background: #1a1c22; }
+
+/* 標題與文字 */
+[data-theme="dark"] .section-header h2,
+[data-theme="dark"] .settings-card h3,
+[data-theme="dark"] .option-title,
+[data-theme="dark"] .modal-header h3,
+[data-theme="dark"] .form-group label,
+[data-theme="dark"] .stat-label,
+[data-theme="dark"] .stat-value,
+[data-theme="dark"] .info-item strong {
+    color: #e4e6eb;
+}
+
+[data-theme="dark"] .section-description,
+[data-theme="dark"] .option-description,
+[data-theme="dark"] .field-description,
+[data-theme="dark"] .info-item {
+    color: #9aa0aa;
+}
+
+/* 側邊欄選單 */
+[data-theme="dark"] .menu-item { color: #a0a4ad; }
+[data-theme="dark"] .menu-item:hover { background: #2d313b; color: #cdd0d6; }
+[data-theme="dark"] .menu-item.active {
+    background: #1e2a44;
+    color: #93b4ff;
+    border-left-color: #3b82f6;
+}
+
+/* 表單元素 */
+[data-theme="dark"] .form-group input,
+[data-theme="dark"] .form-group select,
+[data-theme="dark"] .form-group textarea {
+    background: #2d313b;
+    color: #e4e6eb;
+    border-color: #3f4452;
+}
+
+/* 資料庫選項卡 */
+[data-theme="dark"] .option-content {
+    background: #2d313b;
+    border-color: #3f4452;
+}
+
+[data-theme="dark"] .option-content:hover {
+    border-color: #555b69;
+    background: #363b46;
+}
+
+[data-theme="dark"] .database-option input:checked + .option-content,
+[data-theme="dark"] .database-option input:checked + .option-content:hover {
+    border-color: #667eea;
+    background: #1e2a44;
+}
+
+[data-theme="dark"] .option-icon { background: #1c1f26; }
+
+/* 分頁、彈窗 header/footer、提示框 */
+[data-theme="dark"] .connection-tabs,
+[data-theme="dark"] .connection-actions { border-color: #353944; }
+[data-theme="dark"] .tab-btn { color: #a0a4ad; }
+[data-theme="dark"] .tab-btn:hover { color: #cdd0d6; }
+
+[data-theme="dark"] .modal-header,
+[data-theme="dark"] .modal-footer,
+[data-theme="dark"] .naming-info {
+    background: #1c1f26;
+    border-color: #353944;
+}
+
+[data-theme="dark"] .stat-row { border-bottom-color: #2d313b; }
+[data-theme="dark"] .btn-close { color: #a0a4ad; }
+[data-theme="dark"] .btn-close:hover { background: #363b46; color: #fff; }

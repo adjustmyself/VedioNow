@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>標籤管理器</title>
     <link rel="stylesheet" href="tag-manager.css">
+    <script src="theme.js"></script>
 </head>
 <body>
     <div id="tag-manager">
@@ -95,6 +96,23 @@
                         <select id="tag-group" required>
                             <option value="">選擇群組</option>
                         </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="tag-description">說明:</label>
+                        <textarea id="tag-description" rows="3" placeholder="選填，滑鼠移到標籤上時會顯示此說明"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>說明圖片:</label>
+                        <div class="tag-image-uploader">
+                            <div id="tag-image-preview" class="tag-image-preview empty">
+                                <span class="tag-image-placeholder">尚未選擇圖片</span>
+                            </div>
+                            <div class="tag-image-actions">
+                                <button type="button" id="tag-image-pick" class="btn btn-secondary btn-small">選擇圖片</button>
+                                <button type="button" id="tag-image-remove" class="btn btn-danger btn-small hidden">移除圖片</button>
+                            </div>
+                        </div>
+                        <p class="field-description">選填，滑鼠移到標籤上時會連同說明一起顯示這張圖片。</p>
                     </div>
                     <div class="form-group">
                         <label for="tag-color">標籤顏色:</label>
