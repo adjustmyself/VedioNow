@@ -637,7 +637,8 @@ ipcMain.handle('save-config', async (event, settings) => {
     const previousConfig = await config.load();
     const success = await config.save(settings);
 
-    if (success && previousConfig.database.type !== settings.database.type) {
+    const databaseTypeChanged = success && previousConfig.database.type !== settings.database.type;
+    if (databaseTypeChanged) {
       // 資料庫類型改變，重新初始化資料庫
       if (database) {
         database.close();
@@ -653,6 +654,10 @@ ipcMain.handle('save-config', async (event, settings) => {
       BrowserWindow.getAllWindows().forEach((win) => {
         win.webContents.send('theme-changed', theme);
         win.webContents.send('page-size-changed', pageSize);
+        // 只有資料庫真的換了才通知重載資料，避免無謂重刷
+        if (databaseTypeChanged) {
+          win.webContents.send('database-changed');
+        }
       });
     }
 
@@ -688,6 +693,8 @@ ipcMain.handle('reset-config', async () => {
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('theme-changed', theme);
       win.webContents.send('page-size-changed', pageSize);
+      // 重置會重建資料庫實例，通知主視窗重載資料
+      win.webContents.send('database-changed');
     });
 
     return true;

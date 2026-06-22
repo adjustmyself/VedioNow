@@ -191,6 +191,11 @@ class VideoManager {
       this.refreshCurrentView();
     });
 
+    // 資料庫類型變更：主程序已重建 DB，主視窗需重新載入資料
+    ipcRenderer.on('database-changed', () => {
+      this.loadData();
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target === this.elements.videoModal) {
         this.hideVideoModal();
@@ -2122,11 +2127,9 @@ class VideoManager {
 
   async openSettings() {
     try {
+      // 只開啟設定視窗；資料是否需要重載交由 database-changed 事件精準觸發，
+      // 避免每次點開設定都無條件重刷畫面
       await ipcRenderer.invoke('open-settings');
-      // 當設置頁面關閉後，可能需要重新載入資料（如果資料庫類型改變）
-      setTimeout(() => {
-        this.loadData();
-      }, 1000);
     } catch (error) {
       console.error('開啟設定頁面錯誤:', error);
     }

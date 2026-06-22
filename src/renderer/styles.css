@@ -260,6 +260,8 @@ body {
 .tag-tab-content {
     max-height: 200px;
     overflow-y: auto;
+    /* 預留空間給 active 標籤的外環 (box-shadow 4px)，避免最上排被捲動容器裁切 */
+    padding: 5px 4px;
 }
 
 .tag-tab-content:empty {
@@ -2018,6 +2020,21 @@ select {
     color: #e4e6eb;
 }
 
+/* 影片詳情：深色模式下選中的標籤需明顯有別於未選中
+   （上方未選規則特異度與 .selected 相同且寫在後面，會蓋掉選取色，故在此重新指定） */
+[data-theme="dark"] .tag-item-selector.selected {
+    background: #4f8cff;
+    border-color: #6ea0ff;
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.35);
+}
+
+[data-theme="dark"] .tag-item-selector.selected:hover {
+    background: #4f8cff;
+    border-color: #6ea0ff;
+}
+
 [data-theme="dark"] .tag-pinned-section {
     background: #23262e;
     border-color: #2f3d63;
@@ -2049,6 +2066,19 @@ select {
 [data-theme="dark"] .pagination-btn:hover {
     background: #363b46;
     border-color: #555b69;
+}
+
+[data-theme="dark"] .pagination-btn.active {
+    background: #4f8cff;
+    border-color: #6ea0ff;
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.35);
+}
+
+[data-theme="dark"] .pagination-btn.active:hover {
+    background: #4f8cff;
+    border-color: #6ea0ff;
 }
 
 [data-theme="dark"] .pagination-container {

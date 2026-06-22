@@ -97,9 +97,8 @@ class TagManager {
 
     // 事件委託處理動態按鈕
     document.addEventListener('click', (e) => {
-      // 模態框背景點擊
+      // 模態框背景點擊（標籤編輯框不再點擊外面就關閉，只能用 X 關閉）
       if (e.target === this.elements.groupModal) this.hideGroupModal();
-      if (e.target === this.elements.tagModal) this.hideTagModal();
       if (e.target === this.elements.confirmModal) this.hideConfirmModal();
 
       // 處理群組編輯按鈕
