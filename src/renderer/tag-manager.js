@@ -370,12 +370,12 @@ class TagManager {
     this.editingTag = null;
   }
 
-  // 透過主行程開啟檔案對話框選圖並複製到 data/tag-images，回傳的絕對路徑存進標籤
+  // 透過主行程開啟檔案對話框選圖並複製到 userData/tag-images，回傳的檔名存進標籤
   async pickTagImage() {
     try {
       const result = await ipcRenderer.invoke('pick-tag-image');
       if (result && result.success) {
-        this.setTagImage(result.path);
+        this.setTagImage(result.filename);
       } else if (result && result.error) {
         alert('選取圖片失敗: ' + result.error);
       }
@@ -385,13 +385,32 @@ class TagManager {
     }
   }
 
-  // 設定目前標籤圖片路徑並更新預覽（空字串=清除）
-  setTagImage(imagePath) {
-    this.tagImagePath = imagePath || '';
+  // 取得標籤圖片資料夾絕對路徑（快取）
+  async getTagImagesDir() {
+    if (this._tagImagesDir === undefined) {
+      this._tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
+    }
+    return this._tagImagesDir;
+  }
+
+  // 將資料庫值（檔名；或相容舊版的絕對路徑）轉成正規的 file:// URL
+  async resolveTagImageUrl(value) {
+    if (!value) return '';
+    const path = require('path');
+    const { pathToFileURL } = require('url');
+    const isAbsolute = /[\\/]/.test(value) || /^[a-zA-Z]:/.test(value);
+    const abs = isAbsolute ? value : path.join(await this.getTagImagesDir(), value);
+    return pathToFileURL(abs).href;
+  }
+
+  // 設定目前標籤圖片檔名並更新預覽（空字串=清除）
+  async setTagImage(imageFilename) {
+    this.tagImagePath = imageFilename || '';
     const preview = this.elements.tagImagePreview;
     if (this.tagImagePath) {
+      const url = await this.resolveTagImageUrl(this.tagImagePath);
       // 加上時間戳避免換圖後仍顯示舊快取
-      const src = `file://${this.tagImagePath}?t=${Date.now()}`;
+      const src = `${url}?t=${Date.now()}`;
       preview.classList.remove('empty');
       preview.innerHTML = `<img src="${escapeHtml(src)}" alt="標籤說明圖片">`;
       this.elements.tagImageRemove.classList.remove('hidden');

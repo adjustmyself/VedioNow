@@ -68,6 +68,9 @@ app.whenReady().then(async () => {
       console.warn('舊標籤系統遷移失敗:', error);
     }
 
+    // 標籤圖片改存 userData（資料庫只存檔名），遷移舊有絕對路徑資料
+    await migrateTagImages();
+
     createWindow();
 
     app.on('activate', () => {
@@ -333,8 +336,16 @@ ipcMain.handle('create-tag', async (event, tagData) => {
   }
 });
 
-// 標籤說明圖片：開啟檔案對話框選圖，複製到 data/tag-images，回傳絕對路徑
-const TAG_IMAGES_DIR = path.join(__dirname, '../data/tag-images');
+// 標籤說明圖片：存放於使用者資料夾（userData），資料庫只存檔名。
+// 舊版曾把圖片複製進程式所在的 ../data 並以絕對路徑入庫，重新打包/搬移程式就會失效。
+const LEGACY_TAG_IMAGES_DIR = path.join(__dirname, '../data/tag-images');
+function getTagImagesDir() {
+  return path.join(app.getPath('userData'), 'tag-images');
+}
+
+// 提供給 renderer 組出圖片的 file:// URL（資料庫只存檔名）
+ipcMain.handle('get-tag-images-dir', () => getTagImagesDir());
+
 ipcMain.handle('pick-tag-image', async () => {
   try {
     const parentWin = BrowserWindow.getFocusedWindow() || mainWindow;
@@ -347,17 +358,45 @@ ipcMain.handle('pick-tag-image', async () => {
       return { success: false, canceled: true };
     }
     const src = result.filePaths[0];
-    await fs.ensureDir(TAG_IMAGES_DIR);
+    const dir = getTagImagesDir();
+    await fs.ensureDir(dir);
     const ext = path.extname(src) || '.png';
     const filename = `tag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-    const dest = path.join(TAG_IMAGES_DIR, filename);
-    await fs.copy(src, dest);
-    return { success: true, path: dest };
+    await fs.copy(src, path.join(dir, filename));
+    return { success: true, filename };
   } catch (error) {
     console.error('選取標籤圖片失敗:', error);
     return { success: false, error: error.message };
   }
 });
+
+// 一次性遷移：把舊版以絕對路徑入庫的標籤圖片搬進 userData，並將資料庫值改為純檔名
+async function migrateTagImages() {
+  try {
+    const dir = getTagImagesDir();
+    const groups = await database.getTagsByGroup();
+    for (const group of groups) {
+      for (const tag of (group.tags || [])) {
+        const val = tag.description_image;
+        if (!val) continue;
+        const isAbsolute = /[\\/]/.test(val) || /^[a-zA-Z]:/.test(val);
+        if (!isAbsolute) continue; // 已是檔名，無需處理
+        const filename = path.basename(val);
+        const dest = path.join(dir, filename);
+        // 把舊圖搬到 userData（來源優先用舊絕對路徑，否則退回舊 data 資料夾）
+        if (!await fs.pathExists(dest)) {
+          await fs.ensureDir(dir);
+          for (const cand of [val, path.join(LEGACY_TAG_IMAGES_DIR, filename)]) {
+            if (cand && await fs.pathExists(cand)) { await fs.copy(cand, dest); break; }
+          }
+        }
+        await database.updateTag(tag.id, { description_image: filename });
+      }
+    }
+  } catch (error) {
+    console.warn('標籤圖片遷移失敗:', error);
+  }
+}
 
 ipcMain.handle('get-tags-by-group', async () => {
   try {
