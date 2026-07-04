@@ -257,7 +257,7 @@ class VideoManager {
       const img = this.tagImages?.get(name);
       if (!desc && !img) { hide(); return; }
       let html = '';
-      if (img) html += `<img class="tag-tooltip-img" src="file://${escapeHtml(img)}" alt="">`;
+      if (img) html += `<img class="tag-tooltip-img" src="${escapeHtml(img)}" alt="">`;
       if (desc) html += `<div class="tag-tooltip-text">${escapeHtml(desc)}</div>`;
       tip.innerHTML = html;
       tip.classList.remove('hidden');
@@ -265,16 +265,21 @@ class VideoManager {
       position(anchorEl);
     };
 
+    // 同時涵蓋：篩選列 / 影片卡片 / 詳情已套用標籤（.tag[data-tag]）
+    // 與詳情的標籤選擇器項目（.tag-item-selector[data-tag-name]）
+    const TAG_HOVER_SELECTOR = '.tag[data-tag], .tag-item-selector[data-tag-name]';
+    const resolveTagName = (el) => el.dataset.tag || el.dataset.tagName;
+
     document.addEventListener('mouseover', (e) => {
-      const tagEl = e.target.closest('.tag[data-tag]');
+      const tagEl = e.target.closest(TAG_HOVER_SELECTOR);
       if (!tagEl) return;
-      const name = tagEl.dataset.tag;
+      const name = resolveTagName(tagEl);
       if (name === currentName) return;
       show(name, tagEl);
     });
 
     document.addEventListener('mouseout', (e) => {
-      if (e.target.closest('.tag[data-tag]')) hide();
+      if (e.target.closest(TAG_HOVER_SELECTOR)) hide();
     });
 
     // 捲動時提示位置會跑掉，直接隱藏
@@ -360,13 +365,22 @@ class VideoManager {
     this.tagColors = new Map();
     this.tagDescriptions = new Map();
     this.tagImages = new Map();
+    // 圖片資料庫只存檔名，需組出 userData 下的 file:// URL（相容舊版存的絕對路徑）
+    const tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
+    const { pathToFileURL } = require('url');
+    const path = require('path');
+    const toImageUrl = (value) => {
+      const isAbsolute = /[\\/]/.test(value) || /^[a-zA-Z]:/.test(value);
+      const abs = isAbsolute ? value : path.join(tagImagesDir, value);
+      return pathToFileURL(abs).href;
+    };
     this.tagsByGroup.forEach(group => {
       if (group.tags && Array.isArray(group.tags)) {
         this.allTags.push(...group.tags);
         group.tags.forEach(tag => {
           if (tag.color) this.tagColors.set(tag.name, tag.color);
           if (tag.description) this.tagDescriptions.set(tag.name, tag.description);
-          if (tag.description_image) this.tagImages.set(tag.name, tag.description_image);
+          if (tag.description_image) this.tagImages.set(tag.name, toImageUrl(tag.description_image));
         });
       }
     });
@@ -522,8 +536,9 @@ class VideoManager {
       ? new Date(video.file_created_at).toLocaleDateString()
       : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
     const stars = this.generateStars(video.rating || 0);
+    const description = escapeHtml((video.description || '').trim());
 
-    return { tags, filename, filepath, filesize, createdDate, stars, videoId: escapeHtml(video.id) };
+    return { tags, filename, filepath, filesize, createdDate, stars, description, videoId: escapeHtml(video.id) };
   }
 
   createVideoCard(video) {
@@ -534,11 +549,7 @@ class VideoManager {
           <div class="thumbnail-fallback">
             <span>🎬</span>
           </div>
-          <div class="thumbnail-toolbar">
-            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${f.videoId}" data-filepath="${f.filepath}" title="重新產生縮圖">
-              🖼️ 產生縮圖
-            </button>
-          </div>
+          ${f.description ? `<div class="thumbnail-description">${f.description}</div>` : ''}
         </div>
         <div class="video-card-content">
           <div class="video-title" title="${f.filename}">${f.filename}</div>
@@ -560,11 +571,7 @@ class VideoManager {
           <div class="thumbnail-fallback-small">
             <span>🎬</span>
           </div>
-          <div class="thumbnail-toolbar">
-            <button class="btn-thumbnail-action btn-generate-thumb" data-video-id="${f.videoId}" data-filepath="${f.filepath}" title="重新產生縮圖">
-              🖼️
-            </button>
-          </div>
+          ${f.description ? `<div class="thumbnail-description">${f.description}</div>` : ''}
         </div>
         <div class="video-list-content">
           <div class="video-title">${f.filename}</div>
@@ -583,17 +590,6 @@ class VideoManager {
     if (this.videoEventsBound) return;
 
     this.elements.videosContainer.addEventListener('click', async (e) => {
-      const thumbBtn = e.target.closest('.btn-generate-thumb');
-      if (thumbBtn) {
-        e.stopPropagation();
-        this.showThumbnailSecondsMenu(thumbBtn, (seconds) => {
-          this.generateThumbnailForCard(thumbBtn.dataset.filepath, thumbBtn.dataset.videoId, thumbBtn, seconds);
-        });
-        return;
-      }
-      // 點到工具欄其他區域也不要觸發卡片點擊
-      if (e.target.closest('.thumbnail-toolbar')) return;
-
       const card = e.target.closest('[data-video-id]');
       if (card) {
         this.showVideoModal(card.dataset.videoId);
@@ -1804,66 +1800,6 @@ class VideoManager {
     if (this._thumbMenuCleanup) this._thumbMenuCleanup();
   }
 
-  async generateThumbnailForCard(videoPath, videoId, button, timeOffset) {
-    try {
-      // 更新按鈕狀態
-      const originalText = button.textContent;
-      button.textContent = '⏳';
-      button.disabled = true;
-      button.style.opacity = '0.6';
-
-      // 呼叫後端使用 FFmpeg 生成縮圖（指定擷取秒數）
-      const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath, timeOffset);
-
-      if (result.success && result.thumbnail) {
-        this.thumbnailCache.set(videoPath, result.thumbnail);
-        // 更新版本號以破壞渲染器圖片快取
-        this.thumbnailVersions.set(videoPath, Date.now());
-        // 立即更新當前卡片的縮圖
-        const videoCard = document.querySelector(`[data-video-id="${videoId}"]`);
-        if (videoCard) {
-          const thumbnailContainer = videoCard.querySelector('.video-thumbnail, .video-list-thumbnail');
-          if (thumbnailContainer) {
-            // 清除現有縮圖並重新載入
-            this.showCachedThumbnail(thumbnailContainer, result.thumbnail);
-          }
-        }
-
-        // 短暫顯示成功提示
-        button.textContent = '✓';
-        button.style.backgroundColor = '#4caf50';
-        button.style.color = 'white';
-
-        setTimeout(() => {
-          button.textContent = originalText;
-          button.disabled = false;
-          button.style.opacity = '1';
-          button.style.backgroundColor = '';
-          button.style.color = '';
-        }, 2000);
-      } else {
-        throw new Error(result.error || '縮圖生成失敗');
-      }
-    } catch (error) {
-      console.error('卡片生成縮圖失敗:', error);
-
-      // 顯示錯誤狀態
-      button.textContent = '✗';
-      button.style.backgroundColor = '#f44336';
-      button.style.color = 'white';
-
-      setTimeout(() => {
-        button.textContent = '🖼️';
-        button.disabled = false;
-        button.style.opacity = '1';
-        button.style.backgroundColor = '';
-        button.style.color = '';
-      }, 2000);
-
-      alert(`縮圖生成失敗：${error.message}`);
-    }
-  }
-
   async showScanModal() {
     this.elements.scanModal.classList.remove('hidden');
     // 載入最近掃描路徑
@@ -2082,6 +2018,9 @@ class VideoManager {
       paginationHTML += `<button class="pagination-btn" data-page="${this.currentPage + 1}">下一頁 ▶</button>`;
     }
 
+    // 自訂頁碼跳轉
+    paginationHTML += `<span class="pagination-jump">前往 <input type="number" class="pagination-jump-input" min="1" max="${this.totalPages}" value="${this.currentPage}" aria-label="前往頁碼"> / ${this.totalPages} 頁 <button class="pagination-jump-btn">跳轉</button></span>`;
+
     const startItem = (this.currentPage - 1) * this.pageSize + 1;
     const endItem = Math.min(this.currentPage * this.pageSize, this.totalVideos);
     paginationHTML += `<div class="pagination-info">顯示第 ${startItem}-${endItem} 筆，共 ${this.totalVideos} 筆影片</div>`;
@@ -2094,10 +2033,37 @@ class VideoManager {
         const btn = e.target.closest('.pagination-btn');
         if (btn && btn.dataset.page) {
           this.goToPage(parseInt(btn.dataset.page, 10));
+          return;
+        }
+        if (e.target.closest('.pagination-jump-btn')) {
+          this._jumpToInputPage(paginationContainer);
+        }
+      });
+      // 在輸入框按 Enter 直接跳轉
+      paginationContainer.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.classList.contains('pagination-jump-input')) {
+          e.preventDefault();
+          this._jumpToInputPage(paginationContainer);
         }
       });
       this.paginationEventBound = true;
     }
+  }
+
+  // 讀取跳轉輸入框的頁碼並前往該頁（含範圍檢查）
+  _jumpToInputPage(container) {
+    const input = container.querySelector('.pagination-jump-input');
+    if (!input) return;
+
+    let page = parseInt(input.value, 10);
+    if (isNaN(page)) {
+      input.value = this.currentPage;
+      return;
+    }
+    // 夾在有效範圍內
+    page = Math.min(Math.max(page, 1), this.totalPages);
+    input.value = page;
+    this.goToPage(page);
   }
 
   showLoading() {

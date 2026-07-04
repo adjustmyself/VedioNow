@@ -484,28 +484,29 @@ body {
     overflow: hidden;
 }
 
-/* 縮圖懸停工具欄 */
-.thumbnail-toolbar {
+/* 縮圖懸停描述覆蓋層 */
+.thumbnail-description {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
-    padding: 0.5rem;
-    display: flex;
-    gap: 0.5rem;
-    justify-content: center;
-    align-items: center;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.82);
+    color: #f3f4f6;
+    padding: 0.75rem;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    text-align: left;
+    white-space: pre-wrap;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     opacity: 0;
-    transform: translateY(10px);
-    transition: all 0.3s ease;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
     z-index: 10;
 }
 
-.video-thumbnail:hover .thumbnail-toolbar,
-.video-list-thumbnail:hover .thumbnail-toolbar {
+.video-thumbnail:hover .thumbnail-description,
+.video-list-thumbnail:hover .thumbnail-description {
     opacity: 1;
-    transform: translateY(0);
+    pointer-events: auto;
 }
 
 /* 擷取秒數選單 */
@@ -580,25 +581,6 @@ body {
 
 .thumb-seconds-confirm:hover {
     background: #5568d3;
-}
-
-.btn-thumbnail-action {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.7rem;
-    background: rgba(255, 255, 255, 0.9);
-    color: #333;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.2s;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-}
-
-.btn-thumbnail-action:hover {
-    background: white;
-    transform: translateY(-1px);
-    box-shadow: 0 3px 6px rgba(0,0,0,0.3);
 }
 
 .thumbnail-video, .thumbnail-img {
@@ -1454,6 +1436,48 @@ select {
     white-space: nowrap;
 }
 
+.pagination-jump {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #374151;
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+
+.pagination-jump-input {
+    width: 3.5rem;
+    padding: 0.5rem 0.4rem;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.pagination-jump-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.pagination-jump-btn {
+    padding: 0.5rem 0.9rem;
+    border: 1px solid #3b82f6;
+    background: #3b82f6;
+    color: white;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.875rem;
+}
+
+.pagination-jump-btn:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
 @media (max-width: 1200px) {
     .videos-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -2083,6 +2107,33 @@ select {
 
 [data-theme="dark"] .pagination-container {
     border-top-color: #353944;
+}
+
+/* 分頁跳轉 */
+[data-theme="dark"] .pagination-jump {
+    color: #cdd0d6;
+}
+
+[data-theme="dark"] .pagination-jump-input {
+    background: #2d313b;
+    color: #cdd0d6;
+    border-color: #3f4452;
+}
+
+[data-theme="dark"] .pagination-jump-input:focus {
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.35);
+}
+
+[data-theme="dark"] .pagination-jump-btn {
+    background: #4f8cff;
+    border-color: #6ea0ff;
+    color: #fff;
+}
+
+[data-theme="dark"] .pagination-jump-btn:hover {
+    background: #3f7bef;
+    border-color: #6ea0ff;
 }
 
 /* 關閉鈕、選單項 hover */
