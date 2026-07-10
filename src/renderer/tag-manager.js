@@ -19,6 +19,7 @@ class TagManager {
     this.editingGroup = null;
     this.editingTag = null;
     this.deleteCallback = null;
+    this.searchQuery = '';
 
     this.initializeElements();
     this.bindEvents();
@@ -30,6 +31,10 @@ class TagManager {
       // 主要容器
       groupsList: document.getElementById('groups-list'),
       tagsByGroup: document.getElementById('tags-by-group'),
+
+      // 標籤搜尋
+      tagSearchInput: document.getElementById('tag-search-input'),
+      tagSearchClear: document.getElementById('tag-search-clear'),
 
       // 按鈕
       addGroupBtn: document.getElementById('add-group-btn'),
@@ -91,6 +96,20 @@ class TagManager {
     this.elements.confirmDelete.addEventListener('click', () => this.executeDelete());
     this.elements.cancelDelete.addEventListener('click', () => this.hideConfirmModal());
     this.elements.confirmModalClose.addEventListener('click', () => this.hideConfirmModal());
+
+    // 標籤搜尋
+    this.elements.tagSearchInput.addEventListener('input', () => {
+      this.searchQuery = this.elements.tagSearchInput.value.trim().toLowerCase();
+      this.elements.tagSearchClear.classList.toggle('hidden', this.searchQuery === '');
+      this.renderTagsByGroup();
+    });
+    this.elements.tagSearchClear.addEventListener('click', () => {
+      this.elements.tagSearchInput.value = '';
+      this.searchQuery = '';
+      this.elements.tagSearchClear.classList.add('hidden');
+      this.renderTagsByGroup();
+      this.elements.tagSearchInput.focus();
+    });
 
     // 顏色預設選擇
     this.bindColorPresets();
@@ -221,9 +240,33 @@ class TagManager {
     }
 
     // 有選取群組時只顯示該群組，否則顯示全部
-    const groupsToShow = this.selectedGroup
+    let groupsToShow = this.selectedGroup
       ? this.tagsByGroup.filter(g => g.id === this.selectedGroup.id)
       : this.tagsByGroup;
+
+    // 搜尋時依標籤名稱／說明過濾，並移除沒有符合標籤的群組
+    if (this.searchQuery) {
+      const q = this.searchQuery;
+      groupsToShow = groupsToShow
+        .map(group => ({
+          ...group,
+          tags: group.tags.filter(tag =>
+            tag.name.toLowerCase().includes(q) ||
+            (tag.description || '').toLowerCase().includes(q)
+          )
+        }))
+        .filter(group => group.tags.length > 0);
+
+      if (groupsToShow.length === 0) {
+        this.elements.tagsByGroup.innerHTML = `
+          <div class="empty-state">
+            <h3>找不到符合的標籤</h3>
+            <p>試試其他關鍵字</p>
+          </div>
+        `;
+        return;
+      }
+    }
 
     this.elements.tagsByGroup.innerHTML = groupsToShow.map(group => `
       <div class="tag-group-section">

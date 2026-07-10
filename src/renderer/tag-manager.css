@@ -143,6 +143,62 @@ body {
     color: #475569;
 }
 
+.tags-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.tags-section-header h2 {
+    margin-bottom: 0;
+}
+
+.tag-search {
+    position: relative;
+    flex: 1;
+    max-width: 320px;
+    min-width: 180px;
+}
+
+.tag-search input {
+    width: 100%;
+    padding: 0.5rem 2rem 0.5rem 0.75rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    background: white;
+    color: #1e293b;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.tag-search input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.tag-search-clear {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.15rem;
+    border-radius: 4px;
+}
+
+.tag-search-clear:hover {
+    color: #475569;
+}
+
 .tags-by-group {
     display: flex;
     flex-direction: column;
@@ -549,6 +605,15 @@ body {
 
 [data-theme="dark"] .groups-section { border-right-color: #353944; }
 [data-theme="dark"] .tags-section { background: #1a1c22; }
+
+[data-theme="dark"] .tag-search input {
+    background: #2d313b;
+    border-color: #3f4452;
+    color: #e4e6eb;
+}
+[data-theme="dark"] .tag-search input::placeholder { color: #6b7280; }
+[data-theme="dark"] .tag-search-clear { color: #6b7280; }
+[data-theme="dark"] .tag-search-clear:hover { color: #e4e6eb; }
 
 /* 標題與文字 */
 [data-theme="dark"] .groups-section h2,

@@ -26,7 +26,13 @@
             </div>
 
             <div class="tags-section">
-                <h2>標籤管理</h2>
+                <div class="tags-section-header">
+                    <h2>標籤管理</h2>
+                    <div class="tag-search">
+                        <input type="search" id="tag-search-input" placeholder="搜尋標籤名稱或說明…" autocomplete="off">
+                        <button id="tag-search-clear" class="tag-search-clear hidden" title="清除搜尋">&times;</button>
+                    </div>
+                </div>
                 <div class="tags-container">
                     <div id="tags-by-group" class="tags-by-group">
                         <!-- 標籤清單會動態載入 -->
