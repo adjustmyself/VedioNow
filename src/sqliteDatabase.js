@@ -220,8 +220,14 @@ class SQLiteDatabase {
 
         if (searchTerm && searchTerm.trim()) {
             const like = `%${this._escapeLike(searchTerm.trim())}%`;
-            where.push(`(v.filename LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')`);
-            params.push(like, like);
+            // 合集子影片（is_master = 0）不會出現在列表，檔名符合時回傳其所屬合集的主影片
+            where.push(`(v.filename LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\'
+                OR v.fingerprint IN (
+                    SELECT c.main_fingerprint FROM video_collections c
+                    JOIN videos child ON child.fingerprint = c.fingerprint
+                    WHERE c.is_main = 0 AND child.filename LIKE ? ESCAPE '\\'
+                ))`);
+            params.push(like, like, like);
         }
 
         if (filters.filename) {

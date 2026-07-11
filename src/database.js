@@ -385,6 +385,22 @@ class MongoDatabase extends DatabaseInterface {
         }
     }
 
+    // 找出「子影片檔名符合」的合集主影片指紋
+    async _findCollectionMainsByChildFilename(searchRegex) {
+        const matchingChildren = await this.db.collection('videos')
+            .find({ is_master: false, filename: searchRegex })
+            .project({ fingerprint: 1 })
+            .toArray();
+        if (matchingChildren.length === 0) return [];
+
+        const childFingerprints = matchingChildren.map(v => v.fingerprint).filter(Boolean);
+        const relations = await this.db.collection('video_collections')
+            .find({ is_main: false, fingerprint: { $in: childFingerprints } })
+            .project({ main_fingerprint: 1 })
+            .toArray();
+        return [...new Set(relations.map(r => r.main_fingerprint).filter(Boolean))];
+    }
+
     async searchVideos(searchTerm, tags = [], filters = {}) {
         // 分頁參數
         const limit = filters.limit || 9;
@@ -399,10 +415,17 @@ class MongoDatabase extends DatabaseInterface {
         if (searchTerm && searchTerm.trim()) {
             // 使用 RegExp 支援部分字串比對與中文搜尋
             // $text 全文索引不支援子字串匹配且與 $lookup 管道不相容
+            const searchRegex = new RegExp(searchTerm, 'i');
             matchStage.$or = [
-                { filename: new RegExp(searchTerm, 'i') },
-                { description: new RegExp(searchTerm, 'i') }
+                { filename: searchRegex },
+                { description: searchRegex }
             ];
+
+            // 合集子影片（is_master = false）不會出現在列表，檔名符合時回傳其所屬合集的主影片
+            const mainFingerprints = await this._findCollectionMainsByChildFilename(searchRegex);
+            if (mainFingerprints.length > 0) {
+                matchStage.$or.push({ fingerprint: { $in: mainFingerprints } });
+            }
         }
 
         if (tags.length > 0) {

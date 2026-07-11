@@ -232,6 +232,24 @@ describe('SQLiteDatabase', () => {
       expect(await db.getVideoCollection('fp-main')).toBeNull();
     });
 
+    test('搜尋子影片檔名可找到合集主影片', async () => {
+      await db.createVideoCollection('fp-main', ['fp-c1', 'fp-c2'], '我的系列', '\\\\nas\\d\\series');
+
+      // ep2 是子影片，搜尋它應回傳主影片 ep1
+      const result = await db.searchVideos('ep2', [], {});
+      expect(result.total).toBe(1);
+      expect(result.videos[0].fingerprint).toBe('fp-main');
+
+      // 主影片同時符合時不重複
+      const all = await db.searchVideos('ep', [], {});
+      expect(all.total).toBe(1);
+      expect(all.videos[0].fingerprint).toBe('fp-main');
+
+      // 不符合的關鍵字仍搜不到
+      const none = await db.searchVideos('不存在', [], {});
+      expect(none.total).toBe(0);
+    });
+
     test('getVideosByFolder 只回傳同層影片', async () => {
       await addVideo({ fingerprint: 'fp-sub', filepath: '\\\\nas\\d\\series\\sub\\ep4.mp4', filename: 'ep4.mp4' });
       const videos = await db.getVideosByFolder('\\\\nas\\d\\series');
