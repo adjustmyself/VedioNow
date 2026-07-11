@@ -1157,6 +1157,13 @@ class VideoManager {
     // 重置 UI 元素
     this.elements.driveFilterSelect.value = '';
 
+    // 重置標籤搜尋關鍵字
+    this.tagSearchQuery = '';
+    if (this.elements.tagFilterSearch) {
+      this.elements.tagFilterSearch.value = '';
+    }
+    this.elements.tagFilterSearchClear?.classList.add('hidden');
+
     // 重置評分篩選 UI
     const allOption = document.querySelector('.rating-option[data-rating="0"]');
     if (allOption) {
