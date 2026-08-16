@@ -26,6 +26,7 @@ class VideoManager {
     // 多面向篩選：當前條件下每個標籤的命中計數；null = 無篩選，使用原始 video_count
     this.filteredTagCounts = null;
     this._tagCountsReqId = 0;
+    this._searchReqId = 0;
     this.selectedRating = 0; // 0 表示全部
     this.selectedDrivePath = ''; // 選中的硬碟路徑
     this.currentSort = 'file_created_at';
@@ -412,6 +413,9 @@ class VideoManager {
   }
 
   async handleSearch(searchTerm) {
+    // 連續輸入時每個字元都觸發查詢，短關鍵字命中多、回應慢，
+    // 可能比後送出的長關鍵字晚回來；用 requestId 丟棄過時回應
+    const reqId = ++this._searchReqId;
     this.showLoading();
     try {
       // 重置到第一頁
@@ -428,6 +432,8 @@ class VideoManager {
       };
 
       const result = await ipcRenderer.invoke('search-videos', trimmedTerm, activeTagsArray, filters);
+
+      if (reqId !== this._searchReqId) return;
 
       if (Array.isArray(result)) {
         // 向下兼容舊格式 - 但這不應該發生在分頁模式下
@@ -453,7 +459,10 @@ class VideoManager {
     } catch (error) {
       console.error('搜尋錯誤:', error);
     } finally {
-      this.hideLoading();
+      // 仍有較新的搜尋在進行時不關閉 loading，由最新的那次負責
+      if (reqId === this._searchReqId) {
+        this.hideLoading();
+      }
     }
   }
 
@@ -1919,6 +1928,8 @@ class VideoManager {
     }
 
     this.currentPage = page;
+    // 與 handleSearch 共用 requestId：換頁中若使用者再輸入搜尋，丟棄本次回應
+    const reqId = ++this._searchReqId;
     this.showLoading();
 
     try {
@@ -1935,6 +1946,8 @@ class VideoManager {
         };
 
         const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
+
+        if (reqId !== this._searchReqId) return;
 
         if (Array.isArray(result)) {
           console.warn('搜尋收到舊格式資料，分頁功能可能異常');
@@ -1954,13 +1967,16 @@ class VideoManager {
       } else {
         // 沒有搜尋條件時，使用一般載入
         await this.loadVideos();
+        if (reqId !== this._searchReqId) return;
         this.renderVideos();
         this.renderPagination();
       }
     } catch (error) {
       console.error('切換頁面錯誤:', error);
     } finally {
-      this.hideLoading();
+      if (reqId === this._searchReqId) {
+        this.hideLoading();
+      }
     }
   }
 
