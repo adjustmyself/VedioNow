@@ -18,6 +18,27 @@ let videoScanner;
 let thumbnailGenerator;
 let config;
 
+// 單一實例鎖：同時只允許一個 VideoNow 執行中。
+// 重複開啟時第二個實例會立刻結束，並把既有視窗叫到前景。
+// （多開會有兩個行程同時寫同一個 SQLite / 監控同一個資料夾，容易造成資料互相覆蓋）
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+
+    // 若有開啟中的子視窗（設定／標籤管理為 modal），焦點交給它，
+    // 否則使用者會看到主視窗被叫出來卻點不動
+    const child = BrowserWindow.getAllWindows()
+      .find(win => !win.isDestroyed() && win.getParentWindow() === mainWindow);
+    if (child) child.focus();
+  });
+}
+
 function createWindow() {
   // 根據平台選擇正確的 icon 格式
   let iconPath;
@@ -47,6 +68,9 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // 沒拿到單一實例鎖：這是重複開啟的實例，不做任何初始化（避免多開兩份資料庫連線）
+  if (!gotSingleInstanceLock) return;
+
   try {
     // 初始化配置（全域單一實例）
     config = new Config();
