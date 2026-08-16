@@ -5,6 +5,7 @@ const DatabaseFactory = require('./database');
 const VideoScanner = require('./videoScanner');
 const ThumbnailGenerator = require('./thumbnailGenerator');
 const Config = require('./config');
+const { getUserDataDir, LEGACY_DATA_DIR } = require('./appPaths');
 
 // Windows：明確設定 AppUserModelID，否則打包後工作列圖示不會套用自訂 icon
 // （需與 package.json build.appId 一致）
@@ -72,6 +73,9 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
 
   try {
+    // 舊版把設定／資料庫／縮圖存在程式目錄，必須先搬到 userData 再初始化
+    await migrateLegacyAppData();
+
     // 初始化配置（全域單一實例）
     config = new Config();
     await config.init();
@@ -374,15 +378,57 @@ ipcMain.handle('create-tag', async (event, tagData) => {
   }
 });
 
+// 一次性遷移：把舊版存在程式目錄 data/ 的使用者資料搬到 userData。
+// 舊路徑在重新 package 時會被專案的 data/ 整個覆蓋，設定（含最近掃描路徑）、
+// SQLite 資料庫與縮圖快取都會跟著消失。
+async function migrateLegacyAppData() {
+  try {
+    const userDataDir = getUserDataDir();
+    // 開發／測試環境兩者同路徑，不需要也不能搬
+    if (path.resolve(userDataDir) === path.resolve(LEGACY_DATA_DIR)) return;
+    if (!await fs.pathExists(LEGACY_DATA_DIR)) return;
+
+    await fs.ensureDir(userDataDir);
+
+    // 目的地已存在就跳過，避免用舊資料蓋掉使用者現有的設定／資料庫
+    // （videonow.db 的 -wal/-shm 必須與主檔一起搬，否則會遺失尚未寫回的交易）
+    for (const name of ['config.json', 'videonow.db', 'videonow.db-wal', 'videonow.db-shm']) {
+      const src = path.join(LEGACY_DATA_DIR, name);
+      const dest = path.join(userDataDir, name);
+      if (await fs.pathExists(src) && !await fs.pathExists(dest)) {
+        await fs.copy(src, dest);
+        console.log(`已將 ${name} 遷移至 userData`);
+      }
+    }
+
+    // 縮圖只是快取，逐檔補齊，已存在的保留
+    const legacyThumbnails = path.join(LEGACY_DATA_DIR, 'thumbnails');
+    if (await fs.pathExists(legacyThumbnails)) {
+      await fs.copy(legacyThumbnails, path.join(userDataDir, 'thumbnails'), {
+        overwrite: false,
+        errorOnExist: false
+      });
+    }
+  } catch (error) {
+    console.warn('舊版 data 目錄遷移失敗:', error);
+  }
+}
+
 // 標籤說明圖片：存放於使用者資料夾（userData），資料庫只存檔名。
 // 舊版曾把圖片複製進程式所在的 ../data 並以絕對路徑入庫，重新打包/搬移程式就會失效。
-const LEGACY_TAG_IMAGES_DIR = path.join(__dirname, '../data/tag-images');
+const LEGACY_TAG_IMAGES_DIR = path.join(LEGACY_DATA_DIR, 'tag-images');
 function getTagImagesDir() {
-  return path.join(app.getPath('userData'), 'tag-images');
+  return path.join(getUserDataDir(), 'tag-images');
 }
 
 // 提供給 renderer 組出圖片的 file:// URL（資料庫只存檔名）
 ipcMain.handle('get-tag-images-dir', () => getTagImagesDir());
+
+// renderer 也會用 ThumbnailGenerator 寫縮圖，但 renderer 取不到 app.getPath；
+// 用同步 IPC 回報 userData 路徑（appPaths 只會問一次並快取）
+ipcMain.on('get-user-data-dir-sync', (event) => {
+  event.returnValue = getUserDataDir();
+});
 
 ipcMain.handle('pick-tag-image', async () => {
   try {

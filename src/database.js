@@ -2,6 +2,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const path = require('path');
 const fs = require('fs-extra');
 const Config = require('./config');
+const { getUserDataDir } = require('./appPaths');
 
 // 抽象資料庫介面
 class DatabaseInterface {
@@ -1391,7 +1392,8 @@ class MongoDatabase extends DatabaseInterface {
 // 資料庫工廠類別
 class DatabaseFactory {
     static getSQLiteDbPath() {
-        return path.join(__dirname, '../data/videonow.db');
+        // 存 userData：舊版放在程式目錄旁，重新 package 會連整個資料庫一起被覆蓋
+        return path.join(getUserDataDir(), 'videonow.db');
     }
 
     static async create() {

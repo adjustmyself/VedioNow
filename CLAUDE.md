@@ -37,8 +37,9 @@ This is an Electron application with a main/renderer process architecture:
 ### Core Components
 
 **Database (`src/database.js`, `src/sqliteDatabase.js`)**
-- Dual backend: SQLite (better-sqlite3, default for new installs, stored at `data/videonow.db`) and MongoDB
-- `DatabaseFactory.create()` picks the backend from `data/config.json` (`database.type`: `sqlite` | `mongodb`)
+- Dual backend: SQLite (better-sqlite3, default for new installs, stored at `<userData>/videonow.db`) and MongoDB
+- `DatabaseFactory.create()` picks the backend from `<userData>/config.json` (`database.type`: `sqlite` | `mongodb`)
+- All writable user data (config, SQLite db, thumbnails, tag images) lives under `app.getPath('userData')` via `src/appPaths.js`; the old in-app `data/` folder is migrated once on startup (`migrateLegacyAppData()` in main.js) because repackaging overwrites anything stored next to the code
 - Both implement the same `DatabaseInterface`; all methods return identical shapes (string ids, paginated `{videos, total, page, pageSize, totalPages}`)
 - `src/mongoToSqliteMigration.js` provides one-shot MongoDB→SQLite data migration (triggered from settings UI)
 - Video identity is a content fingerprint (`src/fileFingerprint.js`): MD5 of size + first/last 64KB, deliberately excluding mtime; when a video's fingerprint changes, `addVideo` cascades the change into tag relations and collections
@@ -80,12 +81,13 @@ src/
 ├── main.js              # Electron main process
 ├── database.js          # MongoDB database operations
 ├── videoScanner.js      # Directory scanning and monitoring
+├── appPaths.js          # userData path resolution (main/renderer/plain node)
 └── renderer/
     ├── index.html       # Main UI
     ├── renderer.js      # Frontend logic (VideoManager class)
     ├── styles.css       # Main styles
     └── tag-manager.*    # Tag management window
-data/                    # Thumbnails and config storage
+data/                    # Legacy storage location, migrated to userData on startup
 dist/                    # Build output directory
 ```
 

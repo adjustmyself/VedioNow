@@ -11,7 +11,7 @@
     "postinstall": "electron-builder install-app-deps",
     "generate-icons": "node scripts/generate-icons.js && node scripts/generate-icns-fallback.js",
     "generate-icns": "node scripts/generate-icons.js --icns",
-    "package":"npx electron-packager . VedioNow --platform=win32 --arch=x64 --out=dist --overwrite --icon=assets/icon.ico"
+    "package":"npx electron-packager . VedioNow --platform=win32 --arch=x64 --out=dist --overwrite --icon=assets/icon.ico --ignore=\"^/data/thumbnails\" --ignore=\"^/dist\" --ignore=\"^/tests\""
   },
   "keywords": [
     "video",

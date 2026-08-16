@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const { getUserDataDir } = require('./appPaths');
 
 // 優先使用打包的 ffmpeg-static，使用者不必自行安裝 FFmpeg；
 // 取不到（極少數平台）時退回 PATH 上的 ffmpeg
@@ -23,7 +24,8 @@ const FFMPEG_PATH = resolveFfmpegPath();
 class ThumbnailGenerator {
   constructor() {
     // 縮圖將儲存在本地快取目錄中，避免網路磁碟權限問題
-    this.thumbnailsDir = path.join(__dirname, '../data/thumbnails');
+    // 放 userData：舊版存在程式目錄，重新 package 後整批縮圖就要重生
+    this.thumbnailsDir = path.join(getUserDataDir(), 'thumbnails');
   }
 
   // 生成檔案路徑的唯一hash值
