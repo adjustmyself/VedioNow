@@ -286,10 +286,21 @@ ipcMain.handle('update-video', async (event, videoId, updates) => {
   }
 });
 
+// 標籤／群組有異動時通知所有視窗，讓主視窗的標籤篩選與標籤選擇器即時同步
+// （標籤管理器是獨立視窗，不廣播的話主視窗要等重開才看得到新標籤）
+function broadcastTagsChanged() {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('tags-changed');
+    }
+  });
+}
+
 // 標籤群組管理 IPC 處理
 ipcMain.handle('create-tag-group', async (event, groupData) => {
   try {
     const groupId = await database.createTagGroup(groupData);
+    broadcastTagsChanged();
     return { success: true, groupId };
   } catch (error) {
     return { success: false, error: error.message };
@@ -310,6 +321,7 @@ ipcMain.handle('update-tag-group', async (event, groupId, updates) => {
     console.log('IPC: 收到更新標籤群組請求:', { groupId, updates });
     const result = await database.updateTagGroup(groupId, updates);
     console.log('IPC: 更新標籤群組結果:', result);
+    broadcastTagsChanged();
     return { success: true, result };
   } catch (error) {
     console.error('IPC: 更新標籤群組失敗:', error);
@@ -320,6 +332,7 @@ ipcMain.handle('update-tag-group', async (event, groupId, updates) => {
 ipcMain.handle('delete-tag-group', async (event, groupId) => {
   try {
     await database.deleteTagGroup(groupId);
+    broadcastTagsChanged();
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -330,6 +343,7 @@ ipcMain.handle('delete-tag-group', async (event, groupId) => {
 ipcMain.handle('create-tag', async (event, tagData) => {
   try {
     const tagId = await database.createTag(tagData);
+    broadcastTagsChanged();
     return { success: true, tagId };
   } catch (error) {
     return { success: false, error: error.message };
@@ -426,6 +440,7 @@ ipcMain.handle('get-drive-paths', async () => {
 ipcMain.handle('update-tag', async (event, tagId, updates) => {
   try {
     await database.updateTag(tagId, updates);
+    broadcastTagsChanged();
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -435,6 +450,7 @@ ipcMain.handle('update-tag', async (event, tagId, updates) => {
 ipcMain.handle('delete-tag', async (event, tagId) => {
   try {
     await database.deleteTag(tagId);
+    broadcastTagsChanged();
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };

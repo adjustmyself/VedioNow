@@ -197,6 +197,12 @@ class VideoManager {
       this.loadData();
     });
 
+    // 標籤／群組在標籤管理視窗有異動：立即同步標籤快取與畫面，
+    // 讓新標籤不必重開主視窗就能選取
+    ipcRenderer.on('tags-changed', async () => {
+      await this.refreshTagsUI();
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target === this.elements.videoModal) {
         this.hideVideoModal();
@@ -385,6 +391,27 @@ class VideoManager {
         });
       }
     });
+  }
+
+  // 重新載入標籤快取並更新所有用到標籤的畫面（篩選列、統計、開啟中的影片彈窗）
+  async refreshTagsUI() {
+    try {
+      await this.loadTags();
+      this.renderTagsFilter();
+      this.updateStats();
+
+      // 影片彈窗開啟中：重建標籤選擇器，讓剛新增的標籤馬上可以點選
+      const modalOpen = this.selectedVideo &&
+        !this.elements.videoModal.classList.contains('hidden');
+      if (modalOpen) {
+        this.renderModalTags();
+        await this.renderTagSelector();
+        // 重建後會清掉搜尋造成的隱藏狀態，依目前關鍵字重新過濾
+        this.applyTagSearchFilter();
+      }
+    } catch (error) {
+      console.error('同步標籤資料錯誤:', error);
+    }
   }
 
   async loadDrivePaths() {
@@ -2101,14 +2128,8 @@ class VideoManager {
 
   async openTagManager() {
     try {
+      // 標籤資料改由 tags-changed 事件即時同步，不需在此輪詢重載
       await ipcRenderer.invoke('open-tag-manager');
-      // 當標籤管理器關閉後，重新載入標籤資料
-      setTimeout(() => {
-        this.loadTags().then(() => {
-          this.renderTagsFilter();
-          this.updateStats();
-        });
-      }, 1000);
     } catch (error) {
       console.error('開啟標籤管理器錯誤:', error);
     }
