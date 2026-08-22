@@ -378,6 +378,29 @@ ipcMain.handle('create-tag', async (event, tagData) => {
   }
 });
 
+// 一次性遷移的完成旗標：放在 userData，之後啟動只要一次 pathExists 就能跳過。
+// （沒有旗標時，每次啟動都要重走 data/ 整棵目錄樹或重讀一次標籤表）
+function migrationFlagPath(name) {
+  return path.join(getUserDataDir(), '.migrated-' + name);
+}
+
+async function isMigrationDone(name) {
+  try {
+    return await fs.pathExists(migrationFlagPath(name));
+  } catch {
+    return false;
+  }
+}
+
+async function markMigrationDone(name) {
+  try {
+    await fs.ensureDir(getUserDataDir());
+    await fs.writeFile(migrationFlagPath(name), new Date().toISOString());
+  } catch (error) {
+    console.warn(`寫入遷移旗標失敗 (${name}):`, error);
+  }
+}
+
 // 一次性遷移：把舊版存在程式目錄 data/ 的使用者資料搬到 userData。
 // 舊路徑在重新 package 時會被專案的 data/ 整個覆蓋，設定（含最近掃描路徑）、
 // SQLite 資料庫與縮圖快取都會跟著消失。
@@ -386,6 +409,7 @@ async function migrateLegacyAppData() {
     const userDataDir = getUserDataDir();
     // 開發／測試環境兩者同路徑，不需要也不能搬
     if (path.resolve(userDataDir) === path.resolve(LEGACY_DATA_DIR)) return;
+    if (await isMigrationDone('app-data')) return;
     if (!await fs.pathExists(LEGACY_DATA_DIR)) return;
 
     await fs.ensureDir(userDataDir);
@@ -409,6 +433,8 @@ async function migrateLegacyAppData() {
         errorOnExist: false
       });
     }
+
+    await markMigrationDone('app-data');
   } catch (error) {
     console.warn('舊版 data 目錄遷移失敗:', error);
   }
@@ -457,6 +483,8 @@ ipcMain.handle('pick-tag-image', async () => {
 // 一次性遷移：把舊版以絕對路徑入庫的標籤圖片搬進 userData，並將資料庫值改為純檔名
 async function migrateTagImages() {
   try {
+    if (await isMigrationDone('tag-images')) return;
+
     const dir = getTagImagesDir();
     const groups = await database.getTagsByGroup();
     for (const group of groups) {
@@ -477,6 +505,8 @@ async function migrateTagImages() {
         await database.updateTag(tag.id, { description_image: filename });
       }
     }
+
+    await markMigrationDone('tag-images');
   } catch (error) {
     console.warn('標籤圖片遷移失敗:', error);
   }

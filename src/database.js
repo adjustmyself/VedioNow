@@ -4,6 +4,9 @@ const fs = require('fs-extra');
 const Config = require('./config');
 const { getUserDataDir } = require('./appPaths');
 
+// app_meta 內記錄「舊標籤系統已遷移」的旗標 id
+const LEGACY_TAG_MIGRATION_KEY = 'legacy_tags_migrated';
+
 // 抽象資料庫介面
 class DatabaseInterface {
     async init() {
@@ -126,24 +129,33 @@ class MongoDatabase extends DatabaseInterface {
         return match ? match[1] : 'videonow';
     }
 
+    // 每次啟動都會呼叫（已存在的索引是 no-op）。
+    // 每個集合合併成一次 createIndexes 指令、集合之間平行送出，
+    // 把原本 12 趟序列化的網路來回壓成 3 趟。
     async createIndexes() {
-        // 為videos集合創建索引
-        await this.db.collection('videos').createIndex({ filepath: 1 }, { unique: true });
-        await this.db.collection('videos').createIndex({ fingerprint: 1 }, { unique: true, sparse: true });
-        await this.db.collection('videos').createIndex({ filename: 1 });
-        await this.db.collection('videos').createIndex({ created_at: -1 });
-        await this.db.collection('videos').createIndex({ is_master: 1 });
-        // 複合索引：支援常見的 is_master + 排序查詢
-        await this.db.collection('videos').createIndex({ is_master: 1, file_created_at: -1 });
-        await this.db.collection('videos').createIndex({ is_master: 1, created_at: -1 });
-
-        // 為tags集合創建索引
-        await this.db.collection('tags').createIndex({ name: 1 }, { unique: true });
-        await this.db.collection('tag_groups').createIndex({ name: 1 }, { unique: true });
-
-        // 為video_tag_relations集合創建索引，加速標籤查詢
-        await this.db.collection('video_tag_relations').createIndex({ fingerprint: 1 }, { unique: true });
-        await this.db.collection('video_tag_relations').createIndex({ tags: 1 });
+        await Promise.all([
+            this.db.collection('videos').createIndexes([
+                { key: { filepath: 1 }, unique: true },
+                { key: { fingerprint: 1 }, unique: true, sparse: true },
+                { key: { filename: 1 } },
+                { key: { created_at: -1 } },
+                { key: { is_master: 1 } },
+                // 複合索引：支援常見的 is_master + 排序查詢
+                { key: { is_master: 1, file_created_at: -1 } },
+                { key: { is_master: 1, created_at: -1 } }
+            ]),
+            this.db.collection('tags').createIndexes([
+                { key: { name: 1 }, unique: true }
+            ]),
+            this.db.collection('tag_groups').createIndexes([
+                { key: { name: 1 }, unique: true }
+            ]),
+            // 為video_tag_relations集合創建索引，加速標籤查詢
+            this.db.collection('video_tag_relations').createIndexes([
+                { key: { fingerprint: 1 }, unique: true },
+                { key: { tags: 1 } }
+            ])
+        ]);
     }
 
     async addVideo(videoData) {
@@ -276,17 +288,19 @@ class MongoDatabase extends DatabaseInterface {
         return { ...video, id: video._id.toString() };
     }
 
-    // 共用的基礎聚合管道：過濾子影片、join 標籤
-    _buildBasePipeline() {
+    // 只看主影片（排除合集子影片）的 $match 條件
+    _masterMatch() {
+        return {
+            $or: [
+                { is_master: { $ne: false } },
+                { is_master: { $exists: false } }
+            ]
+        };
+    }
+
+    // join video_tag_relations 並把 tags 攤平成陣列的階段
+    _tagJoinStages() {
         return [
-            {
-                $match: {
-                    $or: [
-                        { is_master: { $ne: false } },
-                        { is_master: { $exists: false } }
-                    ]
-                }
-            },
             {
                 $lookup: {
                     from: 'video_tag_relations',
@@ -308,13 +322,19 @@ class MongoDatabase extends DatabaseInterface {
         ];
     }
 
+    // 共用的基礎聚合管道：過濾子影片、join 標籤
+    _buildBasePipeline() {
+        return [
+            { $match: this._masterMatch() },
+            ...this._tagJoinStages()
+        ];
+    }
+
     async getVideos(filters = {}) {
         // 分頁參數
         const limit = filters.limit || 9;
         const offset = filters.offset || 0;
         const needCount = filters.count !== false;
-
-        const pipeline = this._buildBasePipeline();
 
         // 第四步：篩選條件
         const matchStage = {};
@@ -333,20 +353,29 @@ class MongoDatabase extends DatabaseInterface {
             const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
         }
-        if (Object.keys(matchStage).length > 0) {
+        // 只有用到 tags 的篩選才需要先 join video_tag_relations。
+        // 沒有 tag 條件時，先排序分頁再 join，$lookup 只跑一頁（例如 6 筆）而不是全部兩萬筆。
+        const needsTagJoinBeforeMatch = matchStage.tags !== undefined;
+
+        let pipeline;
+        if (needsTagJoinBeforeMatch) {
+            pipeline = this._buildBasePipeline();
             pipeline.push({ $match: matchStage });
+            pipeline.push({ $sort: { file_created_at: -1, created_at: -1 } });
+            pipeline.push({ $skip: offset });
+            pipeline.push({ $limit: limit });
+        } else {
+            pipeline = [{ $match: this._masterMatch() }];
+            if (Object.keys(matchStage).length > 0) {
+                pipeline.push({ $match: matchStage });
+            }
+            pipeline.push({ $sort: { file_created_at: -1, created_at: -1 } });
+            pipeline.push({ $skip: offset });
+            pipeline.push({ $limit: limit });
+            pipeline.push(...this._tagJoinStages());
         }
 
-        // 第五步：排序
-        pipeline.push({
-            $sort: { file_created_at: -1, created_at: -1 }
-        });
-
-        // 第六步：分頁
-        pipeline.push({ $skip: offset });
-        pipeline.push({ $limit: limit });
-
-        // 第七步：清理欄位
+        // 最後：清理欄位
         pipeline.push({
             $project: {
                 tag_relation: 0
@@ -363,16 +392,18 @@ class MongoDatabase extends DatabaseInterface {
 
         // 如果需要計算總數，執行額外查詢
         if (needCount) {
-            const countPipeline = this._buildBasePipeline();
-
-            if (Object.keys(matchStage).length > 0) {
+            let total;
+            if (needsTagJoinBeforeMatch) {
+                const countPipeline = this._buildBasePipeline();
                 countPipeline.push({ $match: matchStage });
+                countPipeline.push({ $count: 'total' });
+                const countResult = await this.db.collection('videos').aggregate(countPipeline).toArray();
+                total = countResult.length > 0 ? countResult[0].total : 0;
+            } else {
+                // 不需要標籤資料時直接數，省掉對全部影片做 $lookup 的聚合
+                total = await this.db.collection('videos')
+                    .countDocuments({ ...this._masterMatch(), ...matchStage });
             }
-
-            countPipeline.push({ $count: 'total' });
-
-            const countResult = await this.db.collection('videos').aggregate(countPipeline).toArray();
-            const total = countResult.length > 0 ? countResult[0].total : 0;
 
             return {
                 videos: mappedVideos,
@@ -672,74 +703,64 @@ class MongoDatabase extends DatabaseInterface {
         );
     }
 
+    // 舊版把標籤直接存在 videos 文件的 tags 陣列，新版改用 video_tag_relations 集合。
+    //
+    // 舊實作的條件包含 `rating: { $exists: true }`，而 addVideo 一定會寫入 rating，
+    // 等於每次啟動都撈出「全部影片的完整文件」，再對每一部影片各送一次 updateOne
+    // 把 rating/description 原樣寫回自己（純 no-op，只是順便改掉 updated_at）。
+    // 兩萬部影片 = 兩萬次序列化的網路來回，啟動因此要多等十幾秒。
+    //
+    // 現在只找真正還帶有非空 tags 陣列的舊資料，寫入改用單一 bulkWrite，
+    // 並在 app_meta 記下完成旗標，之後啟動連掃描都省掉。
     async migrateLegacyTags() {
-        console.log('開始遷移舊標籤系統到新系統...');
+        const meta = this.db.collection('app_meta');
+
+        // 旗標存在資料庫（而非本機設定檔），才能跟著資料一起走：
+        // 換一台電腦連同一個 Mongo 不會又跑一次遷移
+        const done = await meta.findOne({ _id: LEGACY_TAG_MIGRATION_KEY });
+        if (done) {
+            return { migrated: 0, metadataMigrated: 0 };
+        }
 
         try {
-            // 查詢所有舊的標籤關聯 (假設 MongoDB 中標籤存儲在 videos 集合的 tags 欄位中)
             const videos = await this.db.collection('videos')
                 .find({
                     fingerprint: { $exists: true, $ne: null },
-                    $or: [
-                        { tags: { $exists: true, $ne: [] } },
-                        { rating: { $exists: true } },
-                        { description: { $exists: true, $ne: '' } }
-                    ]
+                    tags: { $exists: true, $ne: [] }
                 })
+                .project({ fingerprint: 1, tags: 1 })
                 .toArray();
 
-            if (videos.length === 0) {
-                console.log('沒有找到需要遷移的舊標籤數據');
-                return { migrated: 0, metadataMigrated: 0 };
-            }
-
-            console.log(`找到 ${videos.length} 個影片需要遷移`);
-
-            let migratedTags = 0;
-            let migratedMetadata = 0;
-
-            for (const video of videos) {
-                const { fingerprint, tags = [], rating = 0, description = '' } = video;
-
-                try {
-                    // 更新 videos 集合中的 rating 和 description（如果需要）
-                    await this.db.collection('videos').updateOne(
-                        { fingerprint },
-                        {
-                            $set: {
-                                rating: rating || 0,
-                                description: description || '',
-                                updated_at: new Date()
-                            }
-                        }
-                    );
-
-                    // 遷移標籤關聯（使用陣列格式）
-                    if (tags.length > 0) {
-                        await this.db.collection('video_tag_relations').updateOne(
-                            { fingerprint },
-                            {
-                                $set: {
-                                    tags: tags.filter(tag => tag && tag.trim()),
-                                    updated_at: new Date()
-                                },
-                                $setOnInsert: {
-                                    created_at: new Date()
-                                }
-                            },
-                            { upsert: true }
-                        );
+            const now = new Date();
+            const ops = [];
+            for (const { fingerprint, tags } of videos) {
+                const cleaned = (tags || []).filter(tag => tag && tag.trim());
+                if (cleaned.length === 0) continue;
+                ops.push({
+                    updateOne: {
+                        filter: { fingerprint },
+                        update: {
+                            $set: { tags: cleaned, updated_at: now },
+                            $setOnInsert: { created_at: now }
+                        },
+                        upsert: true
                     }
-
-                    migratedTags++;
-                    migratedMetadata++;
-                } catch (error) {
-                    console.warn(`遷移影片失敗 ${fingerprint}:`, error.message);
-                }
+                });
             }
 
-            console.log(`標籤遷移完成 - 遷移了 ${migratedTags} 個影片`);
-            return { migrated: migratedTags, metadataMigrated: migratedMetadata };
+            if (ops.length > 0) {
+                console.log(`開始遷移舊標籤系統到新系統...（${ops.length} 部影片）`);
+                await this.db.collection('video_tag_relations').bulkWrite(ops, { ordered: false });
+                console.log(`標籤遷移完成 - 遷移了 ${ops.length} 個影片`);
+            }
+
+            await meta.updateOne(
+                { _id: LEGACY_TAG_MIGRATION_KEY },
+                { $set: { completed_at: new Date() } },
+                { upsert: true }
+            );
+
+            return { migrated: ops.length, metadataMigrated: ops.length };
 
         } catch (error) {
             console.error('標籤遷移失敗:', error);
