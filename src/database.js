@@ -6,6 +6,8 @@ const { getUserDataDir } = require('./appPaths');
 
 // app_meta 內記錄「舊標籤系統已遷移」的旗標 id
 const LEGACY_TAG_MIGRATION_KEY = 'legacy_tags_migrated';
+// app_meta 內記錄「is_master 欄位已回填」的旗標 id
+const MASTER_FLAG_BACKFILL_KEY = 'master_flag_backfilled';
 
 // 抽象資料庫介面
 class DatabaseInterface {
@@ -121,6 +123,39 @@ class MongoDatabase extends DatabaseInterface {
 
         // 創建索引
         await this.createIndexes();
+
+        // 必須在任何查詢之前完成：_masterMatch() 已改用等值比對，
+        // 欄位沒補齊的話舊影片會整批從列表消失
+        await this._backfillMasterFlag();
+    }
+
+    // is_master 標記「這筆要不要出現在主列表」：合集子影片為 false，其餘（含合集主影片）為 true。
+    //
+    // 這個欄位是後來才加的，而且只寫在 addVideo 的新增路徑 —— 更新路徑的 $set 不含 is_master，
+    // 所以更早入庫的影片重新掃描再多次也補不到，只能靠 $exists:false 當成 true 兼容。
+    // 但 `$or: [{ $ne: false }, { $exists: false }]` 全是否定型條件，無法用單一索引同時滿足
+    // 篩選與排序，列表查詢每次都得把全部影片撈進記憶體重排（翻到後面的頁也不會變快）。
+    //
+    // 補齊欄位後條件才能簡化成等值比對，交給 {is_master, file_created_at, created_at} 複合索引。
+    async _backfillMasterFlag() {
+        const meta = this.db.collection('app_meta');
+        if (await meta.findOne({ _id: MASTER_FLAG_BACKFILL_KEY })) return;
+
+        // 缺欄位者一律視為主影片：子影片是 createVideoCollection 明確寫成 false 的，
+        // 不會落在這個查詢裡
+        const result = await this.db.collection('videos').updateMany(
+            { is_master: { $exists: false } },
+            { $set: { is_master: true } }
+        );
+        if (result.modifiedCount > 0) {
+            console.log(`已回填 ${result.modifiedCount} 筆影片的 is_master 欄位`);
+        }
+
+        await meta.updateOne(
+            { _id: MASTER_FLAG_BACKFILL_KEY },
+            { $set: { completed_at: new Date() } },
+            { upsert: true }
+        );
     }
 
     extractDatabaseName(connectionString) {
@@ -142,7 +177,10 @@ class MongoDatabase extends DatabaseInterface {
                 { key: { is_master: 1 } },
                 // 複合索引：支援常見的 is_master + 排序查詢
                 { key: { is_master: 1, file_created_at: -1 } },
-                { key: { is_master: 1, created_at: -1 } }
+                { key: { is_master: 1, created_at: -1 } },
+                // 列表預設排序（file_created_at, created_at）整段交給索引，
+                // 省掉兩萬筆的記憶體排序，深頁也不會變慢
+                { key: { is_master: 1, file_created_at: -1, created_at: -1 } }
             ]),
             this.db.collection('tags').createIndexes([
                 { key: { name: 1 }, unique: true }
@@ -288,14 +326,11 @@ class MongoDatabase extends DatabaseInterface {
         return { ...video, id: video._id.toString() };
     }
 
-    // 只看主影片（排除合集子影片）的 $match 條件
+    // 只看主影片（排除合集子影片）的 $match 條件。
+    // 等值比對才能配合 {is_master, file_created_at, created_at} 索引直接產生排序結果；
+    // 欄位由 _backfillMasterFlag() 保證在任何查詢前就已補齊。
     _masterMatch() {
-        return {
-            $or: [
-                { is_master: { $ne: false } },
-                { is_master: { $exists: false } }
-            ]
-        };
+        return { is_master: true };
     }
 
     // join video_tag_relations 並把 tags 攤平成陣列的階段
