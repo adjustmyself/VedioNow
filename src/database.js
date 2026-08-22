@@ -8,6 +8,8 @@ const { getUserDataDir } = require('./appPaths');
 const LEGACY_TAG_MIGRATION_KEY = 'legacy_tags_migrated';
 // app_meta 內記錄「is_master 欄位已回填」的旗標 id
 const MASTER_FLAG_BACKFILL_KEY = 'master_flag_backfilled';
+// app_meta 內記錄「標籤 sort_order 欄位已回填」的旗標 id
+const TAG_SORT_ORDER_BACKFILL_KEY = 'tag_sort_order_backfilled';
 
 // 抽象資料庫介面
 class DatabaseInterface {
@@ -87,6 +89,10 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 getTagsByGroup 方法');
     }
 
+    async reorderTags(groupId, orderedTagIds) {
+        throw new Error('子類別必須實作 reorderTags 方法');
+    }
+
     async getAllDrivePaths() {
         throw new Error('子類別必須實作 getAllDrivePaths 方法');
     }
@@ -127,6 +133,7 @@ class MongoDatabase extends DatabaseInterface {
         // 必須在任何查詢之前完成：_masterMatch() 已改用等值比對，
         // 欄位沒補齊的話舊影片會整批從列表消失
         await this._backfillMasterFlag();
+        await this._backfillTagSortOrder();
     }
 
     // is_master 標記「這筆要不要出現在主列表」：合集子影片為 false，其餘（含合集主影片）為 true。
@@ -153,6 +160,42 @@ class MongoDatabase extends DatabaseInterface {
 
         await meta.updateOne(
             { _id: MASTER_FLAG_BACKFILL_KEY },
+            { $set: { completed_at: new Date() } },
+            { upsert: true }
+        );
+    }
+
+    // sort_order 是後來才加的欄位。Mongo 排序時「缺欄位」會排在所有數字之前，
+    // 新舊混用會讓沒排過的標籤全部跳到最前面，所以先補成 0,1,2...。
+    // 順序沿用現有的 _id（約等於建立順序），也就是舊版畫面上看到的順序，避免升級後無故重排
+    async _backfillTagSortOrder() {
+        const meta = this.db.collection('app_meta');
+        if (await meta.findOne({ _id: TAG_SORT_ORDER_BACKFILL_KEY })) return;
+
+        const tags = await this.db.collection('tags').find().toArray();
+        const byGroup = new Map();
+        for (const tag of tags) {
+            const key = tag.group_id ? tag.group_id.toString() : '';
+            if (!byGroup.has(key)) byGroup.set(key, []);
+            byGroup.get(key).push(tag);
+        }
+
+        const ops = [];
+        for (const list of byGroup.values()) {
+            list.sort((a, b) => String(a._id).localeCompare(String(b._id)));
+            list.forEach((tag, index) => {
+                if (tag.sort_order !== index) {
+                    ops.push({ updateOne: { filter: { _id: tag._id }, update: { $set: { sort_order: index } } } });
+                }
+            });
+        }
+        if (ops.length > 0) {
+            await this.db.collection('tags').bulkWrite(ops);
+            console.log(`已回填 ${ops.length} 個標籤的 sort_order 欄位`);
+        }
+
+        await meta.updateOne(
+            { _id: TAG_SORT_ORDER_BACKFILL_KEY },
             { $set: { completed_at: new Date() } },
             { upsert: true }
         );
@@ -991,19 +1034,53 @@ class MongoDatabase extends DatabaseInterface {
         }));
     }
 
+    // 新標籤排到所屬群組末端；若一律給 0，新標籤會全部擠在最前面
+    async _nextTagSortOrder(groupId) {
+        const filter = groupId
+            ? { group_id: groupId }
+            : { $or: [{ group_id: null }, { group_id: { $exists: false } }] };
+        const last = await this.db.collection('tags').find(filter).sort({ sort_order: -1 }).limit(1).next();
+        return last && typeof last.sort_order === 'number' ? last.sort_order + 1 : 0;
+    }
+
     async createTag(tagData) {
         const { name, color, description, description_image, group_id } = tagData;
+        const groupId = group_id ? new ObjectId(group_id) : null;
         const tag = {
             name,
             color: color || '#3b82f6',
             description: description || '',
             description_image: description_image || '',
-            group_id: group_id ? new ObjectId(group_id) : null,
+            group_id: groupId,
+            sort_order: await this._nextTagSortOrder(groupId),
             created_at: new Date()
         };
 
         const result = await this.db.collection('tags').insertOne(tag);
         return result.insertedId.toString();
+    }
+
+    // 群組內重新排序：整組重新編號 0..n-1（與 SQLite 實作一致）
+    async reorderTags(groupId, orderedTagIds) {
+        const filter = groupId
+            ? { group_id: new ObjectId(groupId) }
+            : { $or: [{ group_id: null }, { group_id: { $exists: false } }] };
+        const current = await this.db.collection('tags').find(filter, { projection: { _id: 1 } }).toArray();
+        const valid = new Set(current.map(t => t._id.toString()));
+        const ids = (orderedTagIds || []).map(String).filter(id => valid.has(id));
+        // 必須是整個群組的完整排列，否則沒列到的標籤會留著舊序號而錯位
+        if (new Set(ids).size !== valid.size) {
+            throw new Error('排序清單與群組內的標籤不一致');
+        }
+        if (ids.length === 0) return true;
+
+        await this.db.collection('tags').bulkWrite(ids.map((id, index) => ({
+            updateOne: {
+                filter: { _id: new ObjectId(id) },
+                update: { $set: { sort_order: index, updated_at: new Date() } }
+            }
+        })));
+        return true;
     }
 
     async getTagsByGroup() {
@@ -1013,7 +1090,7 @@ class MongoDatabase extends DatabaseInterface {
         // 直接數 video_tag_relations 會把子影片與孤兒關聯也算進去，導致「總數 > 實際搜到的數量」。
         const [groups, allTags, tagCounts] = await Promise.all([
             this.db.collection('tag_groups').find().sort({ sort_order: 1, name: 1 }).toArray(),
-            this.db.collection('tags').find().toArray(),
+            this.db.collection('tags').find().sort({ sort_order: 1, name: 1 }).toArray(),
             this.db.collection('videos').aggregate([
                 ...this._buildBasePipeline(),
                 { $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } },
@@ -1193,6 +1270,15 @@ class MongoDatabase extends DatabaseInterface {
                 updateDoc.group_id = new ObjectId(updateDoc.group_id);
             } else if (updateDoc.group_id === null) {
                 updateDoc.group_id = null;
+            }
+
+            // 換群組時排到新群組末端，否則會沿用舊群組的序號插進中間
+            if (updates.group_id !== undefined) {
+                const oldGroupId = existing.group_id ? existing.group_id.toString() : null;
+                const newGroupId = updateDoc.group_id ? updateDoc.group_id.toString() : null;
+                if (oldGroupId !== newGroupId) {
+                    updateDoc.sort_order = await this._nextTagSortOrder(updateDoc.group_id);
+                }
             }
 
             const result = await this.db.collection('tags').updateOne(

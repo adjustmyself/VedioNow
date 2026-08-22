@@ -20,6 +20,9 @@ class TagManager {
     this.editingTag = null;
     this.deleteCallback = null;
     this.searchQuery = '';
+    this.draggingItem = null;
+    this.draggingGrid = null;
+    this.dragStartOrder = null;
 
     this.initializeElements();
     this.bindEvents();
@@ -110,6 +113,9 @@ class TagManager {
       this.renderTagsByGroup();
       this.elements.tagSearchInput.focus();
     });
+
+    // 標籤拖曳排序
+    this.bindTagDragEvents();
 
     // 顏色預設選擇
     this.bindColorPresets();
@@ -268,18 +274,22 @@ class TagManager {
       }
     }
 
+    // 搜尋時顯示的是過濾後的子集，拖曳寫回會弄壞沒顯示到的標籤順序，因此停用拖曳
+    const canReorder = !this.searchQuery;
+
     this.elements.tagsByGroup.innerHTML = groupsToShow.map(group => `
       <div class="tag-group-section">
         <div class="tag-group-header">
           <div class="tag-group-color" style="background-color: ${escapeHtml(group.color)};"></div>
           <div class="tag-group-title">${escapeHtml(group.name)}</div>
+          ${canReorder && group.tags.length > 1 ? '<div class="tag-group-hint">拖曳可調整順序</div>' : ''}
           <div class="tag-group-count">${group.tags.length} 個標籤</div>
         </div>
-        <div class="tags-grid">
+        <div class="tags-grid${canReorder ? ' reorderable' : ''}" data-group-id="${escapeHtml(group.id)}">
           ${group.tags.length === 0
             ? '<div class="empty-state"><p>此群組尚無標籤</p></div>'
             : group.tags.map(tag => `
-                <div class="tag-item" data-tag-id="${escapeHtml(tag.id)}"${tag.description ? ` title="${escapeHtml(tag.description)}"` : ''}>
+                <div class="tag-item" data-tag-id="${escapeHtml(tag.id)}" draggable="${canReorder}"${tag.description ? ` title="${escapeHtml(tag.description)}"` : ''}>
                   <div class="tag-header">
                     <div class="tag-name">
                       <div class="tag-color" style="background-color: ${escapeHtml(tag.color)};"></div>
@@ -298,6 +308,99 @@ class TagManager {
         </div>
       </div>
     `).join('');
+  }
+
+  // 群組內拖曳排序：用原生 HTML5 DnD，事件委派在容器上綁一次（卡片每次重繪都會重建）
+  bindTagDragEvents() {
+    const container = this.elements.tagsByGroup;
+
+    container.addEventListener('dragstart', (e) => {
+      const item = e.target.closest('.tag-item');
+      if (!item || item.getAttribute('draggable') !== 'true') return;
+
+      this.draggingItem = item;
+      this.draggingGrid = item.closest('.tags-grid');
+      this.dragStartOrder = this.readGridOrder(this.draggingGrid);
+      e.dataTransfer.effectAllowed = 'move';
+      // 不設 data 有些平台不會觸發 drop
+      e.dataTransfer.setData('text/plain', item.dataset.tagId || '');
+      // 延後加樣式，否則拖曳縮圖會跟著變半透明
+      setTimeout(() => item.classList.add('dragging'), 0);
+    });
+
+    container.addEventListener('dragover', (e) => {
+      if (!this.draggingItem) return;
+      // 只允許同群組內移動；要換群組請用編輯視窗改「所屬群組」
+      const grid = e.target.closest('.tags-grid');
+      if (grid !== this.draggingGrid) return;
+
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+
+      const target = e.target.closest('.tag-item');
+      if (!target || target === this.draggingItem) return;
+
+      // grid 是多欄排列，用目標卡片的水平中線判斷插在它前面還是後面
+      const rect = target.getBoundingClientRect();
+      const insertAfter = e.clientX > rect.left + rect.width / 2;
+      grid.insertBefore(this.draggingItem, insertAfter ? target.nextSibling : target);
+    });
+
+    container.addEventListener('drop', (e) => {
+      if (this.draggingItem) e.preventDefault();
+    });
+
+    // 用 dragend 收尾：拖到容器外放開時不會有 drop，但一定會有 dragend
+    container.addEventListener('dragend', () => {
+      if (!this.draggingItem) return;
+
+      const grid = this.draggingGrid;
+      const previousOrder = this.dragStartOrder || [];
+      this.draggingItem.classList.remove('dragging');
+      this.draggingItem = null;
+      this.draggingGrid = null;
+      this.dragStartOrder = null;
+      if (!grid) return;
+
+      const newOrder = this.readGridOrder(grid);
+      if (newOrder.join('|') === previousOrder.join('|')) return;
+      this.saveTagOrder(grid.dataset.groupId || null, newOrder);
+    });
+  }
+
+  readGridOrder(grid) {
+    if (!grid) return [];
+    return Array.from(grid.querySelectorAll('.tag-item')).map(el => el.dataset.tagId);
+  }
+
+  // 先更新本地資料再寫入資料庫；失敗就整份重載，避免畫面與資料庫不一致
+  async saveTagOrder(groupId, orderedIds) {
+    this.applyLocalTagOrder(groupId, orderedIds);
+
+    try {
+      const result = await ipcRenderer.invoke('reorder-tags', groupId, orderedIds);
+      if (result && result.success === false) {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error('儲存標籤順序失敗:', error);
+      alert('儲存排序失敗，已還原原本的順序');
+      await this.loadData();
+    }
+  }
+
+  // 同步 this.tagsByGroup 的順序，之後任何重繪才不會跳回舊順序
+  applyLocalTagOrder(groupId, orderedIds) {
+    const group = this.tagsByGroup.find(g => (g.id || null) === groupId);
+    if (!group) return;
+
+    const byId = new Map(group.tags.map(tag => [tag.id, tag]));
+    const reordered = orderedIds.map(id => byId.get(id)).filter(Boolean);
+    // 保險：沒出現在清單裡的標籤補在最後，不讓資料憑空消失
+    for (const tag of group.tags) {
+      if (!orderedIds.includes(tag.id)) reordered.push(tag);
+    }
+    group.tags = reordered;
   }
 
   updateTagGroupSelect() {

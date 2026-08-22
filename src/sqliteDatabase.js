@@ -51,6 +51,18 @@ class SQLiteDatabase {
         if (!hasColumn('tags', 'description_image')) {
             this.db.exec("ALTER TABLE tags ADD COLUMN description_image TEXT DEFAULT ''");
         }
+        if (!hasColumn('tags', 'sort_order')) {
+            this.db.exec('ALTER TABLE tags ADD COLUMN sort_order INTEGER DEFAULT 0');
+            // 依「群組內的既有 id 順序」回填 0,1,2...：舊版沒有 ORDER BY，畫面上就是這個順序，
+            // 改用名稱回填會讓升級後的順序無故變動
+            this.db.exec(`
+                UPDATE tags SET sort_order = (
+                    SELECT COUNT(*) FROM tags t2
+                    WHERE IFNULL(t2.group_id, -1) = IFNULL(tags.group_id, -1)
+                      AND t2.id < tags.id
+                )
+            `);
+        }
     }
 
     _createSchema() {
@@ -90,6 +102,7 @@ class SQLiteDatabase {
                 description TEXT DEFAULT '',
                 description_image TEXT DEFAULT '',
                 group_id INTEGER REFERENCES tag_groups(id) ON DELETE SET NULL,
+                sort_order INTEGER DEFAULT 0,
                 created_at TEXT,
                 updated_at TEXT
             );
@@ -531,12 +544,43 @@ class SQLiteDatabase {
         return result.changes > 0;
     }
 
+    // 新標籤排到所屬群組末端；若一律給 0，新標籤會全部擠在最前面
+    _nextTagSortOrder(groupId) {
+        const row = groupId == null
+            ? this.db.prepare('SELECT MAX(sort_order) AS max_order FROM tags WHERE group_id IS NULL').get()
+            : this.db.prepare('SELECT MAX(sort_order) AS max_order FROM tags WHERE group_id = ?').get(groupId);
+        return (row && row.max_order != null ? row.max_order : -1) + 1;
+    }
+
     async createTag(tagData) {
         const { name, color, description, description_image, group_id } = tagData;
+        const groupId = group_id ? Number(group_id) : null;
         const result = this.db.prepare(`
-            INSERT INTO tags (name, color, description, description_image, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?)
-        `).run(name, color || '#3b82f6', description || '', description_image || '', group_id ? Number(group_id) : null, this._now());
+            INSERT INTO tags (name, color, description, description_image, group_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(name, color || '#3b82f6', description || '', description_image || '', groupId, this._nextTagSortOrder(groupId), this._now());
         return String(result.lastInsertRowid);
+    }
+
+    // 群組內重新排序：整組重新編號 0..n-1。標籤數量小，全量重編比維護間隙值單純，
+    // 也不會有多次拖曳後序號用盡的問題。
+    async reorderTags(groupId, orderedTagIds) {
+        const gid = (groupId == null || groupId === '') ? null : Number(groupId);
+        const run = this.db.transaction(() => {
+            const current = gid == null
+                ? this.db.prepare('SELECT id FROM tags WHERE group_id IS NULL').all()
+                : this.db.prepare('SELECT id FROM tags WHERE group_id = ?').all(gid);
+            const valid = new Set(current.map(r => r.id));
+            const ids = (orderedTagIds || []).map(Number).filter(id => valid.has(id));
+            // 必須是整個群組的完整排列，否則沒列到的標籤會留著舊序號而錯位
+            if (new Set(ids).size !== valid.size) {
+                throw new Error('排序清單與群組內的標籤不一致');
+            }
+            const stmt = this.db.prepare('UPDATE tags SET sort_order = ?, updated_at = ? WHERE id = ?');
+            const now = this._now();
+            ids.forEach((id, index) => stmt.run(index, now, id));
+            return true;
+        });
+        return run();
     }
 
     async updateTag(tagId, updates) {
@@ -555,8 +599,14 @@ class SQLiteDatabase {
                 }
             }
             if (updates.group_id !== undefined) {
+                const newGroupId = updates.group_id ? Number(updates.group_id) : null;
                 sets.push('group_id = ?');
-                params.push(updates.group_id ? Number(updates.group_id) : null);
+                params.push(newGroupId);
+                // 換群組時排到新群組末端，否則會沿用舊群組的序號插進中間
+                if (newGroupId !== (tag.group_id == null ? null : tag.group_id)) {
+                    sets.push('sort_order = ?');
+                    params.push(this._nextTagSortOrder(newGroupId));
+                }
             }
             if (sets.length === 0) return false;
             sets.push('updated_at = ?');
@@ -590,7 +640,7 @@ class SQLiteDatabase {
 
     async getTagsByGroup() {
         const groups = this.db.prepare('SELECT * FROM tag_groups ORDER BY sort_order, name').all();
-        const allTags = this.db.prepare('SELECT * FROM tags').all();
+        const allTags = this.db.prepare('SELECT * FROM tags ORDER BY sort_order, name').all();
         // 一次查詢取得所有標籤的影片計數（只算 master、實際存在的影片，與列表篩選一致）
         const countRows = this.db.prepare(`
             SELECT vt.tag_name AS name, COUNT(*) AS count

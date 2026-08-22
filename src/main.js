@@ -547,6 +547,18 @@ ipcMain.handle('update-tag', async (event, tagId, updates) => {
   }
 });
 
+// 群組內拖曳排序：orderedTagIds 必須是該群組標籤的完整排列（groupId 為 null 代表未分類）
+ipcMain.handle('reorder-tags', async (event, groupId, orderedTagIds) => {
+  try {
+    await database.reorderTags(groupId, orderedTagIds);
+    broadcastTagsChanged();
+    return { success: true };
+  } catch (error) {
+    console.error('IPC: 標籤排序失敗:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('delete-tag', async (event, tagId) => {
   try {
     await database.deleteTag(tagId);

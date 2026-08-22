@@ -242,6 +242,11 @@ body {
     border-radius: 12px;
 }
 
+.tag-group-hint {
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
 .tags-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -263,6 +268,23 @@ body {
     border-color: #cbd5e1;
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* 可拖曳排序時的游標與拖曳中樣式（搜尋中不會加 reorderable） */
+.tags-grid.reorderable .tag-item {
+    cursor: grab;
+}
+
+.tags-grid.reorderable .tag-item:active {
+    cursor: grabbing;
+}
+
+.tag-item.dragging {
+    opacity: 0.4;
+    border-style: dashed;
+    /* 拖曳中停用 hover 的位移，否則插入點會抖動 */
+    transform: none;
+    box-shadow: none;
 }
 
 .tag-header {
@@ -640,6 +662,8 @@ body {
     background: #2d313b;
     border-color: #3f4452;
 }
+
+[data-theme="dark"] .tag-group-hint { color: #7c8496; }
 
 [data-theme="dark"] .group-item:hover,
 [data-theme="dark"] .tag-item:hover {

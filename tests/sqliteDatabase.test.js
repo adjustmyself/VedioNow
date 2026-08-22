@@ -187,6 +187,48 @@ describe('SQLiteDatabase', () => {
       expect(result.videos[0].tags).toEqual([]);
     });
 
+    test('新標籤排在群組末端，reorderTags 可重排群組內順序', async () => {
+      const groupId = await db.createTagGroup({ name: '類型' });
+      const a = await db.createTag({ name: 'A', group_id: groupId });
+      const b = await db.createTag({ name: 'B', group_id: groupId });
+      const c = await db.createTag({ name: 'C', group_id: groupId });
+
+      const names = async () => (await db.getTagsByGroup())[0].tags.map(t => t.name);
+      expect(await names()).toEqual(['A', 'B', 'C']);
+
+      await db.reorderTags(groupId, [c, a, b]);
+      expect(await names()).toEqual(['C', 'A', 'B']);
+
+      // 之後新增的標籤仍排在最後
+      await db.createTag({ name: 'D', group_id: groupId });
+      expect(await names()).toEqual(['C', 'A', 'B', 'D']);
+    });
+
+    test('reorderTags 拒絕不完整的排序清單', async () => {
+      const groupId = await db.createTagGroup({ name: '類型' });
+      const a = await db.createTag({ name: 'A', group_id: groupId });
+      await db.createTag({ name: 'B', group_id: groupId });
+
+      await expect(db.reorderTags(groupId, [a])).rejects.toThrow();
+      await expect(db.reorderTags(groupId, [a, a])).rejects.toThrow();
+    });
+
+    test('未分類標籤可排序，換群組時排到新群組末端', async () => {
+      const x = await db.createTag({ name: 'X', group_id: null });
+      const y = await db.createTag({ name: 'Y', group_id: null });
+
+      await db.reorderTags(null, [y, x]);
+      const ungrouped = await db.getTagsByGroup();
+      expect(ungrouped[0].tags.map(t => t.name)).toEqual(['Y', 'X']);
+
+      const groupId = await db.createTagGroup({ name: '類型' });
+      await db.createTag({ name: 'A', group_id: groupId });
+      await db.updateTag(x, { group_id: groupId });
+
+      const byGroup = await db.getTagsByGroup();
+      expect(byGroup[0].tags.map(t => t.name)).toEqual(['A', 'X']);
+    });
+
     test('孤兒關聯清理', async () => {
       await addVideo({ fingerprint: 'fp-1', filepath: 'p1' });
       await db.addVideoTag('fp-1', 'X');
