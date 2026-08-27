@@ -420,6 +420,15 @@ class SQLiteDatabase {
         const fingerprint = video.fingerprint;
         const folderPath = path.dirname(filepath);
 
+        // 先刪除實際檔案，成功後才刪除資料庫記錄
+        // 若檔案刪不掉卻先清掉記錄，之後就無從追查這個殘留檔案
+        try {
+            await fs.unlink(filepath);
+        } catch (fileErr) {
+            console.warn('刪除檔案失敗，保留資料庫記錄:', fileErr);
+            return { recordDeleted: false, fileDeleted: false, error: fileErr.message };
+        }
+
         this.db.prepare('DELETE FROM videos WHERE id = ?').run(Number(videoId));
 
         if (fingerprint) {
@@ -430,37 +439,31 @@ class SQLiteDatabase {
             }
         }
 
+        // 檔案刪除成功後，檢查資料夾是否為空
         let folderDeleted = false;
         let folderDeleteError = null;
 
         try {
-            await fs.unlink(filepath);
+            const filesInFolder = await fs.readdir(folderPath);
+            const visibleFiles = filesInFolder.filter(file =>
+                !file.startsWith('.') &&
+                file !== 'Thumbs.db' &&
+                file !== 'desktop.ini'
+            );
 
-            try {
-                const filesInFolder = await fs.readdir(folderPath);
-                const visibleFiles = filesInFolder.filter(file =>
-                    !file.startsWith('.') &&
-                    file !== 'Thumbs.db' &&
-                    file !== 'desktop.ini'
-                );
-
-                if (visibleFiles.length === 0) {
-                    for (const file of filesInFolder) {
-                        await fs.unlink(path.join(folderPath, file));
-                    }
-                    await fs.rmdir(folderPath);
-                    folderDeleted = true;
+            if (visibleFiles.length === 0) {
+                for (const file of filesInFolder) {
+                    await fs.unlink(path.join(folderPath, file));
                 }
-            } catch (folderErr) {
-                console.warn('檢查或刪除資料夾失敗:', folderErr);
-                folderDeleteError = folderErr.message;
+                await fs.rmdir(folderPath);
+                folderDeleted = true;
             }
-
-            return { recordDeleted: true, fileDeleted: true, folderDeleted, folderDeleteError };
-        } catch (fileErr) {
-            console.warn('刪除檔案失敗:', fileErr);
-            return { recordDeleted: true, fileDeleted: false, error: fileErr.message };
+        } catch (folderErr) {
+            console.warn('檢查或刪除資料夾失敗:', folderErr);
+            folderDeleteError = folderErr.message;
         }
+
+        return { recordDeleted: true, fileDeleted: true, folderDeleted, folderDeleteError };
     }
 
     // 舊制 API（依影片 id 加減標籤）：轉為指紋制操作

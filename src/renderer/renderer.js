@@ -1642,8 +1642,10 @@ class VideoManager {
             message += `\n資料夾刪除失敗：${folderDeleteError}`;
           }
           alert(message);
-        } else if (recordDeleted && !fileDeleted) {
-          alert(`影片記錄已刪除，但檔案刪除失敗：\n${error}`);
+        } else if (!fileDeleted) {
+          // 檔案刪不掉就保留記錄，避免留下無從追查的殘留檔案
+          alert(`檔案刪除失敗，已保留影片記錄：\n${error}\n\n若只想移除記錄，請改用「刪除記錄」。`);
+          return;
         }
 
         this.hideVideoModal();
