@@ -14,10 +14,17 @@ if (process.platform === 'win32') {
 }
 
 let mainWindow;
+let splashWindow;
 let database;
 let videoScanner;
 let thumbnailGenerator;
 let config;
+// 主視窗保底顯示的計時器（渲染端沒回報就緒時用）
+let mainWindowRevealTimer = null;
+// 啟動畫面最後一次的進度，載入完成後補送
+let splashStatus = { text: '正在啟動…', percent: 6 };
+// 目前主題，決定主視窗初始背景色（避免深色模式開窗閃白）
+let appTheme = 'light';
 
 // 單一實例鎖：同時只允許一個 VideoNow 執行中。
 // 重複開啟時第二個實例會立刻結束，並把既有視窗叫到前景。
@@ -27,6 +34,13 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    // 還在啟動階段：把啟動畫面叫到前景，讓使用者知道程式正在開
+    // （此時主視窗可能還沒建立，或建立了但資料還沒載完仍隱藏中）
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+      splashWindow.focus();
+      return;
+    }
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -40,53 +54,169 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-function createWindow() {
-  // 根據平台選擇正確的 icon 格式
-  let iconPath;
+// 根據平台選擇正確的 icon 格式
+function getWindowIconPath() {
   if (process.platform === 'win32') {
-    iconPath = path.join(__dirname, '../assets/icon.ico');
+    return path.join(__dirname, '../assets/icon.ico');
   } else if (process.platform === 'darwin') {
-    iconPath = path.join(__dirname, '../assets/icon.icns');
-  } else {
-    iconPath = path.join(__dirname, '../assets/icon.png');
+    return path.join(__dirname, '../assets/icon.icns');
   }
+  return path.join(__dirname, '../assets/icon.png');
+}
 
+// 啟動畫面：whenReady 後第一件事就是開它。
+// 資料庫連線與各項遷移可能要數秒，以前這段時間畫面上什麼都沒有，
+// 使用者會以為沒點到而重複點擊圖示。
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 420,
+    height: 300,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    center: true,
+    show: false,
+    backgroundColor: '#00000000',
+    icon: getWindowIconPath(),
+    title: 'VideoNow',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  splashWindow.loadFile('src/renderer/splash.html');
+
+  // 載入完成前送出的進度會遺失，這裡補送最後狀態
+  splashWindow.webContents.once('did-finish-load', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.webContents.send('splash-status', splashStatus);
+    }
+  });
+
+  splashWindow.once('ready-to-show', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+    }
+  });
+}
+
+function setSplashStatus(text, percent) {
+  splashStatus = { text, percent };
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('splash-status', splashStatus);
+  }
+}
+
+// 關閉啟動畫面：預設先淡出再銷毀（主視窗已顯示，不會有空窗期）
+// immediate = true 用於錯誤情境，必須馬上讓出畫面
+function closeSplashWindow(immediate = false) {
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    splashWindow = null;
+    return;
+  }
+  const win = splashWindow;
+  splashWindow = null;
+  if (immediate) {
+    win.destroy();
+    return;
+  }
+  win.webContents.send('splash-finish');
+  setTimeout(() => {
+    if (!win.isDestroyed()) win.destroy();
+  }, 260);
+}
+
+// 主視窗建好後是隱藏的，等渲染端資料載入完成才顯示，避免看到半成品畫面
+function revealMainWindow() {
+  if (mainWindowRevealTimer) {
+    clearTimeout(mainWindowRevealTimer);
+    mainWindowRevealTimer = null;
+  }
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) {
+    closeSplashWindow();
+    return;
+  }
+  setSplashStatus('準備就緒', 100);
+  mainWindow.show();
+  mainWindow.focus();
+  closeSplashWindow();
+}
+
+// 保底：渲染端若因錯誤沒送出 renderer-ready，也不能讓使用者卡在啟動畫面
+function armRevealFallback(delay) {
+  if (mainWindowRevealTimer) clearTimeout(mainWindowRevealTimer);
+  mainWindowRevealTimer = setTimeout(revealMainWindow, delay);
+}
+
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    show: false,
+    backgroundColor: appTheme === 'dark' ? '#16181d' : '#f5f5f5',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     },
-    icon: iconPath
+    icon: getWindowIconPath()
   });
 
   mainWindow.loadFile('src/renderer/index.html');
+
+  mainWindow.once('ready-to-show', () => armRevealFallback(6000));
+  mainWindow.webContents.on('did-fail-load', () => revealMainWindow());
+  armRevealFallback(15000);
 
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();
   }
 }
 
+// 渲染端首批資料載入完成，可以把主視窗換上來了
+ipcMain.on('renderer-ready', (event) => {
+  if (mainWindow && !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents) {
+    revealMainWindow();
+  }
+});
+
 app.whenReady().then(async () => {
   // 沒拿到單一實例鎖：這是重複開啟的實例，不做任何初始化（避免多開兩份資料庫連線）
   if (!gotSingleInstanceLock) return;
 
+  // 先開啟啟動畫面，讓點擊圖示後立刻有回應（後面的初始化可能要數秒）
+  createSplashWindow();
+
   try {
     // 舊版把設定／資料庫／縮圖存在程式目錄，必須先搬到 userData 再初始化
+    setSplashStatus('整理應用程式資料…', 14);
     await migrateLegacyAppData();
 
     // 初始化配置（全域單一實例）
+    setSplashStatus('讀取設定…', 28);
     config = new Config();
     await config.init();
+    try {
+      const savedConfig = await config.load();
+      appTheme = savedConfig?.app?.theme === 'dark' ? 'dark' : 'light';
+    } catch (e) {
+      // 讀不到就用預設淺色
+    }
 
     // 使用工廠創建資料庫實例
+    setSplashStatus('連線資料庫…', 45);
     database = await DatabaseFactory.create();
 
     videoScanner = new VideoScanner(database);
     thumbnailGenerator = new ThumbnailGenerator();
 
     // 執行舊標籤系統遷移 (如果需要)
+    setSplashStatus('檢查標籤資料…', 65);
     try {
       const legacyMigrationResult = await database.migrateLegacyTags();
       if (legacyMigrationResult.migrated > 0 || legacyMigrationResult.metadataMigrated > 0) {
@@ -99,6 +229,7 @@ app.whenReady().then(async () => {
     // 標籤圖片改存 userData（資料庫只存檔名），遷移舊有絕對路徑資料
     await migrateTagImages();
 
+    setSplashStatus('載入影片清單…', 82);
     createWindow();
 
     app.on('activate', () => {
@@ -108,6 +239,8 @@ app.whenReady().then(async () => {
     });
   } catch (error) {
     console.error('應用程式初始化失敗:', error);
+    // 啟動畫面是 alwaysOnTop，不先關掉會蓋住錯誤對話框
+    closeSplashWindow(true);
     dialog.showErrorBox('初始化錯誤', `應用程式初始化失敗: ${error.message}`);
     app.quit();
   }

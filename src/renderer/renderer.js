@@ -57,9 +57,15 @@ class VideoManager {
   }
 
   async init() {
-    // 先讀設定（單頁顯示數量）再載入影片，避免用預設值多算一次分頁
-    await this.loadAppConfig();
-    await this.loadData();
+    try {
+      // 先讀設定（單頁顯示數量）再載入影片，避免用預設值多算一次分頁
+      await this.loadAppConfig();
+      await this.loadData();
+    } finally {
+      // 通知主行程首批資料已就緒：關掉啟動畫面、顯示主視窗
+      // （失敗時也要送，否則使用者會卡在啟動畫面）
+      ipcRenderer.send('renderer-ready');
+    }
   }
 
   // 從設定檔讀取應用程式設定（目前：單頁顯示數量）
