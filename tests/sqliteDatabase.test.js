@@ -241,6 +241,88 @@ describe('SQLiteDatabase', () => {
     });
   });
 
+  describe('重複檔案（內容相同的複本）', () => {
+    const A = 'C:\\v\\a.mp4';
+    const B = 'C:\\v\\copy\\a.mp4';
+    let onDisk;
+
+    beforeEach(() => {
+      onDisk = new Set([A, B]);
+      db._fileExists = (p) => onDisk.has(p);
+    });
+
+    const refs = async () => (await db.getAllVideoRefs()).sort((x, y) => x.filepath.localeCompare(y.filepath));
+
+    test('兩份都已有記錄：回傳 duplicate，兩筆都保留、各自指紋不變', async () => {
+      await addVideo({ filepath: A, fingerprint: 'fp-x' });
+      await addVideo({ filepath: B, fingerprint: 'fp-old' });
+      await db.addVideoTag('fp-old', '複本標籤');
+
+      const result = await addVideo({ filepath: B, fingerprint: 'fp-x', file_mtime: 123 });
+      expect(result).toBe('duplicate');
+
+      const all = await refs();
+      expect(all.map(v => [v.filepath, v.fingerprint])).toEqual([[A, 'fp-x'], [B, 'fp-old']]);
+      expect(all[1].file_mtime).toBe(123); // 記下修改時間，下次掃描可略過
+      const bVideo = await db.getVideoByPath(B);
+      expect((await db.searchVideos('', ['複本標籤'], {})).videos.map(v => v.filepath)).toEqual([B]);
+      expect(bVideo).not.toBeNull();
+    });
+
+    test('新發現的複本：另建一筆，原檔記錄不被搬走', async () => {
+      await addVideo({ filepath: A, fingerprint: 'fp-x' });
+      await db.addVideoTag('fp-x', '原檔標籤');
+
+      const result = await addVideo({ filepath: B, fingerprint: 'fp-x' });
+      expect(result).toBe('duplicate');
+
+      const all = await refs();
+      expect(all.map(v => v.filepath)).toEqual([A, B]);
+      expect(all[0].fingerprint).toBe('fp-x');
+      expect(all[1].fingerprint).toMatch(/^fp-x:dup:[0-9a-f]{12}$/);
+      // 原檔標籤仍在原檔上
+      expect((await db.searchVideos('', ['原檔標籤'], {})).videos.map(v => v.filepath)).toEqual([A]);
+
+      // 重掃複本：路徑已有記錄 → 仍是 duplicate，不會再多建
+      expect(await addVideo({ filepath: B, fingerprint: 'fp-x' })).toBe('duplicate');
+      expect((await refs()).length).toBe(2);
+    });
+
+    test('原檔已不存在：視為搬移，標籤跟著走', async () => {
+      await addVideo({ filepath: A, fingerprint: 'fp-x' });
+      await db.addVideoTag('fp-x', '動作');
+      onDisk.delete(A);
+
+      expect(await addVideo({ filepath: B, fingerprint: 'fp-x' })).toBe('updated');
+      const all = await refs();
+      expect(all.map(v => [v.filepath, v.fingerprint])).toEqual([[B, 'fp-x']]);
+      expect((await db.getVideos({})).videos[0].tags).toEqual(['動作']);
+    });
+
+    test('搬到已有記錄的路徑：合併該記錄的標籤後取代它，不會撞唯一鍵', async () => {
+      await addVideo({ filepath: A, fingerprint: 'fp-x' });
+      await addVideo({ filepath: B, fingerprint: 'fp-old' });
+      await db.addVideoTag('fp-x', '動作');
+      await db.addVideoTag('fp-old', '科幻');
+      onDisk.delete(A);
+
+      expect(await addVideo({ filepath: B, fingerprint: 'fp-x' })).toBe('updated');
+      const all = await refs();
+      expect(all.map(v => [v.filepath, v.fingerprint])).toEqual([[B, 'fp-x']]);
+      expect((await db.getVideos({})).videos[0].tags.sort()).toEqual(['動作', '科幻']);
+      expect(await db.countOrphanTagRelations()).toBe(0);
+    });
+
+    test('批次寫入分開統計重複檔案', async () => {
+      await addVideo({ filepath: A, fingerprint: 'fp-x' });
+      const result = await db.addVideosBatch([
+        { filename: 'a.mp4', filepath: B, filesize: 1, fingerprint: 'fp-x' },
+        { filename: 'n.mp4', filepath: 'C:\\v\\n.mp4', filesize: 1, fingerprint: 'fp-n' }
+      ]);
+      expect(result).toEqual({ added: 1, updated: 0, duplicates: 1 });
+    });
+  });
+
   describe('排序', () => {
     beforeEach(async () => {
       await addVideo({ fingerprint: 'a', filename: 'b.mp4', filepath: 'C:\\v\\b.mp4', filesize: 300, file_created_at: new Date('2026-01-02') });

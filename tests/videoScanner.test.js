@@ -94,6 +94,23 @@ describe('VideoScanner', () => {
     expect(remaining).toEqual(['keep.mp4', 'other.mp4']);
   });
 
+  test('內容相同的複本各自保留一筆，重掃不報錯且可略過', async () => {
+    writeFile('a/movie.mp4', 'same-content');
+    writeFile('b/movie-copy.mp4', 'same-content');
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const first = await scanner.scanFolder(root);
+    expect(first).toMatchObject({ found: 2, added: 1, duplicates: 1 });
+
+    const second = await scanner.scanFolder(root);
+    expect(second).toMatchObject({ found: 2, added: 0, updated: 0, duplicates: 0, unchanged: 2 });
+
+    const all = await db.getAllVideoRefs();
+    expect(all).toHaveLength(2);
+    expect(new Set(all.map(v => v.fingerprint)).size).toBe(2);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
   test('_isInScanScope 判斷', () => {
     const base = process.platform === 'win32' ? 'D:\\Videos' : '/d/Videos';
     const sep = path.sep;

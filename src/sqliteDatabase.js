@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs-extra');
+const FileFingerprint = require('./fileFingerprint');
 
 // SQLite 資料庫實作（better-sqlite3，行程內、零安裝依賴）
 //
@@ -197,11 +198,15 @@ class SQLiteDatabase {
         const CHUNK = 500;
         let added = 0;
         let updated = 0;
+        let duplicates = 0;
         const runChunk = this.db.transaction((chunk) => {
             for (const video of chunk) {
                 try {
-                    if (this._addVideoSync(video) === 'updated') {
+                    const result = this._addVideoSync(video);
+                    if (result === 'updated') {
                         updated++;
+                    } else if (result === 'duplicate') {
+                        duplicates++;
                     } else {
                         added++;
                     }
@@ -216,7 +221,7 @@ class SQLiteDatabase {
             if (onProgress) onProgress(Math.min(i + CHUNK, videos.length));
             await new Promise(resolve => setImmediate(resolve));
         }
-        return { added, updated };
+        return { added, updated, duplicates };
     }
 
     _addVideoSync(videoData) {
@@ -225,17 +230,39 @@ class SQLiteDatabase {
         const fileCreatedAtIso = file_created_at ? new Date(file_created_at).toISOString() : null;
 
         {
-            let existing = null;
-            if (fingerprint) {
-                existing = this._stmt('SELECT * FROM videos WHERE fingerprint = ?').get(fingerprint);
-                if (existing && existing.filepath !== filepath) {
-                    console.log(`檔案移動檢測: ${existing.filepath} -> ${filepath}`);
+            const byFp = fingerprint ? this._stmt('SELECT * FROM videos WHERE fingerprint = ?').get(fingerprint) : null;
+            const byPath = this._stmt('SELECT * FROM videos WHERE filepath = ?').get(filepath);
+
+            // 同指紋的記錄在別的路徑：原檔還在 = 這是複本；原檔不見了 = 檔案被搬移
+            if (byFp && byFp.filepath !== filepath) {
+                if (this._fileExists(byFp.filepath)) {
+                    if (byPath) {
+                        // 複本已有自己的記錄：只更新檔案資訊，保留它原本的指紋（連同標籤）
+                        this._stmt(`
+                            UPDATE videos SET filename = ?, filesize = ?, file_created_at = ?, file_mtime = ?, updated_at = ?
+                            WHERE id = ?
+                        `).run(filename, filesize || 0, fileCreatedAtIso, fileMtime, this._now(), byPath.id);
+                        return 'duplicate';
+                    }
+                    // 新發現的複本：另建一筆，指紋加上路徑雜湊避免與原檔衝突
+                    this._insertVideoSync({
+                        ...videoData,
+                        fingerprint: FileFingerprint.duplicateFingerprint(fingerprint, filepath)
+                    });
+                    return 'duplicate';
+                }
+
+                console.log(`檔案移動檢測: ${byFp.filepath} -> ${filepath}`);
+                if (byPath) {
+                    // 搬到一個已有記錄的路徑：把該記錄的標籤/合集併入，再刪除它，避免路徑唯一鍵衝突
+                    if (byPath.fingerprint) {
+                        this._migrateFingerprintReferencesSync(byPath.fingerprint, fingerprint);
+                    }
+                    this._stmt('DELETE FROM videos WHERE id = ?').run(byPath.id);
                 }
             }
-            if (!existing) {
-                existing = this._stmt('SELECT * FROM videos WHERE filepath = ?').get(filepath);
-            }
 
+            const existing = byFp || byPath;
             if (existing) {
                 // 指紋改變時（檔案內容變動或指紋演算法升級），先把標籤關聯與合集記錄
                 // 一併搬到新指紋，否則會留下孤兒關聯、標籤直接消失
@@ -254,16 +281,27 @@ class SQLiteDatabase {
                 return 'updated';
             }
 
-            const result = this._stmt(`
-                INSERT INTO videos (filename, filepath, filesize, duration, description, rating,
-                    fingerprint, is_master, file_created_at, file_mtime, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?)
-            `).run(
-                filename, filepath, filesize || 0, duration || 0, description || '',
-                fingerprint, fileCreatedAtIso, fileMtime, this._now(), this._now()
-            );
-            return String(result.lastInsertRowid);
+            return this._insertVideoSync(videoData);
         }
+    }
+
+    _insertVideoSync(videoData) {
+        const { filename, filepath, filesize, duration, description, fingerprint, file_created_at } = videoData;
+        const result = this._stmt(`
+            INSERT INTO videos (filename, filepath, filesize, duration, description, rating,
+                fingerprint, is_master, file_created_at, file_mtime, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?)
+        `).run(
+            filename, filepath, filesize || 0, duration || 0, description || '',
+            fingerprint, file_created_at ? new Date(file_created_at).toISOString() : null,
+            videoData.file_mtime ?? null, this._now(), this._now()
+        );
+        return String(result.lastInsertRowid);
+    }
+
+    // 判斷檔案是否存在（同步；只在「同指紋出現在不同路徑」時呼叫，測試可替換）
+    _fileExists(filepath) {
+        return fs.existsSync(filepath);
     }
 
     // 指紋變更時，把舊指紋的標籤關聯與合集記錄搬到新指紋（同步版，於 transaction 內呼叫）

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const Config = require('./config');
 const { getUserDataDir } = require('./appPaths');
+const FileFingerprint = require('./fileFingerprint');
 
 // app_meta 內記錄「舊標籤系統已遷移」的旗標 id
 const LEGACY_TAG_MIGRATION_KEY = 'legacy_tags_migrated';
@@ -232,23 +233,48 @@ class MongoDatabase extends DatabaseInterface {
         const file_mtime = videoData.file_mtime ?? null;
 
         try {
-            let existingVideo = null;
+            const videos = this.db.collection('videos');
+            const byFp = fingerprint ? await videos.findOne({ fingerprint }) : null;
+            const byPath = await videos.findOne({ filepath });
 
-            // 第一步：優先使用指紋查找，如果沒有指紋則用路徑查找
-            if (fingerprint) {
-                existingVideo = await this.db.collection('videos').findOne({ fingerprint });
+            // 同指紋的記錄在別的路徑：原檔還在 = 這是複本；原檔不見了 = 檔案被搬移
+            if (byFp && byFp.filepath !== filepath) {
+                if (await fs.pathExists(byFp.filepath)) {
+                    if (byPath) {
+                        // 複本已有自己的記錄：只更新檔案資訊，保留它原本的指紋（連同標籤）
+                        await videos.updateOne(
+                            { _id: byPath._id },
+                            {
+                                $set: {
+                                    filename,
+                                    filesize: filesize || 0,
+                                    file_created_at: file_created_at || null,
+                                    file_mtime,
+                                    updated_at: new Date()
+                                }
+                            }
+                        );
+                        return 'duplicate';
+                    }
+                    // 新發現的複本：另建一筆，指紋加上路徑雜湊避免與原檔衝突
+                    await this._insertVideo({
+                        ...videoData,
+                        fingerprint: FileFingerprint.duplicateFingerprint(fingerprint, filepath)
+                    });
+                    return 'duplicate';
+                }
 
-                // 如果用指紋找到了，但路徑不同，記錄檔案移動
-                if (existingVideo && existingVideo.filepath !== filepath) {
-                    console.log(`檔案移動檢測: ${existingVideo.filepath} -> ${filepath}`);
+                console.log(`檔案移動檢測: ${byFp.filepath} -> ${filepath}`);
+                if (byPath) {
+                    // 搬到一個已有記錄的路徑：把該記錄的標籤/合集併入，再刪除它，避免路徑唯一鍵衝突
+                    if (byPath.fingerprint) {
+                        await this._migrateFingerprintReferences(byPath.fingerprint, fingerprint);
+                    }
+                    await videos.deleteOne({ _id: byPath._id });
                 }
             }
 
-            // 第二步：如果指紋沒找到，用路徑查找
-            if (!existingVideo) {
-                existingVideo = await this.db.collection('videos').findOne({ filepath });
-            }
-
+            const existingVideo = byFp || byPath;
             if (existingVideo) {
                 // 指紋改變時（檔案內容變動或指紋演算法升級），先把標籤關聯與合集記錄
                 // 一併搬到新指紋，否則會留下孤兒關聯、標籤直接消失
@@ -273,31 +299,34 @@ class MongoDatabase extends DatabaseInterface {
                     }
                 );
                 return 'updated';
-            } else {
-                // 新檔案，插入新記錄
-                const video = {
-                    filename,
-                    filepath,
-                    filesize: filesize || 0,
-                    duration: duration || 0,
-                    description: description || '',
-                    rating: 0,
-                    tags: [],
-                    fingerprint,
-                    is_master: true,  // 預設為主影片
-                    file_created_at: file_created_at || null,
-                    file_mtime,
-                    created_at: new Date(),
-                    updated_at: new Date()
-                };
-
-                const result = await this.db.collection('videos').insertOne(video);
-                console.log(`添加新影片: ${filename}`);
-                return result.insertedId.toString();
             }
+            return await this._insertVideo(videoData);
         } catch (error) {
             throw error;
         }
+    }
+
+    async _insertVideo(videoData) {
+        const { filename, filepath, filesize, duration, description, fingerprint, file_created_at } = videoData;
+        const video = {
+            filename,
+            filepath,
+            filesize: filesize || 0,
+            duration: duration || 0,
+            description: description || '',
+            rating: 0,
+            tags: [],
+            fingerprint,
+            is_master: true,  // 預設為主影片
+            file_created_at: file_created_at || null,
+            file_mtime: videoData.file_mtime ?? null,
+            created_at: new Date(),
+            updated_at: new Date()
+        };
+
+        const result = await this.db.collection('videos').insertOne(video);
+        console.log(`添加新影片: ${filename}`);
+        return result.insertedId.toString();
     }
 
     // 指紋變更時，把舊指紋的標籤關聯與合集記錄搬到新指紋

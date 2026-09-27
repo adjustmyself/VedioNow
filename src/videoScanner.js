@@ -121,7 +121,7 @@ class VideoScanner {
     }, true);
 
     // 3. 寫入資料庫
-    const { added: addedCount, updated: updatedCount } = await this._saveVideos(videos, (processed, video) => {
+    const { added: addedCount, updated: updatedCount, duplicates: duplicateCount } = await this._saveVideos(videos, (processed, video) => {
       progress({
         phase: 'processing',
         message: `正在處理影片... (${processed}/${videos.length})`,
@@ -142,11 +142,12 @@ class VideoScanner {
       this.watchFolder(folderPath, recursive);
     }
 
-    console.log(`掃描完成 - 找到: ${filePaths.length}, 新增: ${addedCount}, 更新: ${updatedCount}, 未變更: ${unchangedCount}, 清理: ${cleanupCount}`);
+    console.log(`掃描完成 - 找到: ${filePaths.length}, 新增: ${addedCount}, 更新: ${updatedCount}, 重複檔案: ${duplicateCount}, 未變更: ${unchangedCount}, 清理: ${cleanupCount}`);
     return {
       found: filePaths.length,
       added: addedCount,
       updated: updatedCount,
+      duplicates: duplicateCount,
       unchanged: unchangedCount,
       cleaned: cleanupCount
     };
@@ -219,20 +220,34 @@ class VideoScanner {
   async _saveVideos(videos, onProgress) {
     let added = 0;
     let updated = 0;
+    let duplicates = 0;
 
     if (typeof this.database.addVideosBatch === 'function') {
       const result = await this.database.addVideosBatch(videos, (processed) => {
         onProgress(processed, videos[processed - 1]);
       });
-      return { added: result.added, updated: result.updated };
+      return { added: result.added, updated: result.updated, duplicates: result.duplicates || 0 };
     }
 
     let processed = 0;
     await this._runWithConcurrency(videos, FILE_CONCURRENCY, async (video) => {
       try {
-        const result = await this.database.addVideo(video);
+        let result;
+        try {
+          result = await this.database.addVideo(video);
+        } catch (error) {
+          // 並行寫入時，內容相同的兩份複本可能同時被當成新檔插入而撞到唯一鍵（Mongo 11000）；
+          // 重試一次時另一份已寫入，就會正確判斷為複本
+          if (error && error.code === 11000) {
+            result = await this.database.addVideo(video);
+          } else {
+            throw error;
+          }
+        }
         if (result === 'updated') {
           updated++;
+        } else if (result === 'duplicate') {
+          duplicates++;
         } else {
           added++;
         }
@@ -243,7 +258,7 @@ class VideoScanner {
         onProgress(processed, video);
       }
     });
-    return { added, updated };
+    return { added, updated, duplicates };
   }
 
   async _runWithConcurrency(items, limit, worker) {

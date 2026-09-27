@@ -93,4 +93,14 @@ class FileFingerprint {
   }
 }
 
+/**
+ * 重複檔案（內容相同、存在於不同路徑的複本）用的指紋。
+ * 指紋在資料庫是唯一鍵，複本不能沿用原檔的指紋，改用「原指紋 + 路徑雜湊」，
+ * 讓每份複本都有自己的記錄（標籤、評分各自獨立），且同一路徑每次算出來都一樣。
+ */
+FileFingerprint.duplicateFingerprint = (fingerprint, filepath) => {
+  const pathHash = crypto.createHash('md5').update(String(filepath).toLowerCase()).digest('hex').slice(0, 12);
+  return `${fingerprint}:dup:${pathHash}`;
+};
+
 module.exports = FileFingerprint;
