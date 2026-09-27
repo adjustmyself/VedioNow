@@ -62,13 +62,13 @@ async function migrateMongoToSqlite(mongoConnectionString, sqliteDbPath) {
         const videos = await mongoDb.collection('videos').find().toArray();
         const insertVideo = db.prepare(`
             INSERT INTO videos (filename, filepath, filesize, duration, description, rating,
-                fingerprint, is_master, file_created_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fingerprint, is_master, file_created_at, file_mtime, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(filepath) DO UPDATE SET
                 filename = excluded.filename, filesize = excluded.filesize,
                 description = excluded.description, rating = excluded.rating,
                 fingerprint = excluded.fingerprint, is_master = excluded.is_master,
-                file_created_at = excluded.file_created_at
+                file_created_at = excluded.file_created_at, file_mtime = excluded.file_mtime
         `);
         const insertVideos = db.transaction((items) => {
             for (const v of items) {
@@ -77,7 +77,7 @@ async function migrateMongoToSqlite(mongoConnectionString, sqliteDbPath) {
                         v.filename, v.filepath, v.filesize || 0, v.duration || 0,
                         v.description || '', v.rating || 0,
                         v.fingerprint || null, v.is_master === false ? 0 : 1,
-                        toIso(v.file_created_at), toIso(v.created_at), toIso(v.updated_at)
+                        toIso(v.file_created_at), v.file_mtime ?? null, toIso(v.created_at), toIso(v.updated_at)
                     );
                     counts.videos++;
                 } catch (e) {

@@ -14,6 +14,18 @@ class SQLiteDatabase {
     constructor(dbPath) {
         this.dbPath = dbPath;
         this.db = null;
+        this._stmtCache = new Map();
+    }
+
+    // 取得（並快取）prepared statement。動態 SQL（IN 清單長度不同）也會進快取，超過上限就整批清掉
+    _stmt(sql) {
+        let stmt = this._stmtCache.get(sql);
+        if (!stmt) {
+            if (this._stmtCache.size >= 300) this._stmtCache.clear();
+            stmt = this.db.prepare(sql);
+            this._stmtCache.set(sql, stmt);
+        }
+        return stmt;
     }
 
     async init() {
@@ -27,13 +39,19 @@ class SQLiteDatabase {
         this.db.pragma('foreign_keys = ON');
 
         // 提供 REGEXP 給硬碟路徑等需要正則的查詢（不分大小寫）
+        let lastPattern = null;
+        let lastRegex = null;
         this.db.function('regexp', { deterministic: true }, (pattern, value) => {
             if (value == null || pattern == null) return 0;
-            try {
-                return new RegExp(pattern, 'i').test(value) ? 1 : 0;
-            } catch {
-                return 0;
+            if (pattern !== lastPattern) {
+                lastPattern = pattern;
+                try {
+                    lastRegex = new RegExp(pattern, 'i');
+                } catch {
+                    lastRegex = null;
+                }
             }
+            return lastRegex && lastRegex.test(value) ? 1 : 0;
         });
 
         this._createSchema();
@@ -43,7 +61,16 @@ class SQLiteDatabase {
     // 為既有資料庫補上後來新增的欄位（CREATE TABLE IF NOT EXISTS 不會改動既有表）
     _migrateSchema() {
         const hasColumn = (table, column) =>
-            this.db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
+            this._stmt(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
+
+        if (!hasColumn('videos', 'file_mtime')) {
+            // 重新掃描時用「大小 + 修改時間」判斷檔案沒變、略過指紋計算
+            this.db.exec('ALTER TABLE videos ADD COLUMN file_mtime INTEGER');
+        }
+        this.db.exec(`
+            DROP INDEX IF EXISTS idx_videos_master_filecreated;
+            CREATE INDEX IF NOT EXISTS idx_videos_master_filecreated_v2 ON videos(is_master, file_created_at DESC, created_at DESC);
+        `);
 
         if (!hasColumn('tags', 'description')) {
             this.db.exec("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
@@ -78,12 +105,13 @@ class SQLiteDatabase {
                 fingerprint TEXT UNIQUE,
                 is_master INTEGER DEFAULT 1,
                 file_created_at TEXT,
+                file_mtime INTEGER,
                 created_at TEXT,
                 updated_at TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_videos_filename ON videos(filename);
             CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_videos_master_filecreated ON videos(is_master, file_created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_videos_master_filecreated_v2 ON videos(is_master, file_created_at DESC, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS tag_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,19 +189,51 @@ class SQLiteDatabase {
     }
 
     async addVideo(videoData) {
+        return this.db.transaction(() => this._addVideoSync(videoData))();
+    }
+
+    // 批次寫入（掃描用）：每 500 筆一個 transaction，批次之間讓出事件迴圈，避免主程序長時間卡住
+    async addVideosBatch(videos, onProgress = null) {
+        const CHUNK = 500;
+        let added = 0;
+        let updated = 0;
+        const runChunk = this.db.transaction((chunk) => {
+            for (const video of chunk) {
+                try {
+                    if (this._addVideoSync(video) === 'updated') {
+                        updated++;
+                    } else {
+                        added++;
+                    }
+                } catch (error) {
+                    console.error(`添加影片失敗: ${video.filepath}`, error);
+                }
+            }
+        });
+
+        for (let i = 0; i < videos.length; i += CHUNK) {
+            runChunk(videos.slice(i, i + CHUNK));
+            if (onProgress) onProgress(Math.min(i + CHUNK, videos.length));
+            await new Promise(resolve => setImmediate(resolve));
+        }
+        return { added, updated };
+    }
+
+    _addVideoSync(videoData) {
         const { filename, filepath, filesize, duration, description, fingerprint, file_created_at } = videoData;
+        const fileMtime = videoData.file_mtime ?? null;
         const fileCreatedAtIso = file_created_at ? new Date(file_created_at).toISOString() : null;
 
-        const run = this.db.transaction(() => {
+        {
             let existing = null;
             if (fingerprint) {
-                existing = this.db.prepare('SELECT * FROM videos WHERE fingerprint = ?').get(fingerprint);
+                existing = this._stmt('SELECT * FROM videos WHERE fingerprint = ?').get(fingerprint);
                 if (existing && existing.filepath !== filepath) {
                     console.log(`檔案移動檢測: ${existing.filepath} -> ${filepath}`);
                 }
             }
             if (!existing) {
-                existing = this.db.prepare('SELECT * FROM videos WHERE filepath = ?').get(filepath);
+                existing = this._stmt('SELECT * FROM videos WHERE filepath = ?').get(filepath);
             }
 
             if (existing) {
@@ -183,44 +243,42 @@ class SQLiteDatabase {
                     this._migrateFingerprintReferencesSync(existing.fingerprint, fingerprint);
                 }
 
-                this.db.prepare(`
+                this._stmt(`
                     UPDATE videos SET filename = ?, filepath = ?, filesize = ?, duration = ?,
-                        fingerprint = ?, file_created_at = ?, updated_at = ?
+                        fingerprint = ?, file_created_at = ?, file_mtime = ?, updated_at = ?
                     WHERE id = ?
                 `).run(
                     filename, filepath, filesize || 0, duration || 0,
-                    fingerprint, fileCreatedAtIso, this._now(), existing.id
+                    fingerprint, fileCreatedAtIso, fileMtime, this._now(), existing.id
                 );
                 return 'updated';
             }
 
-            const result = this.db.prepare(`
+            const result = this._stmt(`
                 INSERT INTO videos (filename, filepath, filesize, duration, description, rating,
-                    fingerprint, is_master, file_created_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?)
+                    fingerprint, is_master, file_created_at, file_mtime, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?)
             `).run(
                 filename, filepath, filesize || 0, duration || 0, description || '',
-                fingerprint, fileCreatedAtIso, this._now(), this._now()
+                fingerprint, fileCreatedAtIso, fileMtime, this._now(), this._now()
             );
             return String(result.lastInsertRowid);
-        });
-
-        return run();
+        }
     }
 
     // 指紋變更時，把舊指紋的標籤關聯與合集記錄搬到新指紋（同步版，於 transaction 內呼叫）
     _migrateFingerprintReferencesSync(oldFingerprint, newFingerprint) {
         // 標籤關聯：INSERT OR IGNORE 進新指紋（自動合併重複），再刪掉舊的
-        this.db.prepare(`
+        this._stmt(`
             INSERT OR IGNORE INTO video_tags (fingerprint, tag_name, created_at)
             SELECT ?, tag_name, created_at FROM video_tags WHERE fingerprint = ?
         `).run(newFingerprint, oldFingerprint);
-        this.db.prepare('DELETE FROM video_tags WHERE fingerprint = ?').run(oldFingerprint);
+        this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(oldFingerprint);
 
         // 合集記錄
-        this.db.prepare('UPDATE video_collections SET fingerprint = ?, updated_at = ? WHERE fingerprint = ?')
+        this._stmt('UPDATE video_collections SET fingerprint = ?, updated_at = ? WHERE fingerprint = ?')
             .run(newFingerprint, this._now(), oldFingerprint);
-        this.db.prepare('UPDATE video_collections SET main_fingerprint = ?, updated_at = ? WHERE main_fingerprint = ?')
+        this._stmt('UPDATE video_collections SET main_fingerprint = ?, updated_at = ? WHERE main_fingerprint = ?')
             .run(newFingerprint, this._now(), oldFingerprint);
 
         console.log(`指紋變更，已遷移關聯資料: ${oldFingerprint} -> ${newFingerprint}`);
@@ -228,7 +286,7 @@ class SQLiteDatabase {
 
     // 組合篩選條件（getVideos / searchVideos / getTagCountsForFilter 共用）
     _buildFilterClauses(searchTerm, tags, filters) {
-        const where = ['v.is_master != 0'];
+        const where = ['v.is_master = 1'];
         const params = [];
 
         if (searchTerm && searchTerm.trim()) {
@@ -303,7 +361,7 @@ class SQLiteDatabase {
 
         const { whereSql, params } = this._buildFilterClauses(searchTerm, tags, filters);
 
-        const rows = this.db.prepare(`
+        const rows = this._stmt(`
             SELECT v.*, (
                 SELECT json_group_array(tag_name) FROM video_tags vt WHERE vt.fingerprint = v.fingerprint
             ) AS tags_json
@@ -316,7 +374,7 @@ class SQLiteDatabase {
         const videos = rows.map(row => this._mapVideo(row));
 
         if (needCount) {
-            const { total } = this.db.prepare(`SELECT COUNT(*) AS total FROM videos v WHERE ${whereSql}`).get(...params);
+            const { total } = this._stmt(`SELECT COUNT(*) AS total FROM videos v WHERE ${whereSql}`).get(...params);
             return {
                 videos,
                 total,
@@ -339,7 +397,7 @@ class SQLiteDatabase {
     // 多面向篩選用：依目前篩選條件回傳每個標籤的影片計數 { tagName: count }
     async getTagCountsForFilter(searchTerm, tags = [], filters = {}) {
         const { whereSql, params } = this._buildFilterClauses(searchTerm, tags, filters);
-        const rows = this.db.prepare(`
+        const rows = this._stmt(`
             SELECT vt.tag_name AS name, COUNT(*) AS count
             FROM videos v
             JOIN video_tags vt ON vt.fingerprint = v.fingerprint
@@ -353,7 +411,7 @@ class SQLiteDatabase {
     }
 
     async countOrphanTagRelations() {
-        const { total } = this.db.prepare(`
+        const { total } = this._stmt(`
             SELECT COUNT(DISTINCT fingerprint) AS total FROM video_tags
             WHERE fingerprint NOT IN (SELECT fingerprint FROM videos WHERE fingerprint IS NOT NULL)
         `).get();
@@ -361,7 +419,7 @@ class SQLiteDatabase {
     }
 
     async cleanupOrphanTagRelations() {
-        const result = this.db.prepare(`
+        const result = this._stmt(`
             DELETE FROM video_tags
             WHERE fingerprint NOT IN (SELECT fingerprint FROM videos WHERE fingerprint IS NOT NULL)
         `).run();
@@ -385,35 +443,35 @@ class SQLiteDatabase {
         sets.push('updated_at = ?');
         params.push(this._now(), Number(videoId));
 
-        this.db.prepare(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+        this._stmt(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`).run(...params);
     }
 
     async setVideoMetadata(fingerprint, metadata) {
         const { rating = 0, description = '' } = metadata;
-        this.db.prepare('UPDATE videos SET rating = ?, description = ?, updated_at = ? WHERE fingerprint = ?')
+        this._stmt('UPDATE videos SET rating = ?, description = ?, updated_at = ? WHERE fingerprint = ?')
             .run(rating, description, this._now(), fingerprint);
     }
 
     async addVideoTag(fingerprint, tagName) {
-        const video = this.db.prepare('SELECT id FROM videos WHERE fingerprint = ?').get(fingerprint);
+        const video = this._stmt('SELECT id FROM videos WHERE fingerprint = ?').get(fingerprint);
         if (!video) {
             throw new Error(`找不到指紋為 ${fingerprint} 的影片`);
         }
-        this.db.prepare('INSERT OR IGNORE INTO video_tags (fingerprint, tag_name, created_at) VALUES (?, ?, ?)')
+        this._stmt('INSERT OR IGNORE INTO video_tags (fingerprint, tag_name, created_at) VALUES (?, ?, ?)')
             .run(fingerprint, tagName, this._now());
     }
 
     async removeVideoTag(fingerprint, tagName) {
-        const video = this.db.prepare('SELECT id FROM videos WHERE fingerprint = ?').get(fingerprint);
+        const video = this._stmt('SELECT id FROM videos WHERE fingerprint = ?').get(fingerprint);
         if (!video) {
             throw new Error(`找不到指紋為 ${fingerprint} 的影片`);
         }
-        this.db.prepare('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?').run(fingerprint, tagName);
+        this._stmt('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?').run(fingerprint, tagName);
     }
 
     async deleteVideoMetadata(fingerprint) {
-        this.db.prepare('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
-        this.db.prepare('UPDATE videos SET rating = 0, description = \'\', updated_at = ? WHERE fingerprint = ?')
+        this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
+        this._stmt('UPDATE videos SET rating = 0, description = \'\', updated_at = ? WHERE fingerprint = ?')
             .run(this._now(), fingerprint);
     }
 
@@ -423,34 +481,34 @@ class SQLiteDatabase {
     }
 
     async deleteVideo(videoId) {
-        this.db.prepare('DELETE FROM videos WHERE id = ?').run(Number(videoId));
+        this._stmt('DELETE FROM videos WHERE id = ?').run(Number(videoId));
     }
 
     // 刪除影片記錄及其標籤、合集關聯（單一 transaction）。
     // 若刪的是合集主影片，子影片恢復為一般影片，避免它們永遠被隱藏
     _deleteVideoRecordSync(id, fingerprint) {
         const run = this.db.transaction(() => {
-            this.db.prepare('DELETE FROM videos WHERE id = ?').run(id);
+            this._stmt('DELETE FROM videos WHERE id = ?').run(id);
             if (!fingerprint) return;
 
-            this.db.prepare('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
+            this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
 
-            const children = this.db.prepare(
+            const children = this._stmt(
                 'SELECT fingerprint FROM video_collections WHERE main_fingerprint = ? AND is_main = 0'
             ).all(fingerprint).map(r => r.fingerprint);
             if (children.length > 0) {
                 const placeholders = children.map(() => '?').join(',');
-                this.db.prepare(`UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint IN (${placeholders})`)
+                this._stmt(`UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint IN (${placeholders})`)
                     .run(this._now(), ...children);
             }
-            this.db.prepare('DELETE FROM video_collections WHERE fingerprint = ? OR main_fingerprint = ?')
+            this._stmt('DELETE FROM video_collections WHERE fingerprint = ? OR main_fingerprint = ?')
                 .run(fingerprint, fingerprint);
         });
         run();
     }
 
     async deleteVideoWithFile(videoId) {
-        const video = this.db.prepare('SELECT * FROM videos WHERE id = ?').get(Number(videoId));
+        const video = this._stmt('SELECT * FROM videos WHERE id = ?').get(Number(videoId));
         if (!video) {
             throw new Error('找不到指定的影片');
         }
@@ -499,30 +557,30 @@ class SQLiteDatabase {
 
     // 舊制 API（依影片 id 加減標籤）：轉為指紋制操作
     async addTag(videoId, tagName) {
-        this.db.prepare(`
+        this._stmt(`
             INSERT INTO tags (name, color, group_id, created_at)
             VALUES (?, '#3b82f6', NULL, ?)
             ON CONFLICT(name) DO NOTHING
         `).run(tagName, this._now());
 
-        const video = this.db.prepare('SELECT fingerprint FROM videos WHERE id = ?').get(Number(videoId));
+        const video = this._stmt('SELECT fingerprint FROM videos WHERE id = ?').get(Number(videoId));
         if (video && video.fingerprint) {
             await this.addVideoTag(video.fingerprint, tagName);
         }
     }
 
     async removeTag(videoId, tagName) {
-        const video = this.db.prepare('SELECT fingerprint FROM videos WHERE id = ?').get(Number(videoId));
+        const video = this._stmt('SELECT fingerprint FROM videos WHERE id = ?').get(Number(videoId));
         if (video && video.fingerprint) {
             await this.removeVideoTag(video.fingerprint, tagName);
         }
     }
 
     async getAllTags() {
-        const rows = this.db.prepare(`
+        const rows = this._stmt(`
             SELECT t.*, (
                 SELECT COUNT(*) FROM video_tags vt
-                JOIN videos v ON v.fingerprint = vt.fingerprint AND v.is_master != 0
+                JOIN videos v ON v.fingerprint = vt.fingerprint AND v.is_master = 1
                 WHERE vt.tag_name = t.name
             ) AS video_count
             FROM tags t
@@ -533,7 +591,7 @@ class SQLiteDatabase {
 
     async createTagGroup(groupData) {
         const { name, color, description, sort_order } = groupData;
-        const result = this.db.prepare(`
+        const result = this._stmt(`
             INSERT INTO tag_groups (name, color, description, sort_order, created_at)
             VALUES (?, ?, ?, ?, ?)
         `).run(name, color || '#6366f1', description || '', sort_order || 0, this._now());
@@ -541,7 +599,7 @@ class SQLiteDatabase {
     }
 
     async getAllTagGroups() {
-        const rows = this.db.prepare(`
+        const rows = this._stmt(`
             SELECT g.*, (SELECT COUNT(*) FROM tags t WHERE t.group_id = g.id) AS tag_count
             FROM tag_groups g
             ORDER BY g.sort_order, g.name
@@ -551,9 +609,9 @@ class SQLiteDatabase {
 
     async deleteTagGroup(groupId) {
         // 群組內的標籤移到未分類，而不是連帶刪除
-        this.db.prepare('UPDATE tags SET group_id = NULL, updated_at = ? WHERE group_id = ?')
+        this._stmt('UPDATE tags SET group_id = NULL, updated_at = ? WHERE group_id = ?')
             .run(this._now(), Number(groupId));
-        const result = this.db.prepare('DELETE FROM tag_groups WHERE id = ?').run(Number(groupId));
+        const result = this._stmt('DELETE FROM tag_groups WHERE id = ?').run(Number(groupId));
         if (result.changes === 0) {
             throw new Error('標籤群組不存在');
         }
@@ -574,22 +632,22 @@ class SQLiteDatabase {
         sets.push('updated_at = ?');
         params.push(this._now(), Number(groupId));
 
-        const result = this.db.prepare(`UPDATE tag_groups SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+        const result = this._stmt(`UPDATE tag_groups SET ${sets.join(', ')} WHERE id = ?`).run(...params);
         return result.changes > 0;
     }
 
     // 新標籤排到所屬群組末端；若一律給 0，新標籤會全部擠在最前面
     _nextTagSortOrder(groupId) {
         const row = groupId == null
-            ? this.db.prepare('SELECT MAX(sort_order) AS max_order FROM tags WHERE group_id IS NULL').get()
-            : this.db.prepare('SELECT MAX(sort_order) AS max_order FROM tags WHERE group_id = ?').get(groupId);
+            ? this._stmt('SELECT MAX(sort_order) AS max_order FROM tags WHERE group_id IS NULL').get()
+            : this._stmt('SELECT MAX(sort_order) AS max_order FROM tags WHERE group_id = ?').get(groupId);
         return (row && row.max_order != null ? row.max_order : -1) + 1;
     }
 
     async createTag(tagData) {
         const { name, color, description, description_image, group_id } = tagData;
         const groupId = group_id ? Number(group_id) : null;
-        const result = this.db.prepare(`
+        const result = this._stmt(`
             INSERT INTO tags (name, color, description, description_image, group_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
         `).run(name, color || '#3b82f6', description || '', description_image || '', groupId, this._nextTagSortOrder(groupId), this._now());
         return String(result.lastInsertRowid);
@@ -601,15 +659,15 @@ class SQLiteDatabase {
         const gid = (groupId == null || groupId === '') ? null : Number(groupId);
         const run = this.db.transaction(() => {
             const current = gid == null
-                ? this.db.prepare('SELECT id FROM tags WHERE group_id IS NULL').all()
-                : this.db.prepare('SELECT id FROM tags WHERE group_id = ?').all(gid);
+                ? this._stmt('SELECT id FROM tags WHERE group_id IS NULL').all()
+                : this._stmt('SELECT id FROM tags WHERE group_id = ?').all(gid);
             const valid = new Set(current.map(r => r.id));
             const ids = (orderedTagIds || []).map(Number).filter(id => valid.has(id));
             // 必須是整個群組的完整排列，否則沒列到的標籤會留著舊序號而錯位
             if (new Set(ids).size !== valid.size) {
                 throw new Error('排序清單與群組內的標籤不一致');
             }
-            const stmt = this.db.prepare('UPDATE tags SET sort_order = ?, updated_at = ? WHERE id = ?');
+            const stmt = this._stmt('UPDATE tags SET sort_order = ?, updated_at = ? WHERE id = ?');
             const now = this._now();
             ids.forEach((id, index) => stmt.run(index, now, id));
             return true;
@@ -620,7 +678,7 @@ class SQLiteDatabase {
     async updateTag(tagId, updates) {
         // 改名時要同步 video_tags 的關聯（關聯以名稱存放）
         const run = this.db.transaction(() => {
-            const tag = this.db.prepare('SELECT * FROM tags WHERE id = ?').get(Number(tagId));
+            const tag = this._stmt('SELECT * FROM tags WHERE id = ?').get(Number(tagId));
             if (!tag) return false;
 
             const allowed = ['name', 'color', 'description', 'description_image'];
@@ -646,12 +704,12 @@ class SQLiteDatabase {
             sets.push('updated_at = ?');
             params.push(this._now(), Number(tagId));
 
-            const result = this.db.prepare(`UPDATE tags SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+            const result = this._stmt(`UPDATE tags SET ${sets.join(', ')} WHERE id = ?`).run(...params);
 
             if (updates.name && updates.name !== tag.name) {
-                this.db.prepare('UPDATE OR IGNORE video_tags SET tag_name = ? WHERE tag_name = ?')
+                this._stmt('UPDATE OR IGNORE video_tags SET tag_name = ? WHERE tag_name = ?')
                     .run(updates.name, tag.name);
-                this.db.prepare('DELETE FROM video_tags WHERE tag_name = ?').run(tag.name);
+                this._stmt('DELETE FROM video_tags WHERE tag_name = ?').run(tag.name);
             }
             return result.changes > 0;
         });
@@ -660,26 +718,26 @@ class SQLiteDatabase {
 
     async deleteTag(tagId) {
         const run = this.db.transaction(() => {
-            const tag = this.db.prepare('SELECT * FROM tags WHERE id = ?').get(Number(tagId));
+            const tag = this._stmt('SELECT * FROM tags WHERE id = ?').get(Number(tagId));
             if (!tag) {
                 throw new Error('標籤不存在');
             }
             // 從所有影片移除此標籤的關聯
-            this.db.prepare('DELETE FROM video_tags WHERE tag_name = ?').run(tag.name);
-            this.db.prepare('DELETE FROM tags WHERE id = ?').run(Number(tagId));
+            this._stmt('DELETE FROM video_tags WHERE tag_name = ?').run(tag.name);
+            this._stmt('DELETE FROM tags WHERE id = ?').run(Number(tagId));
             return true;
         });
         return run();
     }
 
     async getTagsByGroup() {
-        const groups = this.db.prepare('SELECT * FROM tag_groups ORDER BY sort_order, name').all();
-        const allTags = this.db.prepare('SELECT * FROM tags ORDER BY sort_order, name').all();
+        const groups = this._stmt('SELECT * FROM tag_groups ORDER BY sort_order, name').all();
+        const allTags = this._stmt('SELECT * FROM tags ORDER BY sort_order, name').all();
         // 一次查詢取得所有標籤的影片計數（只算 master、實際存在的影片，與列表篩選一致）
-        const countRows = this.db.prepare(`
+        const countRows = this._stmt(`
             SELECT vt.tag_name AS name, COUNT(*) AS count
             FROM video_tags vt
-            JOIN videos v ON v.fingerprint = vt.fingerprint AND v.is_master != 0
+            JOIN videos v ON v.fingerprint = vt.fingerprint AND v.is_master = 1
             GROUP BY vt.tag_name
         `).all();
         const countMap = new Map(countRows.map(r => [r.name, r.count]));
@@ -717,7 +775,7 @@ class SQLiteDatabase {
 
     async getAllDrivePaths() {
         try {
-            const rows = this.db.prepare('SELECT filepath FROM videos').all();
+            const rows = this._stmt('SELECT filepath FROM videos').all();
             // 提取 UNC 路徑第二層（\\server\share\... 的 share 名稱），與 Mongo 實作一致
             const counts = new Map();
             for (const { filepath } of rows) {
@@ -737,16 +795,26 @@ class SQLiteDatabase {
     }
 
     async getAllVideoRefs() {
-        const rows = this.db.prepare('SELECT id, filepath, fingerprint FROM videos').all();
+        const rows = this._stmt('SELECT id, filepath, fingerprint, filesize, file_mtime FROM videos').all();
         return rows.map(r => ({
             id: String(r.id),
             filepath: r.filepath,
-            fingerprint: r.fingerprint || null
+            fingerprint: r.fingerprint || null,
+            filesize: r.filesize,
+            file_mtime: r.file_mtime
         }));
     }
 
+    // 批次刪除影片記錄（缺檔清理用）
+    async deleteVideosByIds(ids) {
+        const del = this._stmt('DELETE FROM videos WHERE id = ?');
+        this.db.transaction(() => {
+            for (const id of ids) del.run(Number(id));
+        })();
+    }
+
     async getVideoByPath(filepath) {
-        const row = this.db.prepare('SELECT * FROM videos WHERE filepath = ?').get(filepath);
+        const row = this._stmt('SELECT * FROM videos WHERE filepath = ?').get(filepath);
         return row ? this._mapVideo(row) : null;
     }
 
@@ -757,7 +825,9 @@ class SQLiteDatabase {
         const normalizedPath = folderPath.replace(/\//g, '\\').replace(/\\+$/, '');
         const prefixLower = normalizedPath.toLowerCase();
 
-        const rows = this.db.prepare('SELECT * FROM videos').all();
+        const rows = this._stmt(
+            "SELECT * FROM videos WHERE replace(filepath, '/', '\\') LIKE ? ESCAPE '\\'"
+        ).all(this._escapeLike(normalizedPath + '\\') + '%');
         const matched = rows.filter(row => {
             const p = row.filepath.replace(/\//g, '\\');
             const lower = p.toLowerCase();
@@ -771,7 +841,7 @@ class SQLiteDatabase {
 
     async createVideoCollection(mainVideoFingerprint, childVideoFingerprints, collectionName, folderPath) {
         const run = this.db.transaction(() => {
-            const insert = this.db.prepare(`
+            const insert = this._stmt(`
                 INSERT INTO video_collections (fingerprint, is_main, main_fingerprint, collection_name, folder_path, sort_order, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `);
@@ -783,10 +853,10 @@ class SQLiteDatabase {
 
             const placeholders = childVideoFingerprints.map(() => '?').join(',');
             if (childVideoFingerprints.length > 0) {
-                this.db.prepare(`UPDATE videos SET is_master = 0, updated_at = ? WHERE fingerprint IN (${placeholders})`)
+                this._stmt(`UPDATE videos SET is_master = 0, updated_at = ? WHERE fingerprint IN (${placeholders})`)
                     .run(this._now(), ...childVideoFingerprints);
             }
-            this.db.prepare('UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint = ?')
+            this._stmt('UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint = ?')
                 .run(this._now(), mainVideoFingerprint);
 
             return childVideoFingerprints.length + 1;
@@ -800,25 +870,25 @@ class SQLiteDatabase {
 
     async removeVideoCollection(mainVideoFingerprint) {
         const run = this.db.transaction(() => {
-            const childRecords = this.db.prepare(
+            const childRecords = this._stmt(
                 'SELECT fingerprint FROM video_collections WHERE main_fingerprint = ? AND is_main = 0'
             ).all(mainVideoFingerprint);
             const childFingerprints = childRecords.map(r => r.fingerprint);
 
-            const collectionResult = this.db.prepare(`
+            const collectionResult = this._stmt(`
                 DELETE FROM video_collections
                 WHERE (fingerprint = ? AND is_main = 1) OR (main_fingerprint = ? AND is_main = 0)
             `).run(mainVideoFingerprint, mainVideoFingerprint);
 
             if (childFingerprints.length > 0) {
                 const placeholders = childFingerprints.map(() => '?').join(',');
-                this.db.prepare(`DELETE FROM videos WHERE fingerprint IN (${placeholders})`).run(...childFingerprints);
-                this.db.prepare(`DELETE FROM video_tags WHERE fingerprint IN (${placeholders})`).run(...childFingerprints);
+                this._stmt(`DELETE FROM videos WHERE fingerprint IN (${placeholders})`).run(...childFingerprints);
+                this._stmt(`DELETE FROM video_tags WHERE fingerprint IN (${placeholders})`).run(...childFingerprints);
                 console.log(`已刪除 ${childFingerprints.length} 個子影片的資料庫記錄`);
             }
 
-            this.db.prepare('DELETE FROM videos WHERE fingerprint = ?').run(mainVideoFingerprint);
-            this.db.prepare('DELETE FROM video_tags WHERE fingerprint = ?').run(mainVideoFingerprint);
+            this._stmt('DELETE FROM videos WHERE fingerprint = ?').run(mainVideoFingerprint);
+            this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(mainVideoFingerprint);
 
             return {
                 success: collectionResult.changes > 0,
@@ -830,13 +900,13 @@ class SQLiteDatabase {
     }
 
     async getVideoCollection(mainVideoFingerprint) {
-        const mainRecord = this.db.prepare(
+        const mainRecord = this._stmt(
             'SELECT * FROM video_collections WHERE fingerprint = ? AND is_main = 1'
         ).get(mainVideoFingerprint);
 
         if (!mainRecord) return null;
 
-        const childVideos = this.db.prepare(`
+        const childVideos = this._stmt(`
             SELECT v.*, c.sort_order
             FROM video_collections c
             JOIN videos v ON v.fingerprint = c.fingerprint
@@ -867,14 +937,14 @@ class SQLiteDatabase {
         sets.push('updated_at = ?');
         params.push(this._now(), mainVideoFingerprint);
 
-        const result = this.db.prepare(
+        const result = this._stmt(
             `UPDATE video_collections SET ${sets.join(', ')} WHERE fingerprint = ? AND is_main = 1`
         ).run(...params);
         return { success: result.changes > 0 };
     }
 
     async removeVideoFromCollection(mainVideoFingerprint, childFingerprint) {
-        const result = this.db.prepare(`
+        const result = this._stmt(`
             DELETE FROM video_collections
             WHERE fingerprint = ? AND is_main = 0 AND main_fingerprint = ?
         `).run(childFingerprint, mainVideoFingerprint);
@@ -882,6 +952,7 @@ class SQLiteDatabase {
     }
 
     close() {
+        this._stmtCache.clear();
         if (this.db) {
             this.db.close();
             this.db = null;

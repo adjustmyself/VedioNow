@@ -241,6 +241,7 @@ class MongoDatabase extends DatabaseInterface {
 
     async addVideo(videoData) {
         const { filename, filepath, filesize, duration, description, fingerprint, file_created_at } = videoData;
+        const file_mtime = videoData.file_mtime ?? null;
 
         try {
             let existingVideo = null;
@@ -278,11 +279,11 @@ class MongoDatabase extends DatabaseInterface {
                             duration: duration || 0,
                             fingerprint,
                             file_created_at: file_created_at || null,
+                            file_mtime,
                             updated_at: new Date()
                         }
                     }
                 );
-                console.log(`更新現有影片資訊: ${filename}`);
                 return 'updated';
             } else {
                 // 新檔案，插入新記錄
@@ -297,6 +298,7 @@ class MongoDatabase extends DatabaseInterface {
                     fingerprint,
                     is_master: true,  // 預設為主影片
                     file_created_at: file_created_at || null,
+                    file_mtime,
                     created_at: new Date(),
                     updated_at: new Date()
                 };
@@ -353,13 +355,23 @@ class MongoDatabase extends DatabaseInterface {
     // 不可用 getVideos()（預設分頁只回傳一頁）。
     async getAllVideoRefs() {
         const docs = await this.db.collection('videos')
-            .find({}, { projection: { filepath: 1, fingerprint: 1 } })
+            .find({}, { projection: { filepath: 1, fingerprint: 1, filesize: 1, file_mtime: 1 } })
             .toArray();
         return docs.map(d => ({
             id: d._id.toString(),
             filepath: d.filepath,
-            fingerprint: d.fingerprint || null
+            fingerprint: d.fingerprint || null,
+            filesize: d.filesize,
+            file_mtime: d.file_mtime ?? null
         }));
+    }
+
+    // 批次刪除影片記錄（缺檔清理用）
+    async deleteVideosByIds(ids) {
+        if (ids.length === 0) return;
+        await this.db.collection('videos').deleteMany({
+            _id: { $in: ids.map(id => new ObjectId(id)) }
+        });
     }
 
     // 以路徑查單一影片（檔案監控的刪除事件用）

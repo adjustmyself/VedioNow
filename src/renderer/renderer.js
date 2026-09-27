@@ -1910,7 +1910,7 @@ class VideoManager {
       const result = await ipcRenderer.invoke('scan-videos', folderPath, options);
       if (result.success) {
         const stats = result.result;
-        let message = `掃描完成！找到: ${stats.found}, 新增: ${stats.added}, 更新: ${stats.updated}`;
+        let message = `掃描完成！找到: ${stats.found}, 新增: ${stats.added}, 更新: ${stats.updated}, 未變更: ${stats.unchanged || 0}`;
         if (options.cleanupMissing && stats.cleaned > 0) {
           message += `, 清理: ${stats.cleaned}`;
         }
