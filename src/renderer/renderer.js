@@ -524,7 +524,25 @@ class VideoManager {
       ? `<span class="duplicate-mark" title="另有 ${duplicateCount} 份內容相同的檔案">重複 ×${duplicateCount + 1}</span>`
       : '';
 
-    return { tags, filename, filepath, filesize, createdDate, stars, description, duplicateBadge, videoId: escapeHtml(video.id) };
+    return {
+      tags, filename, filepath, filesize, createdDate, stars, description, duplicateBadge,
+      playCount: this._playCountHtml(video),
+      videoId: escapeHtml(video.id)
+    };
+  }
+
+  // 卡片上的開啟次數（沒開過就不顯示）；開檔後由 updateVideoPlayCount() 就地更新
+  _playCountHtml(video) {
+    const count = Number(video.play_count) || 0;
+    if (count === 0) return '<span class="video-play-count"></span>';
+    const title = video.last_played_at ? `最後開啟：${new Date(video.last_played_at).toLocaleString()}` : '';
+    return `<span class="video-play-count" title="${escapeHtml(title)}"> • ▶ ${count} 次</span>`;
+  }
+
+  updateVideoPlayCount(video) {
+    const card = this.elements.videosContainer.querySelector(`[data-video-id="${CSS.escape(video.id)}"]`);
+    const span = card && card.querySelector('.video-play-count');
+    if (span) span.outerHTML = this._playCountHtml(video);
   }
 
   createVideoCard(video) {
@@ -541,7 +559,7 @@ class VideoManager {
         <div class="video-card-content">
           <div class="video-title" title="${f.filename}">${f.filename}</div>
           <div class="video-meta-row">
-            <div class="video-meta">${f.filesize} • ${f.createdDate}</div>
+            <div class="video-meta">${f.filesize} • ${f.createdDate}${f.playCount}</div>
             <div class="video-rating">${f.stars}</div>
           </div>
           <div class="video-tags">${f.tags}</div>
@@ -563,7 +581,7 @@ class VideoManager {
         <div class="video-list-content">
           <div class="video-title">${f.filename}</div>
           <div class="video-meta-row">
-            <div class="video-meta">${f.filesize} • ${f.createdDate}${f.duplicateBadge ? ` ${f.duplicateBadge}` : ''}</div>
+            <div class="video-meta">${f.filesize} • ${f.createdDate}${f.playCount}${f.duplicateBadge ? ` ${f.duplicateBadge}` : ''}</div>
             <div class="video-rating">${f.stars}</div>
           </div>
           <div class="video-tags">${f.tags}</div>

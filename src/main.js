@@ -1061,7 +1061,18 @@ ipcMain.handle('open-path', async (event, targetPath) => {
     }
     const result = await shell.openPath(targetPath);
     // shell.openPath 成功時回傳空字串，失敗時回傳錯誤訊息
-    return { success: result === '', error: result || null };
+    if (result !== '') {
+      return { success: false, error: result };
+    }
+
+    // 記錄開啟次數；記錄失敗不影響播放
+    let playStats = null;
+    try {
+      if (database) playStats = await database.recordVideoPlay(targetPath);
+    } catch (error) {
+      console.error('記錄開啟次數失敗:', error);
+    }
+    return { success: true, error: null, playStats };
   } catch (error) {
     return { success: false, error: error.message };
   }

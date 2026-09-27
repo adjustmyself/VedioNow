@@ -87,6 +87,14 @@ class SQLiteDatabase {
         }
         this.db.exec('CREATE INDEX IF NOT EXISTS idx_videos_content_fp ON videos(content_fingerprint)');
 
+        if (!hasColumn('videos', 'play_count')) {
+            // 開啟紀錄：從 VideoNow 開啟（交給外部播放器）的次數與最後一次時間
+            this.db.exec('ALTER TABLE videos ADD COLUMN play_count INTEGER DEFAULT 0');
+        }
+        if (!hasColumn('videos', 'last_played_at')) {
+            this.db.exec('ALTER TABLE videos ADD COLUMN last_played_at TEXT');
+        }
+
         if (!hasColumn('tags', 'description')) {
             this.db.exec("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
         }
@@ -436,7 +444,9 @@ class SQLiteDatabase {
             created_at: 'v.created_at',
             filename: 'v.filename COLLATE NOCASE',
             filesize: 'v.filesize',
-            rating: 'v.rating'
+            rating: 'v.rating',
+            play_count: 'v.play_count',
+            last_played_at: 'v.last_played_at'
         };
         const field = columns[filters.sortBy] ? filters.sortBy : 'file_created_at';
         const dir = filters.sortOrder === 'asc' ? 'ASC' : 'DESC';
@@ -544,6 +554,15 @@ class SQLiteDatabase {
         const { rating = 0, description = '' } = metadata;
         this._stmt('UPDATE videos SET rating = ?, description = ?, updated_at = ? WHERE fingerprint = ?')
             .run(rating, description, this._now(), fingerprint);
+    }
+
+    // 記錄一次開啟（開啟次數 +1、更新最後開啟時間）；路徑不在資料庫時回傳 null
+    async recordVideoPlay(filepath) {
+        const now = this._now();
+        const result = this._stmt('UPDATE videos SET play_count = IFNULL(play_count, 0) + 1, last_played_at = ? WHERE filepath = ?')
+            .run(now, filepath);
+        if (result.changes === 0) return null;
+        return this._stmt('SELECT play_count, last_played_at FROM videos WHERE filepath = ?').get(filepath);
     }
 
     async addVideoTag(fingerprint, tagName) {

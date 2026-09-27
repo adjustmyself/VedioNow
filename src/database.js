@@ -94,6 +94,10 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 getVideoByPath 方法');
     }
 
+    async recordVideoPlay(filepath) {
+        throw new Error('子類別必須實作 recordVideoPlay 方法');
+    }
+
     close() {
         throw new Error('子類別必須實作 close 方法');
     }
@@ -573,7 +577,7 @@ class MongoDatabase extends DatabaseInterface {
 
     // 排序欄位白名單；預設排序對應 {is_master, file_created_at, created_at} 索引
     _buildSort(filters = {}) {
-        const allowed = ['file_created_at', 'created_at', 'filename', 'filesize', 'rating'];
+        const allowed = ['file_created_at', 'created_at', 'filename', 'filesize', 'rating', 'play_count', 'last_played_at'];
         const field = allowed.includes(filters.sortBy) ? filters.sortBy : 'file_created_at';
         const dir = filters.sortOrder === 'asc' ? 1 : -1;
         const sort = { [field]: dir };
@@ -723,6 +727,17 @@ class MongoDatabase extends DatabaseInterface {
                 }
             }
         );
+    }
+
+    // 記錄一次開啟（開啟次數 +1、更新最後開啟時間）；路徑不在資料庫時回傳 null
+    async recordVideoPlay(filepath) {
+        const video = await this.db.collection('videos').findOneAndUpdate(
+            { filepath },
+            { $inc: { play_count: 1 }, $set: { last_played_at: new Date() } },
+            { returnDocument: 'after', projection: { play_count: 1, last_played_at: 1 } }
+        );
+        if (!video) return null;
+        return { play_count: video.play_count, last_played_at: video.last_played_at };
     }
 
     async addVideoTag(fingerprint, tagName) {

@@ -424,6 +424,56 @@ describe('SQLiteDatabase', () => {
       const result = await db.getVideos({ sortBy: 'id; DROP TABLE videos', sortOrder: 'asc' });
       expect(result.videos.map(v => v.fingerprint)).toEqual(['c', 'a', 'b']);
     });
+
+    test('依開啟次數與最近開啟排序', async () => {
+      await db.recordVideoPlay('C:\\v\\c.mp4');
+      await db.recordVideoPlay('C:\\v\\c.mp4');
+      await db.recordVideoPlay('C:\\v\\b.mp4');
+
+      const byCount = await db.getVideos({ sortBy: 'play_count', sortOrder: 'desc' });
+      expect(byCount.videos.map(v => v.fingerprint)).toEqual(['c', 'a', 'b']);
+
+      const byRecent = await db.getVideos({ sortBy: 'last_played_at', sortOrder: 'desc' });
+      expect(byRecent.videos[0].fingerprint).toBe('a');
+      expect(byRecent.videos[2].last_played_at).toBeNull();
+    });
+  });
+
+  describe('開啟紀錄', () => {
+    test('新影片的開啟次數為 0', async () => {
+      await addVideo();
+      const [video] = (await db.getVideos({})).videos;
+      expect(video.play_count).toBe(0);
+      expect(video.last_played_at).toBeNull();
+    });
+
+    test('每次開啟次數 +1 並更新最後開啟時間', async () => {
+      await addVideo();
+      const filepath = '\\\\nas\\drive1\\folder\\movie.mp4';
+      expect((await db.recordVideoPlay(filepath)).play_count).toBe(1);
+      const stats = await db.recordVideoPlay(filepath);
+      expect(stats.play_count).toBe(2);
+      expect(typeof stats.last_played_at).toBe('string');
+
+      const [video] = (await db.getVideos({})).videos;
+      expect(video.play_count).toBe(2);
+      expect(video.last_played_at).toBe(stats.last_played_at);
+    });
+
+    test('不在資料庫的路徑回傳 null', async () => {
+      expect(await db.recordVideoPlay('C:\\nope.mp4')).toBeNull();
+    });
+
+    test('檔案搬移後開啟紀錄保留', async () => {
+      await addVideo();
+      await db.recordVideoPlay('\\\\nas\\drive1\\folder\\movie.mp4');
+      db._fileExists = () => false;
+      await addVideo({ filepath: 'D:\\moved\\movie.mp4' });
+
+      const [video] = (await db.getVideos({})).videos;
+      expect(video.filepath).toBe('D:\\moved\\movie.mp4');
+      expect(video.play_count).toBe(1);
+    });
   });
 
   describe('合集', () => {

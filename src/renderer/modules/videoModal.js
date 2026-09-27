@@ -15,6 +15,7 @@ class VideoModalMethods {
       ? new Date(this.selectedVideo.file_created_at).toLocaleString()
       : (this.selectedVideo.created_at ? new Date(this.selectedVideo.created_at).toLocaleString() : '未知日期');
     document.getElementById('modal-created').textContent = createdText;
+    this.renderModalPlayStats();
     document.getElementById('modal-description').value = this.selectedVideo.description || '';
 
     this.renderModalTags();
@@ -521,9 +522,25 @@ class VideoModalMethods {
     }
   }
 
-  openVideoFile() {
-    if (this.selectedVideo) {
-      ipcRenderer.invoke('open-path', this.selectedVideo.filepath);
+  renderModalPlayStats() {
+    const video = this.selectedVideo;
+    const count = Number(video.play_count) || 0;
+    document.getElementById('modal-play-stats').textContent = count === 0
+      ? '尚未開啟過'
+      : `${count} 次・最後開啟 ${video.last_played_at ? new Date(video.last_played_at).toLocaleString() : '未知'}`;
+  }
+
+  async openVideoFile() {
+    const video = this.selectedVideo;
+    if (!video) return;
+    const result = await ipcRenderer.invoke('open-path', video.filepath);
+    if (result && result.success && result.playStats) {
+      video.play_count = result.playStats.play_count;
+      video.last_played_at = result.playStats.last_played_at;
+      if (this.selectedVideo === video) this.renderModalPlayStats();
+      this.updateVideoPlayCount(video);
+    } else if (result && !result.success) {
+      alert(`無法開啟影片：${result.error}`);
     }
   }
 
