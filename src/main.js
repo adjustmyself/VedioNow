@@ -881,8 +881,6 @@ ipcMain.handle('check-thumbnails-batch', async (event, videoPaths) => {
 // 強制重新生成縮圖（可指定擷取秒數）
 ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset) => {
   try {
-    const thumbnailPath = thumbnailGenerator.getThumbnailPath(videoPath);
-
     // 刪除現有縮圖（如果存在）
     const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath);
     if (existingThumbnail) {
@@ -926,21 +924,6 @@ ipcMain.handle('get-thumbnail-stats', async () => {
     return { success: true, stats };
   } catch (error) {
     console.error('獲取縮圖統計錯誤:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// 縮圖遷移（縮圖已統一存於本地目錄，保留 IPC 以相容設定頁按鈕）
-ipcMain.handle('migrate-thumbnails', async () => {
-  try {
-    const result = await thumbnailGenerator.migrateThumbnails();
-    return {
-      success: true,
-      message: `已遷移 ${result.migrated} 個縮圖檔案，${result.errors} 個錯誤`,
-      result
-    };
-  } catch (error) {
-    console.error('縮圖遷移錯誤:', error);
     return { success: false, error: error.message };
   }
 });

@@ -67,10 +67,6 @@ class SettingsManager {
             this.cleanupThumbnails();
         });
 
-        document.getElementById('migrate-thumbnails-btn').addEventListener('click', () => {
-            this.migrateThumbnails();
-        });
-
         // 資料維護：清理孤兒標籤關聯
         document.getElementById('cleanup-orphan-relations-btn').addEventListener('click', () => {
             this.cleanupOrphanRelations();
@@ -375,51 +371,6 @@ class SettingsManager {
             statusEl.textContent = '清理失敗: ' + error.message;
         } finally {
             cleanupBtn.disabled = false;
-
-            // 5秒後清除狀態訊息
-            setTimeout(() => {
-                statusEl.className = 'cleanup-status';
-                statusEl.textContent = '';
-            }, 5000);
-        }
-    }
-
-    // 遷移縮圖到影片資料夾
-    async migrateThumbnails() {
-        const statusEl = document.getElementById('migrate-status');
-        const migrateBtn = document.getElementById('migrate-thumbnails-btn');
-
-        // 確認操作
-        if (!confirm('確定要將縮圖遷移到各自的影片資料夾嗎？這將讓多個用戶可以共享縮圖。')) {
-            return;
-        }
-
-        // 更新UI狀態
-        statusEl.className = 'cleanup-status working';
-        statusEl.textContent = '正在遷移縮圖...';
-        migrateBtn.disabled = true;
-
-        try {
-            const result = await ipcRenderer.invoke('migrate-thumbnails');
-
-            if (result.success) {
-                statusEl.className = 'cleanup-status success';
-                statusEl.textContent = result.message;
-
-                // 更新統計資訊
-                setTimeout(() => {
-                    this.loadThumbnailStats();
-                }, 1000);
-            } else {
-                statusEl.className = 'cleanup-status error';
-                statusEl.textContent = '遷移失敗: ' + result.error;
-            }
-        } catch (error) {
-            console.error('遷移縮圖失敗:', error);
-            statusEl.className = 'cleanup-status error';
-            statusEl.textContent = '遷移失敗: ' + error.message;
-        } finally {
-            migrateBtn.disabled = false;
 
             // 5秒後清除狀態訊息
             setTimeout(() => {

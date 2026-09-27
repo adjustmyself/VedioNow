@@ -22,6 +22,15 @@ function toFileUrl(filePath, version) {
   return version ? `${href}?t=${version}` : href;
 }
 
+let rendererThumbnailGenerator = null;
+function getRendererThumbnailGenerator() {
+  if (!rendererThumbnailGenerator) {
+    const ThumbnailGenerator = require('../thumbnailGenerator');
+    rendererThumbnailGenerator = new ThumbnailGenerator();
+  }
+  return rendererThumbnailGenerator;
+}
+
 class VideoManager {
   constructor() {
     this.currentVideos = [];
@@ -637,9 +646,45 @@ class VideoManager {
     this.videoEventsBound = true;
   }
 
+  // 元素接近可視範圍時才執行 callback（每次重繪列表會重置）
+  _whenVisible(element, callback) {
+    if (typeof IntersectionObserver === 'undefined') {
+      callback();
+      return;
+    }
+    if (!this._thumbObserver) {
+      this._thumbCallbacks = new Map();
+      this._thumbObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          this._thumbObserver.unobserve(entry.target);
+          const cb = this._thumbCallbacks.get(entry.target);
+          this._thumbCallbacks.delete(entry.target);
+          if (cb) cb();
+        }
+      }, { rootMargin: '300px' });
+    }
+    this._thumbCallbacks.set(element, callback);
+    this._thumbObserver.observe(element);
+  }
+
+  _loadThumbnailLazily(container, videoPath) {
+    if (this.thumbnailCache.get(videoPath)) {
+      // 已有縮圖檔：直接建立 <img loading="lazy">，成本很低
+      this.loadThumbnail(container, videoPath);
+    } else {
+      this._whenVisible(container, () => this.loadThumbnail(container, videoPath));
+    }
+  }
+
   loadAllThumbnails() {
     // 清理載入狀態
     this.loadingThumbnails.clear();
+    // 舊卡片已被 innerHTML 換掉，停止觀察
+    if (this._thumbObserver) {
+      this._thumbObserver.disconnect();
+      this._thumbCallbacks.clear();
+    }
 
     const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
 
@@ -669,18 +714,18 @@ class VideoManager {
         }
         // 批次查詢回來後，再去逐個 render
         containerByPath.forEach((containers, videoPath) => {
-          containers.forEach(c => this.loadThumbnail(c, videoPath));
+          containers.forEach(c => this._loadThumbnailLazily(c, videoPath));
         });
       }).catch(err => {
         console.error('批次縮圖查詢失敗，改逐個查詢:', err);
         containerByPath.forEach((containers, videoPath) => {
-          containers.forEach(c => this.loadThumbnail(c, videoPath));
+          containers.forEach(c => this._loadThumbnailLazily(c, videoPath));
         });
       });
     } else {
       // 全部命中快取，直接 render
       containerByPath.forEach((containers, videoPath) => {
-        containers.forEach(c => this.loadThumbnail(c, videoPath));
+        containers.forEach(c => this._loadThumbnailLazily(c, videoPath));
       });
     }
   }
@@ -737,19 +782,20 @@ class VideoManager {
     return true;
   }
 
-  async generateThumbnailWithBackend(container, videoPath) {
+  async generateThumbnailWithBackend(container, videoPath, { quiet = false } = {}) {
     try {
       // 嘗試使用後端 FFmpeg 生成縮圖
       const result = await ipcRenderer.invoke('get-thumbnail', videoPath);
       if (result.success && result.thumbnail) {
         this.thumbnailCache.set(videoPath, result.thumbnail);
         this.showCachedThumbnail(container, result.thumbnail);
-      } else {
-        throw new Error('後端縮圖生成失敗');
+        return true;
       }
+      throw new Error(result.error || '後端縮圖生成失敗');
     } catch (error) {
       console.warn('後端縮圖生成失敗:', error);
-      this.showDefaultThumbnail(container, videoPath);
+      if (!quiet) this.showDefaultThumbnail(container, videoPath);
+      return false;
     }
   }
 
@@ -792,6 +838,8 @@ class VideoManager {
     // 縮圖檔名固定（路徑 hash），重產後需用版本號破壞渲染器快取，否則沿用舊圖。
     // 版本號持久化於 thumbnailVersions，重新渲染列表時仍會帶上，避免又跳回舊圖。
     const version = this.thumbnailVersions.get(container.dataset.filepath);
+    img.loading = 'lazy';
+    img.decoding = 'async';
     img.src = toFileUrl(thumbnailPath, version);
 
     img.addEventListener('load', () => {
@@ -817,112 +865,94 @@ class VideoManager {
   setupVideoThumbnail(container, videoPath) {
     const isSmall = container.classList.contains('video-list-thumbnail');
     const videoClass = isSmall ? 'thumbnail-video-small' : 'thumbnail-video';
+    const fallback = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
 
-    // 檢查是否已有 video 元素
-    let video = container.querySelector('.thumbnail-video, .thumbnail-video-small');
-    if (!video) {
-      video = document.createElement('video');
-      video.className = videoClass;
-      video.preload = 'metadata';
-      video.muted = true;
-
-      const source = document.createElement('source');
-      source.src = toFileUrl(videoPath);
-      video.appendChild(source);
-
-      const fallback = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
-      container.insertBefore(video, fallback);
+    // 重試時換一個新的 video 元素：沿用舊元素會讓事件監聽器一層層疊加
+    const oldVideo = container.querySelector('.thumbnail-video, .thumbnail-video-small');
+    if (oldVideo) {
+      oldVideo.removeAttribute('src');
+      oldVideo.load();
+      oldVideo.remove();
     }
 
+    const video = document.createElement('video');
+    video.className = videoClass;
+    video.preload = 'metadata';
+    video.muted = true;
+    video.style.opacity = '0';
+    video.style.transition = 'opacity 0.3s';
+
+    const showRetry = (html) => {
+      if (!fallback) return;
+      fallback.classList.remove('loading');
+      fallback.innerHTML = html;
+      fallback.style.display = 'flex';
+      const retryBtn = fallback.querySelector('.retry-btn');
+      if (retryBtn) {
+        retryBtn.onclick = (e) => {
+          e.stopPropagation(); // 阻止事件冒泡到父元素
+          e.preventDefault();
+          this.setupVideoThumbnail(container, videoPath);
+        };
+      }
+    };
+
     // 顯示載入提示
-    const fallback = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
     if (fallback) {
       fallback.innerHTML = '<div style="font-size: 0.8rem;">📹 載入中...</div>';
       fallback.classList.add('loading');
+      fallback.style.display = 'flex';
     }
 
     // 設定載入超時 (15秒，給大檔案和網路磁碟更多時間)
     const timeoutId = setTimeout(() => {
       console.warn(`影片載入超時: ${videoPath}`);
-      if (fallback) {
-        fallback.innerHTML = '<div style="font-size: 0.7rem;">⏱️ 載入超時<br><span class="retry-btn">點擊重試</span></div>';
-        fallback.style.cursor = 'pointer';
-
-        // 移除舊的事件監聽器
-        fallback.onclick = null;
-
-        // 為重試按鈕添加事件監聽器，阻止事件冒泡
-        const retryBtn = fallback.querySelector('.retry-btn');
-        if (retryBtn) {
-          retryBtn.onclick = (e) => {
-            e.stopPropagation(); // 阻止事件冒泡到父元素
-            e.preventDefault();
-            this.setupVideoThumbnail(container, videoPath);
-          };
-        }
-      }
+      showRetry('<div style="font-size: 0.7rem;">⏱️ 載入超時<br><span class="retry-btn">點擊重試</span></div>');
     }, 15000);
 
-    video.addEventListener('loadeddata', async () => {
+    video.addEventListener('loadeddata', () => {
       clearTimeout(timeoutId);
-      // 嘗試多個時間點，避免黑幀
+      // 跳過開頭避免黑幀
       video.currentTime = Math.max(10, video.duration * 0.1);
-    });
+    }, { once: true });
 
     video.addEventListener('seeked', async () => {
       clearTimeout(timeoutId);
       video.style.opacity = '1';
-      const fallback = video.nextElementSibling;
-      if (fallback && fallback.classList.contains('thumbnail-fallback')) {
+      if (fallback) {
         fallback.classList.remove('loading');
         fallback.style.display = 'none';
       }
 
-      // 嘗試生成縮圖快取
+      // 存成縮圖快取，之後重繪直接用圖片，不必再從（可能是網路磁碟的）影片讀一次
       try {
-        const ThumbnailGenerator = require('../thumbnailGenerator');
-        const thumbnailGenerator = new ThumbnailGenerator();
-        await thumbnailGenerator.generateThumbnailInRenderer(video, videoPath);
+        const thumbnailPath = await getRendererThumbnailGenerator().generateThumbnailInRenderer(video, videoPath);
+        if (thumbnailPath) this.thumbnailCache.set(videoPath, thumbnailPath);
       } catch (error) {
         console.warn('生成縮圖快取失敗:', error);
       }
-    });
+    }, { once: true });
 
     video.addEventListener('error', async () => {
       clearTimeout(timeoutId);
-      console.warn(`影片載入錯誤: ${videoPath}`);
-
-      // 先嘗試後端生成縮圖
-      try {
-        await this.generateThumbnailWithBackend(container, videoPath);
-      } catch (error) {
-        // 如果後端也失敗，顯示格式資訊和重試選項
-        if (fallback) {
-          const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
-          fallback.innerHTML = `
-            <div style="text-align: center; font-size: 0.7rem;">
-              <div>🎬 ${escapeHtml(extension)}</div>
-              <div style="margin: 2px 0;">載入失敗</div>
-              <div class="retry-btn" style="cursor: pointer; color: #667eea;">點擊重試</div>
-            </div>
-          `;
-          fallback.style.display = 'flex';
-
-          // 為重試按鈕添加事件監聽器，阻止事件冒泡
-          const retryBtn = fallback.querySelector('.retry-btn');
-          if (retryBtn) {
-            retryBtn.onclick = (e) => {
-              e.stopPropagation(); // 阻止事件冒泡到父元素
-              e.preventDefault();
-              this.setupVideoThumbnail(container, videoPath);
-            };
-          }
-        }
+      console.warn(`影片載入錯誤，改用後端產生縮圖: ${videoPath}`);
+      video.remove();
+      const ok = await this.generateThumbnailWithBackend(container, videoPath, { quiet: true });
+      if (!ok) {
+        const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
+        showRetry(`
+          <div style="text-align: center; font-size: 0.7rem;">
+            <div>🎬 ${escapeHtml(extension)}</div>
+            <div style="margin: 2px 0;">載入失敗</div>
+            <div class="retry-btn" style="cursor: pointer; color: #667eea;">點擊重試</div>
+          </div>
+        `);
       }
-    });
+    }, { once: true });
 
-    video.style.opacity = '0';
-    video.style.transition = 'opacity 0.3s';
+    // 直接設 video.src：用 <source> 子元素時載入失敗的 error 事件不會送到 video 上
+    video.src = toFileUrl(videoPath);
+    container.insertBefore(video, fallback);
   }
 
   renderTagsFilter() {

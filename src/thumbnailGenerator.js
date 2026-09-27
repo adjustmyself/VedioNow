@@ -1,4 +1,5 @@
 const path = require('path');
+const os = require('os');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
@@ -21,11 +22,50 @@ function resolveFfmpegPath() {
 
 const FFMPEG_PATH = resolveFfmpegPath();
 
+// 同時執行的 FFmpeg 行程上限（全域共用）。一頁全是 MKV/AVI 時不會一口氣開十幾個行程搶網路與 CPU
+const MAX_FFMPEG_PROCESSES = Math.min(3, Math.max(1, Math.floor(os.cpus().length / 2)));
+// 失敗時只保留最後這麼多字的 stderr 供錯誤訊息使用
+const STDERR_TAIL_CHARS = 2000;
+
+let runningProcesses = 0;
+const waitingQueue = [];
+
+async function withFfmpegSlot(task) {
+  if (runningProcesses >= MAX_FFMPEG_PROCESSES) {
+    await new Promise(resolve => waitingQueue.push(resolve));
+  }
+  runningProcesses++;
+  try {
+    return await task();
+  } finally {
+    runningProcesses--;
+    const next = waitingQueue.shift();
+    if (next) next();
+  }
+}
+
+// 從 FFmpeg 輸出解析影片長度（秒），解析不到回傳 null
+function parseDurationSeconds(stderr) {
+  const match = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
+  if (!match) return null;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+// 擷取時間點：指定秒數優先，失敗時往較早的時間點退（影片比指定秒數短時才找得到畫面）
+function buildOffsets(timeOffset) {
+  const primary = Number(timeOffset);
+  const start = Number.isFinite(primary) && primary >= 0 ? primary : 30;
+  const fallbacks = [30, 10, 3, 0].filter(o => o < start);
+  return [start, ...fallbacks];
+}
+
 class ThumbnailGenerator {
   constructor() {
     // 縮圖將儲存在本地快取目錄中，避免網路磁碟權限問題
     // 放 userData：舊版存在程式目錄，重新 package 後整批縮圖就要重生
     this.thumbnailsDir = path.join(getUserDataDir(), 'thumbnails');
+    // 同一支影片的縮圖同時只產一次（重複請求共用同一個 Promise）
+    this.inflight = new Map();
   }
 
   // 生成檔案路徑的唯一hash值
@@ -46,190 +86,157 @@ class ThumbnailGenerator {
     return this.thumbnailsDir;
   }
 
-  // 檢查縮圖是否存在
+  // 檢查縮圖是否存在（0 byte 的殘檔視為不存在）
   async thumbnailExists(videoPath) {
     const thumbnailPath = this.getThumbnailPath(videoPath);
     try {
-      await fs.access(thumbnailPath);
-      return thumbnailPath;
+      const stat = await fs.stat(thumbnailPath);
+      return stat.size > 0 ? thumbnailPath : null;
     } catch {
       return null;
     }
   }
 
-  // 使用 FFmpeg 生成縮圖 (如果系統有安裝)
-  async generateWithFFmpeg(videoPath, thumbnailPath, timeOffset = 30) {
-    return new Promise((resolve, reject) => {
-      // 指定的秒數優先，後面接續其他時間點作為後備（避免黑幀 / 影片過短）
-      const fallbackOffsets = [30, 60, 90, 120, 15, 5];
-      const primary = Number(timeOffset);
-      const startOffset = Number.isFinite(primary) && primary >= 0 ? primary : 30;
-      const timeOffsets = [startOffset, ...fallbackOffsets.filter(o => o !== startOffset)];
-      let currentOffsetIndex = 0;
+  // 組 FFmpeg 參數：-ss 放在 -i 前面用關鍵格快速定位，
+  // 放在後面會從頭解碼到指定秒數，網路磁碟上等於先讀完前段影片
+  buildFfmpegArgs(videoPath, outputPath, offset) {
+    // 標準化路徑：UNC 網路路徑（\\server\share）必須保留反斜線，
+    // FFmpeg 在 Windows 上無法識別 //server/share 格式
+    const isUNC = videoPath.startsWith('\\\\') || videoPath.startsWith('//');
+    const normalizedVideoPath = isUNC
+      ? videoPath.replace(/\//g, '\\')
+      : videoPath.replace(/\\/g, '/');
 
-      const tryGenerateThumbnail = (offset) => {
-        // 標準化路徑：UNC 網路路徑（\\server\share）必須保留反斜線，
-        // FFmpeg 在 Windows 上無法識別 //server/share 格式
-        const isUNC = videoPath.startsWith('\\\\') || videoPath.startsWith('//');
-        const normalizedVideoPath = isUNC
-          ? videoPath.replace(/\//g, '\\')
-          : videoPath.replace(/\\/g, '/');
-        const normalizedThumbnailPath = thumbnailPath.replace(/\\/g, '/');
+    return [
+      '-hide_banner',
+      '-ss', String(offset),
+      '-i', normalizedVideoPath,
+      '-an', '-sn', '-dn',
+      '-frames:v', '1',
+      // 縮放到寬 640px、維持比例（高為奇數時自動補成偶數）
+      '-vf', 'scale=640:-2:flags=lanczos',
+      '-q:v', '2',
+      '-f', 'image2',
+      '-update', '1',
+      '-y', outputPath.replace(/\\/g, '/')
+    ];
+  }
 
-        // 針對不同格式調整 FFmpeg 參數
-        const extension = videoPath.toLowerCase().split('.').pop();
-        let ffmpegArgs = [];
-
-        // AVI 格式需要先解析再擷取
-        // 縮放到寬 640px、維持比例（高為奇數時自動補成偶數）
-        const scaleFilter = 'scale=640:-2:flags=lanczos';
-
-        if (extension === 'avi') {
-          ffmpegArgs = [
-            '-ss', offset.toString(),
-            '-i', normalizedVideoPath,
-            '-vframes', '1',
-            '-vf', scaleFilter,
-            '-q:v', '2',
-            '-f', 'image2',
-            '-update', '1',
-            '-y', normalizedThumbnailPath
-          ];
-        } else {
-          ffmpegArgs = [
-            '-i', normalizedVideoPath,
-            '-ss', offset.toString(),
-            '-vframes', '1',
-            '-vf', scaleFilter,
-            '-q:v', '2',
-            '-f', 'image2',
-            '-update', '1',
-            '-y', normalizedThumbnailPath
-          ];
-        }
-
-        console.log('===== FFmpeg 縮圖生成 =====');
-        console.log('原始影片路徑:', videoPath);
-        console.log('標準化路徑:', normalizedVideoPath);
-        console.log('縮圖路徑:', normalizedThumbnailPath);
-        console.log('完整命令:', FFMPEG_PATH + ' ' + ffmpegArgs.map(arg =>
-          arg.includes(' ') || arg.includes('(') || arg.includes(')') ? `"${arg}"` : arg
-        ).join(' '));
-
-        const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs, {
-          windowsVerbatimArguments: false,
-          shell: false
-        });
-
-        let stderrOutput = '';
-
-        ffmpeg.stderr.on('data', (data) => {
-          const output = data.toString();
-          stderrOutput += output;
-          // 只記錄關鍵錯誤信息
-          if (output.includes('Error') || output.includes('Invalid') || output.includes('No such file')) {
-            console.error('FFmpeg 錯誤:', output);
-          }
-        });
-
-        ffmpeg.on('close', (code) => {
-          console.log(`FFmpeg 退出碼: ${code} (時間點: ${offset}s)`);
-          if (code === 0) {
-            console.log('✓ 縮圖生成成功');
-            resolve(thumbnailPath);
-          } else {
-            console.error(`✗ FFmpeg 失敗 (退出碼: ${code})`);
-            if (stderrOutput) {
-              console.error('完整錯誤輸出:', stderrOutput.substring(stderrOutput.length - 500)); // 只顯示最後500字
-            }
-            if (currentOffsetIndex < timeOffsets.length - 1) {
-              currentOffsetIndex++;
-              console.log(`嘗試下一個時間點: ${timeOffsets[currentOffsetIndex]}s`);
-              tryGenerateThumbnail(timeOffsets[currentOffsetIndex]);
-            } else {
-              reject(new Error(`FFmpeg failed for all time offsets, last exit code: ${code}\nLast error: ${stderrOutput.substring(stderrOutput.length - 200)}`));
-            }
-          }
-        });
-
-        ffmpeg.on('error', (error) => {
-          console.error('FFmpeg 執行錯誤 (spawn failed):', error.message);
-          if (currentOffsetIndex < timeOffsets.length - 1) {
-            currentOffsetIndex++;
-            tryGenerateThumbnail(timeOffsets[currentOffsetIndex]);
-          } else {
-            reject(error);
-          }
-        });
+  _runFfmpeg(args) {
+    return new Promise((resolve) => {
+      let stderrTail = '';
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
       };
 
-      tryGenerateThumbnail(timeOffsets[currentOffsetIndex]);
+      let ffmpeg;
+      try {
+        ffmpeg = spawn(FFMPEG_PATH, args, { windowsVerbatimArguments: false, shell: false });
+      } catch (error) {
+        finish({ code: -1, stderr: error.message });
+        return;
+      }
+
+      ffmpeg.stderr.on('data', (data) => {
+        stderrTail = (stderrTail + data.toString()).slice(-STDERR_TAIL_CHARS);
+      });
+      ffmpeg.on('error', (error) => finish({ code: -1, stderr: error.message }));
+      ffmpeg.on('close', (code) => finish({ code, stderr: stderrTail }));
     });
+  }
+
+  // 使用 FFmpeg 生成縮圖。先寫到暫存檔、確認有內容才改名，
+  // 避免中途失敗留下壞檔被當成有效縮圖
+  async generateWithFFmpeg(videoPath, thumbnailPath, timeOffset = 30) {
+    const tmpPath = `${thumbnailPath}.tmp.jpg`;
+    const offsets = buildOffsets(timeOffset);
+    let duration = null;
+    let lastError = '';
+
+    try {
+      for (let i = 0; i < offsets.length; i++) {
+        let offset = offsets[i];
+        // 已知影片長度時，超出長度的時間點改成影片 20% 處
+        if (duration != null && offset >= duration) {
+          offset = Math.floor(duration * 0.2);
+          if (i > 0 && offsets.slice(0, i).includes(offset)) continue;
+        }
+
+        const { code, stderr } = await withFfmpegSlot(() =>
+          this._runFfmpeg(this.buildFfmpegArgs(videoPath, tmpPath, offset))
+        );
+        if (duration == null) duration = parseDurationSeconds(stderr);
+
+        // 時間點超過影片長度時 FFmpeg 仍會回傳 0 但不輸出畫面，要檢查檔案
+        const stat = await fs.stat(tmpPath).catch(() => null);
+        if (code === 0 && stat && stat.size > 0) {
+          await fs.move(tmpPath, thumbnailPath, { overwrite: true });
+          return thumbnailPath;
+        }
+        lastError = `exit code ${code} @${offset}s: ${stderr.slice(-300)}`;
+      }
+    } finally {
+      await fs.remove(tmpPath).catch(() => {});
+    }
+
+    console.error(`FFmpeg 縮圖生成失敗: ${videoPath}\n${lastError}`);
+    throw new Error(`FFmpeg failed for all time offsets\n${lastError}`);
   }
 
   // 使用 Canvas 從 video 元素生成縮圖
   async generateWithCanvas(videoElement, thumbnailPath) {
-    return new Promise((resolve, reject) => {
-      try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
 
-        // 依影片原始比例縮放，目標寬度 640px（高 DPI / 加高縮圖也夠清楚）
-        const TARGET_WIDTH = 640;
-        const srcW = videoElement.videoWidth || 1280;
-        const srcH = videoElement.videoHeight || 720;
-        canvas.width = TARGET_WIDTH;
-        canvas.height = Math.round(TARGET_WIDTH * (srcH / srcW));
+    // 依影片原始比例縮放，目標寬度 640px（高 DPI / 加高縮圖也夠清楚）
+    const TARGET_WIDTH = 640;
+    const srcW = videoElement.videoWidth || 1280;
+    const srcH = videoElement.videoHeight || 720;
+    canvas.width = TARGET_WIDTH;
+    canvas.height = Math.round(TARGET_WIDTH * (srcH / srcW));
 
-        // 較佳的縮放品質
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+    // 較佳的縮放品質
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const reader = new FileReader();
-            reader.onload = async () => {
-              try {
-                const buffer = Buffer.from(reader.result);
-                await fs.ensureDir(path.dirname(thumbnailPath));
-                await fs.writeFile(thumbnailPath, buffer);
-                resolve(thumbnailPath);
-              } catch (error) {
-                reject(error);
-              }
-            };
-            reader.readAsArrayBuffer(blob);
-          } else {
-            reject(new Error('Failed to create blob'));
-          }
-        }, 'image/jpeg', 0.92);
-      } catch (error) {
-        reject(error);
-      }
-    });
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!blob) throw new Error('Failed to create blob');
+
+    const buffer = Buffer.from(await blob.arrayBuffer());
+    await fs.ensureDir(path.dirname(thumbnailPath));
+    const tmpPath = `${thumbnailPath}.tmp.jpg`;
+    await fs.writeFile(tmpPath, buffer);
+    await fs.move(tmpPath, thumbnailPath, { overwrite: true });
+    return thumbnailPath;
   }
 
   // 主要生成縮圖方法（timeOffset：指定擷取秒數，未指定則預設 30 秒）
   async generateThumbnail(videoPath, timeOffset) {
-    // 先檢查縮圖是否已存在
-    const existingThumbnail = await this.thumbnailExists(videoPath);
-    if (existingThumbnail) {
-      return existingThumbnail;
-    }
-
     const thumbnailPath = this.getThumbnailPath(videoPath);
+    const pending = this.inflight.get(thumbnailPath);
+    if (pending) return pending;
 
-    // 確保縮圖目錄存在
-    await fs.ensureDir(this.thumbnailsDir);
+    const task = (async () => {
+      // 先檢查縮圖是否已存在
+      const existingThumbnail = await this.thumbnailExists(videoPath);
+      if (existingThumbnail) {
+        return existingThumbnail;
+      }
 
-    // 嘗試使用 FFmpeg
+      // 確保縮圖目錄存在
+      await fs.ensureDir(this.thumbnailsDir);
+      return this.generateWithFFmpeg(videoPath, thumbnailPath, timeOffset);
+    })();
+
+    this.inflight.set(thumbnailPath, task);
     try {
-      return await this.generateWithFFmpeg(videoPath, thumbnailPath, timeOffset);
-    } catch (ffmpegError) {
-      console.error('FFmpeg 生成縮圖失敗:', ffmpegError.message);
-      // 重新拋出以便呼叫端能看到實際錯誤
-      throw ffmpegError;
+      return await task;
+    } finally {
+      this.inflight.delete(thumbnailPath);
     }
   }
 
@@ -250,7 +257,7 @@ class ThumbnailGenerator {
         const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
 
         for (const thumbnailFile of thumbnailFiles) {
-          // 只處理jpg檔案
+          // 只處理jpg檔案（中斷留下的 .tmp.jpg 一併清掉）
           if (path.extname(thumbnailFile).toLowerCase() === '.jpg') {
             const fileHash = path.basename(thumbnailFile, '.jpg');
 
@@ -258,7 +265,6 @@ class ThumbnailGenerator {
             if (!validHashes.has(fileHash)) {
               const thumbnailPath = path.join(this.thumbnailsDir, thumbnailFile);
               await fs.remove(thumbnailPath);
-              console.log('已清理過期縮圖:', thumbnailPath);
               cleanupCount++;
             }
           }
@@ -275,39 +281,24 @@ class ThumbnailGenerator {
     }
   }
 
-  // 新增方法：獲取縮圖統計資訊
+  // 獲取縮圖統計資訊
   async getThumbnailStats() {
     try {
-      let totalCount = 0;
-      let totalSize = 0;
-
       // 檢查本地縮圖目錄
       if (!await fs.pathExists(this.thumbnailsDir)) {
         return { total: 0, size: 0 };
       }
 
-      try {
-        const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
-        const jpgFiles = thumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
+      const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
+      const jpgFiles = thumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
 
-        totalCount = jpgFiles.length;
-
-        for (const file of jpgFiles) {
-          const filePath = path.join(this.thumbnailsDir, file);
-          try {
-            const stats = await fs.stat(filePath);
-            totalSize += stats.size;
-          } catch (error) {
-            console.warn(`無法獲取檔案統計: ${filePath}`, error.message);
-          }
-        }
-      } catch (error) {
-        console.warn(`無法讀取縮圖目錄: ${this.thumbnailsDir}`, error.message);
-      }
+      const sizes = await Promise.all(jpgFiles.map(file =>
+        fs.stat(path.join(this.thumbnailsDir, file)).then(s => s.size).catch(() => 0)
+      ));
 
       return {
-        total: totalCount,
-        size: totalSize
+        total: jpgFiles.length,
+        size: sizes.reduce((sum, size) => sum + size, 0)
       };
     } catch (error) {
       console.error('獲取縮圖統計資訊失敗:', error);
@@ -336,18 +327,8 @@ class ThumbnailGenerator {
       return null;
     }
   }
-
-  // 遷移舊的縮圖（現在所有縮圖都在本地目錄，無需遷移；保留方法以相容設定頁）
-  async migrateThumbnails() {
-    try {
-      await fs.ensureDir(this.thumbnailsDir);
-      console.log('縮圖已統一存儲在本地目錄，無需遷移');
-      return { migrated: 0, errors: 0 };
-    } catch (error) {
-      console.error('縮圖遷移失敗:', error);
-      return { migrated: 0, errors: 1 };
-    }
-  }
 }
 
 module.exports = ThumbnailGenerator;
+module.exports.buildOffsets = buildOffsets;
+module.exports.parseDurationSeconds = parseDurationSeconds;
