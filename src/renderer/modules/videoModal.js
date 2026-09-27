@@ -181,6 +181,8 @@ class VideoModalMethods {
         } else {
           this.addVideoTag(tagName);
         }
+        // 點選後清掉搜尋，方便接著搜下一個標籤
+        this.resetTagSearch();
       }
     });
     this.tagSelectorEventBound = true;
@@ -259,15 +261,20 @@ class VideoModalMethods {
       });
     }
     if (tagSearchClear) {
-      tagSearchClear.addEventListener('click', () => {
-        tagSearchInput.value = '';
-        tagSearchClear.classList.add('hidden');
-        this.applyTagSearchFilter();
-        tagSearchInput.focus();
-      });
+      tagSearchClear.addEventListener('click', () => this.resetTagSearch());
     }
 
     this.modalEventsBound = true;
+  }
+
+  // 清空標籤搜尋並顯示全部標籤；沒有搜尋條件時不動作
+  resetTagSearch() {
+    const tagSearchInput = document.getElementById('tag-search-input');
+    if (!tagSearchInput || !tagSearchInput.value) return;
+    tagSearchInput.value = '';
+    document.getElementById('tag-search-clear').classList.add('hidden');
+    this.applyTagSearchFilter();
+    tagSearchInput.focus();
   }
 
   applyTagSearchFilter() {
