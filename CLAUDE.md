@@ -52,7 +52,8 @@ This is an Electron application with a main/renderer process architecture:
 
 **Renderer Process (`src/renderer/`)**
 - `index.html` - Main application interface
-- `renderer.js` - VideoManager class handling UI logic
+- `renderer.js` - VideoManager class core (state, loading/search, grid rendering); feature methods live in `modules/*.js` as mixin classes merged into `VideoManager.prototype` (thumbnails, tagFilterBar, videoModal, scanModal, pagination, collections)
+- `shared/util.js` - helpers shared by windows (`escapeHtml`, `toFileUrl`, `toTagImageUrl`, `debounce`)
 - `styles.css` - Main application styles
 - `tag-manager.html/js/css` - Separate tag management window
 
@@ -84,7 +85,9 @@ src/
 ├── appPaths.js          # userData path resolution (main/renderer/plain node)
 └── renderer/
     ├── index.html       # Main UI
-    ├── renderer.js      # Frontend logic (VideoManager class)
+    ├── renderer.js      # Frontend logic (VideoManager core + mixin wiring)
+    ├── modules/         # VideoManager method groups (mixins)
+    ├── shared/util.js   # Shared renderer helpers
     ├── styles.css       # Main styles
     └── tag-manager.*    # Tag management window
 data/                    # Legacy storage location, migrated to userData on startup
@@ -101,7 +104,9 @@ dist/                    # Build output directory
 - Chokidar provides cross-platform file watching
 - FFmpeg is bundled via `ffmpeg-static` (PATH `ffmpeg` is the fallback); `asarUnpack` in package.json keeps the binary spawnable after packaging
 - Tests live in `tests/` and run via `npm test`, which executes Jest through Electron's Node (`ELECTRON_RUN_AS_NODE`) so native modules (better-sqlite3) match the Electron ABI — plain `npx jest` will fail with ABI errors
-- `getVideos()`/`searchVideos()` are paginated (default 9/page); maintenance code that needs every video must use `getAllVideoRefs()`
+- `getVideos()`/`searchVideos()` are paginated (default 9/page) and sorted server-side via whitelisted `filters.sortBy`/`sortOrder`; maintenance code that needs every video must use `getAllVideoRefs()`
+- Rescans skip files whose size + `file_mtime` are unchanged (reusing the stored fingerprint); SQLite scans write through `addVideosBatch()`
+- Renderer pages have a CSP meta tag: no inline scripts/handlers — bind events in JS; file paths must go through `toFileUrl()`
 
 ## Supported Video Formats
 

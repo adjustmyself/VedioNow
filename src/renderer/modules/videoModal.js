@@ -1,0 +1,504 @@
+// VideoManager 的方法群組：影片詳情彈窗：標籤增刪、評分與描述、刪除、開檔、字幕
+// 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
+const { ipcRenderer } = require('electron');
+const { escapeHtml } = require('../shared/util');
+
+class VideoModalMethods {
+  async showVideoModal(videoId) {
+    this.selectedVideo = this.currentVideos.find(v => v.id === videoId);
+    if (!this.selectedVideo) return;
+
+    document.getElementById('modal-filename').textContent = this.selectedVideo.filename;
+    document.getElementById('modal-filepath').textContent = this.selectedVideo.filepath;
+    document.getElementById('modal-filesize').textContent = this.formatFileSize(this.selectedVideo.filesize);
+    const createdText = this.selectedVideo.file_created_at
+      ? new Date(this.selectedVideo.file_created_at).toLocaleString()
+      : (this.selectedVideo.created_at ? new Date(this.selectedVideo.created_at).toLocaleString() : '未知日期');
+    document.getElementById('modal-created').textContent = createdText;
+    document.getElementById('modal-description').value = this.selectedVideo.description || '';
+
+    this.renderModalTags();
+    this.renderTagSelector();
+    this.setModalRating(this.selectedVideo.rating || 0);
+    this.bindModalEvents();
+
+    // 先隱藏合集區，避免顯示上一部影片的殘留資料
+    this.elements.collectionList.classList.add('hidden');
+    this.elements.removeCollectionBtn.classList.add('hidden');
+
+    // 立即顯示彈窗，合集資訊在背景載入
+    this.elements.videoModal.classList.remove('hidden');
+
+    if (this.selectedVideo.fingerprint) {
+      const fingerprint = this.selectedVideo.fingerprint;
+      this.loadCollectionInfo(fingerprint).catch(err => {
+        console.error('背景載入合集資訊失敗:', err);
+      });
+    }
+  }
+
+  hideVideoModal() {
+    this.elements.videoModal.classList.add('hidden');
+    this.selectedVideo = null;
+  }
+
+  renderModalTags() {
+    const modalTags = document.getElementById('modal-tags');
+    modalTags.innerHTML = this.selectedVideo.tags.map(tag => {
+      const color = this.tagColors?.get(tag) || '#3b82f6';
+      return `<span class="tag removable" data-tag="${escapeHtml(tag)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(tag)}</span>`;
+    }).join('');
+
+    // 使用事件委派綁定標籤移除事件（只綁定一次）
+    if (!this.modalTagsEventBound) {
+      modalTags.addEventListener('click', (e) => {
+        const tagElement = e.target.closest('.tag.removable');
+        if (tagElement) {
+          this.removeVideoTag(tagElement.dataset.tag);
+        }
+      });
+      this.modalTagsEventBound = true;
+    }
+  }
+
+  async renderTagSelector() {
+    try {
+      // 直接使用既有快取（loadTags 已在啟動與標籤變動時更新），避免每次開彈窗都重 IPC
+      if (!this.tagsByGroup) {
+        await this.loadTags();
+      }
+      const tagsByGroup = this.tagsByGroup;
+      const tagSelector = document.getElementById('tag-selector');
+
+      if (!tagsByGroup || tagsByGroup.length === 0) {
+        this._bindTagSelectorEvents(tagSelector);
+        tagSelector.innerHTML = `
+          <div class="tag-selector-empty">
+            <p>尚無可用標籤</p>
+            <p class="tag-selector-empty-hint">請先到「標籤管理」頁面建立標籤群組和標籤</p>
+            <button data-action="open-tag-manager" class="btn btn-primary btn-small">開啟標籤管理</button>
+          </div>
+        `;
+        return;
+      }
+
+      tagSelector.innerHTML = tagsByGroup.map(group => `
+        <div class="tag-group-selector" data-group-name="${escapeHtml((group.name || '').toLowerCase())}">
+          <div class="tag-group-header-selector">
+            <div class="tag-group-color-selector" style="background-color: ${escapeHtml(group.color)};"></div>
+            <div class="tag-group-name-selector">${escapeHtml(group.name)}</div>
+          </div>
+          <div class="tags-list-selector">
+            ${(group.tags || []).map(tag => `
+              <div class="tag-item-selector ${this.selectedVideo.tags.includes(tag.name) ? 'selected' : ''}"
+                   data-tag-name="${escapeHtml(tag.name)}"
+                   data-tag-name-lower="${escapeHtml((tag.name || '').toLowerCase())}">
+                <div class="tag-color-selector" style="background-color: ${escapeHtml(tag.color)};"></div>
+                <div class="tag-name-selector">${escapeHtml(tag.name)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+
+      // 重新渲染後重新套用目前的搜尋條件（保留使用者輸入）
+      this.applyTagSearchFilter();
+
+      this._bindTagSelectorEvents(tagSelector);
+    } catch (error) {
+      console.error('載入標籤選擇器錯誤:', error);
+      document.getElementById('tag-selector').innerHTML = '<p>載入標籤失敗</p>';
+    }
+  }
+
+  // 使用事件委派綁定標籤選擇事件（只綁定一次）
+  _bindTagSelectorEvents(tagSelector) {
+    if (this.tagSelectorEventBound) return;
+    tagSelector.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="open-tag-manager"]')) {
+        ipcRenderer.invoke('open-tag-manager');
+        return;
+      }
+      const tagItem = e.target.closest('.tag-item-selector');
+      if (tagItem) {
+        const tagName = tagItem.dataset.tagName;
+        if (tagItem.classList.contains('selected')) {
+          this.removeVideoTag(tagName);
+        } else {
+          this.addVideoTag(tagName);
+        }
+      }
+    });
+    this.tagSelectorEventBound = true;
+  }
+
+  setModalRating(rating) {
+    const modal = document.getElementById('video-modal');
+    const stars = modal.querySelectorAll('.rating .star');
+    stars.forEach((star, index) => {
+      star.classList.toggle('active', index < rating);
+    });
+  }
+
+  bindModalEvents() {
+    // 如果已經綁定過，不重複綁定
+    if (this.modalEventsBound) return;
+
+    const modal = document.getElementById('video-modal');
+
+    // 綁定星星評分事件（限定在模態框內）
+    const stars = modal.querySelectorAll('.rating .star');
+    stars.forEach((star, index) => {
+      star.addEventListener('click', () => {
+        this.setModalRating(index + 1);
+      });
+    });
+
+    // 綁定按鈕事件（使用事件委派）
+    const modalFooter = modal.querySelector('.modal-footer');
+    modalFooter.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target.id === 'save-changes') {
+        this.saveVideoChanges();
+      } else if (target.id === 'generate-thumbnail') {
+        this.showThumbnailSecondsMenu(target, (seconds) => {
+          this.generateThumbnailManually(seconds);
+        });
+      } else if (target.id === 'delete-video') {
+        this.deleteVideo();
+      } else if (target.id === 'delete-video-file') {
+        this.deleteVideoWithFile();
+      } else if (target.id === 'open-file') {
+        this.openVideoFile();
+      } else if (target.id === 'upload-subtitle') {
+        this.uploadSubtitle();
+      }
+    });
+
+    // 綁定新增標籤按鈕
+    const addTagBtn = document.getElementById('add-tag-btn');
+    addTagBtn.addEventListener('click', () => {
+      this.addVideoTag();
+    });
+
+    // 綁定輸入框 Enter 鍵
+    const newTagInput = document.getElementById('new-tag-input');
+    newTagInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        this.addVideoTag();
+      }
+    });
+
+    // 綁定標籤搜尋框
+    const tagSearchInput = document.getElementById('tag-search-input');
+    const tagSearchClear = document.getElementById('tag-search-clear');
+    if (tagSearchInput) {
+      tagSearchInput.addEventListener('input', () => {
+        tagSearchClear.classList.toggle('hidden', !tagSearchInput.value);
+        this.applyTagSearchFilter();
+      });
+    }
+    if (tagSearchClear) {
+      tagSearchClear.addEventListener('click', () => {
+        tagSearchInput.value = '';
+        tagSearchClear.classList.add('hidden');
+        this.applyTagSearchFilter();
+        tagSearchInput.focus();
+      });
+    }
+
+    this.modalEventsBound = true;
+  }
+
+  applyTagSearchFilter() {
+    const tagSelector = document.getElementById('tag-selector');
+    const tagSearchInput = document.getElementById('tag-search-input');
+    if (!tagSelector || !tagSearchInput) return;
+
+    const keyword = tagSearchInput.value.trim().toLowerCase();
+
+    // 移除前次的「無結果」提示
+    const prevEmpty = tagSelector.querySelector('.tag-search-empty');
+    if (prevEmpty) prevEmpty.remove();
+
+    const groups = tagSelector.querySelectorAll('.tag-group-selector');
+
+    if (!keyword) {
+      groups.forEach(group => {
+        group.classList.remove('hidden');
+        group.querySelectorAll('.tag-item-selector').forEach(item => item.classList.remove('hidden'));
+      });
+      return;
+    }
+
+    let totalVisible = 0;
+    groups.forEach(group => {
+      const groupName = group.dataset.groupName || '';
+      const groupMatch = groupName.includes(keyword);
+      let groupVisibleCount = 0;
+
+      group.querySelectorAll('.tag-item-selector').forEach(item => {
+        const tagName = item.dataset.tagNameLower || '';
+        // 群組名稱命中時顯示該群組所有標籤；否則只顯示名稱命中的標籤
+        const match = groupMatch || tagName.includes(keyword);
+        item.classList.toggle('hidden', !match);
+        if (match) groupVisibleCount++;
+      });
+
+      group.classList.toggle('hidden', groupVisibleCount === 0);
+      totalVisible += groupVisibleCount;
+    });
+
+    if (totalVisible === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'tag-search-empty';
+      empty.textContent = `找不到符合「${keyword}」的標籤`;
+      tagSelector.appendChild(empty);
+    }
+  }
+
+  async addVideoTag(tagName = null) {
+    let actualTagName;
+
+    if (tagName) {
+      actualTagName = tagName;
+    } else {
+      const tagInput = document.getElementById('new-tag-input');
+      actualTagName = tagInput.value.trim();
+
+      if (!actualTagName) return;
+
+      tagInput.value = '';
+    }
+
+    // 檢查標籤是否已存在
+    if (this.selectedVideo.tags.includes(actualTagName)) return;
+
+    try {
+      // 只使用基於指紋的新方法
+      if (!this.selectedVideo.fingerprint) {
+        throw new Error('影片缺少 fingerprint，無法添加標籤');
+      }
+
+      const result = await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
+      if (!result || !result.success) {
+        throw new Error(result?.error || '新增標籤失敗');
+      }
+
+      this.selectedVideo.tags.push(actualTagName);
+
+      // 同步更新當前影片列表中的數據
+      const videoIndex = this.currentVideos.findIndex(v => v.id === this.selectedVideo.id);
+      if (videoIndex >= 0) {
+        this.currentVideos[videoIndex].tags = [...this.selectedVideo.tags];
+      }
+
+      this.renderModalTags();
+      this.updateTagSelectorState();
+      this.updateVideoTagsDisplay(this.selectedVideo.id);
+      await this.loadTags();
+      this.renderTagsFilter();
+    } catch (error) {
+      console.error('新增標籤錯誤:', error);
+      alert(`新增標籤失敗：${error.message}`);
+    }
+  }
+
+  async removeVideoTag(tagName) {
+    try {
+      // 只使用基於指紋的新方法
+      if (!this.selectedVideo.fingerprint) {
+        throw new Error('影片缺少 fingerprint，無法移除標籤');
+      }
+
+      const result = await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
+      if (!result || !result.success) {
+        throw new Error(result?.error || '移除標籤失敗');
+      }
+
+      this.selectedVideo.tags = this.selectedVideo.tags.filter(tag => tag !== tagName);
+
+      // 同步更新當前影片列表中的數據
+      const videoIndex = this.currentVideos.findIndex(v => v.id === this.selectedVideo.id);
+      if (videoIndex >= 0) {
+        this.currentVideos[videoIndex].tags = [...this.selectedVideo.tags];
+      }
+
+      this.renderModalTags();
+      this.updateTagSelectorState();
+      this.updateVideoTagsDisplay(this.selectedVideo.id);
+      await this.loadTags();
+      this.renderTagsFilter();
+    } catch (error) {
+      console.error('移除標籤錯誤:', error);
+      alert(`移除標籤失敗：${error.message}`);
+    }
+  }
+
+  updateTagSelectorState() {
+    // 更新標籤選擇器中的選中狀態
+    const tagSelector = document.getElementById('tag-selector');
+    if (!tagSelector) return;
+
+    tagSelector.querySelectorAll('.tag-item-selector').forEach(tagItem => {
+      const tagName = tagItem.dataset.tagName;
+      const isSelected = this.selectedVideo.tags.includes(tagName);
+      tagItem.classList.toggle('selected', isSelected);
+    });
+  }
+
+  updateVideoTagsDisplay(videoId) {
+    // 更新首頁影片卡片的標籤顯示，不重新加載圖片
+    const videoCard = document.querySelector(`[data-video-id="${CSS.escape(String(videoId))}"]`);
+    if (!videoCard) return;
+
+    const video = this.currentVideos.find(v => v.id === videoId);
+    if (!video) return;
+
+    const tagsElement = videoCard.querySelector('.video-tags');
+    if (tagsElement) {
+      const tags = video.tags && video.tags.length > 0
+        ? video.tags.map(tag => this._videoTagHtml(tag)).join('')
+        : '<span class="no-tags">無標籤</span>';
+      tagsElement.innerHTML = tags;
+    }
+  }
+
+  async saveVideoChanges() {
+    const description = document.getElementById('modal-description').value;
+    const rating = document.querySelectorAll('#video-modal .rating .star.active').length;
+
+    try {
+      // 使用基於指紋的新方法來儲存評分和描述
+      if (this.selectedVideo.fingerprint) {
+        await ipcRenderer.invoke('set-video-metadata', this.selectedVideo.fingerprint, {
+          description,
+          rating
+        });
+      } else {
+        // 回退到舊方法（向後兼容）
+        await ipcRenderer.invoke('update-video', this.selectedVideo.id, {
+          description,
+          rating
+        });
+      }
+
+      this.selectedVideo.description = description;
+      this.selectedVideo.rating = rating;
+
+      // 更新當前影片數據在影片列表中
+      const videoIndex = this.currentVideos.findIndex(v => v.id === this.selectedVideo.id);
+      if (videoIndex >= 0) {
+        this.currentVideos[videoIndex] = { ...this.selectedVideo };
+      }
+
+      this.hideVideoModal();
+
+      // 只重新載入標籤過濾器，不重新載入整個影片列表
+      await this.loadTags();
+      this.renderTagsFilter();
+    } catch (error) {
+      console.error('儲存變更錯誤:', error);
+    }
+  }
+
+  async deleteVideo() {
+    if (!confirm('確定要刪除這個影片記錄嗎？（不會刪除實際檔案）')) {
+      return;
+    }
+
+    try {
+      await ipcRenderer.invoke('delete-video', this.selectedVideo.id);
+      this.hideVideoModal();
+      // 保持搜尋條件重新載入
+      await this.refreshCurrentView();
+    } catch (error) {
+      console.error('刪除影片錯誤:', error);
+    }
+  }
+
+  async deleteVideoWithFile() {
+    const filename = this.selectedVideo.filename;
+
+    try {
+      // 使用 Electron 原生對話框進行確認
+      const confirmation = await ipcRenderer.invoke('show-delete-confirmation', filename);
+
+      if (!confirmation.confirmed) {
+        if (!confirmation.checkboxChecked) {
+          alert('請勾選確認選項才能執行刪除操作');
+        }
+        return;
+      }
+
+      const result = await ipcRenderer.invoke('delete-video-with-file', this.selectedVideo.id);
+
+      if (result.success) {
+        const { recordDeleted, fileDeleted, folderDeleted, folderDeleteError, error } = result.result;
+
+        if (recordDeleted && fileDeleted) {
+          let message = '影片記錄和檔案已成功刪除';
+          if (folderDeleted) {
+            message += '\n資料夾已清空並刪除';
+          } else if (folderDeleteError) {
+            message += `\n資料夾刪除失敗：${folderDeleteError}`;
+          }
+          alert(message);
+        } else if (!fileDeleted) {
+          // 檔案刪不掉就保留記錄，避免留下無從追查的殘留檔案
+          alert(`檔案刪除失敗，已保留影片記錄：\n${error}\n\n若只想移除記錄，請改用「刪除記錄」。`);
+          return;
+        }
+
+        this.hideVideoModal();
+        // 保持搜尋條件重新載入
+        await this.refreshCurrentView();
+      } else {
+        alert(`刪除失敗：${result.error}`);
+      }
+    } catch (error) {
+      console.error('刪除影片和檔案錯誤:', error);
+      alert(`刪除過程中發生錯誤：${error.message}`);
+    }
+  }
+
+  openVideoFile() {
+    if (this.selectedVideo) {
+      ipcRenderer.invoke('open-path', this.selectedVideo.filepath);
+    }
+  }
+
+  async uploadSubtitle() {
+    if (!this.selectedVideo) {
+      alert('請先選擇一個影片');
+      return;
+    }
+
+    const btn = document.getElementById('upload-subtitle');
+    const originalText = btn ? btn.textContent : '';
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ 上傳中...';
+      }
+
+      const result = await ipcRenderer.invoke('upload-subtitle', this.selectedVideo.filepath);
+
+      if (result.success) {
+        alert(`字幕上傳成功！\n${result.targetPath}`);
+      } else if (!result.canceled) {
+        alert(`字幕上傳失敗：${result.error}`);
+      }
+    } catch (error) {
+      console.error('上傳字幕錯誤:', error);
+      alert(`上傳字幕時發生錯誤：${error.message}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+  }
+}
+
+module.exports = VideoModalMethods;
