@@ -280,6 +280,22 @@ class SQLiteDatabase {
         return { whereSql: where.join(' AND '), params };
     }
 
+    // 排序欄位白名單；預設排序對應 idx_videos_master_filecreated 索引
+    _buildOrderBy(filters = {}) {
+        const columns = {
+            file_created_at: 'v.file_created_at',
+            created_at: 'v.created_at',
+            filename: 'v.filename COLLATE NOCASE',
+            filesize: 'v.filesize',
+            rating: 'v.rating'
+        };
+        const field = columns[filters.sortBy] ? filters.sortBy : 'file_created_at';
+        const dir = filters.sortOrder === 'asc' ? 'ASC' : 'DESC';
+        const order = [`${columns[field]} ${dir}`];
+        if (field !== 'created_at') order.push(`v.created_at ${dir}`);
+        return order.join(', ');
+    }
+
     _queryVideosPage(searchTerm, tags, filters) {
         const limit = filters.limit || 9;
         const offset = filters.offset || 0;
@@ -293,7 +309,7 @@ class SQLiteDatabase {
             ) AS tags_json
             FROM videos v
             WHERE ${whereSql}
-            ORDER BY v.file_created_at DESC, v.created_at DESC
+            ORDER BY ${this._buildOrderBy(filters)}
             LIMIT ? OFFSET ?
         `).all(...params, limit, offset);
 
@@ -410,6 +426,29 @@ class SQLiteDatabase {
         this.db.prepare('DELETE FROM videos WHERE id = ?').run(Number(videoId));
     }
 
+    // 刪除影片記錄及其標籤、合集關聯（單一 transaction）。
+    // 若刪的是合集主影片，子影片恢復為一般影片，避免它們永遠被隱藏
+    _deleteVideoRecordSync(id, fingerprint) {
+        const run = this.db.transaction(() => {
+            this.db.prepare('DELETE FROM videos WHERE id = ?').run(id);
+            if (!fingerprint) return;
+
+            this.db.prepare('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
+
+            const children = this.db.prepare(
+                'SELECT fingerprint FROM video_collections WHERE main_fingerprint = ? AND is_main = 0'
+            ).all(fingerprint).map(r => r.fingerprint);
+            if (children.length > 0) {
+                const placeholders = children.map(() => '?').join(',');
+                this.db.prepare(`UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint IN (${placeholders})`)
+                    .run(this._now(), ...children);
+            }
+            this.db.prepare('DELETE FROM video_collections WHERE fingerprint = ? OR main_fingerprint = ?')
+                .run(fingerprint, fingerprint);
+        });
+        run();
+    }
+
     async deleteVideoWithFile(videoId) {
         const video = this.db.prepare('SELECT * FROM videos WHERE id = ?').get(Number(videoId));
         if (!video) {
@@ -429,15 +468,7 @@ class SQLiteDatabase {
             return { recordDeleted: false, fileDeleted: false, error: fileErr.message };
         }
 
-        this.db.prepare('DELETE FROM videos WHERE id = ?').run(Number(videoId));
-
-        if (fingerprint) {
-            try {
-                await this.deleteVideoMetadata(fingerprint);
-            } catch (metadataErr) {
-                console.warn('刪除影片元數據失敗:', metadataErr);
-            }
-        }
+        this._deleteVideoRecordSync(Number(videoId), fingerprint);
 
         // 檔案刪除成功後，檢查資料夾是否為空
         let folderDeleted = false;

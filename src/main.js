@@ -54,6 +54,16 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+// 所有視窗都開著 nodeIntegration，任何被導向外部頁面或彈出新視窗的內容都等同拿到 Node 權限；
+// 一律禁止開新視窗，並只允許載入程式自己的 renderer 頁面
+const RENDERER_DIR_URL = require('url').pathToFileURL(path.join(__dirname, 'renderer') + path.sep).href;
+app.on('web-contents-created', (event, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (navEvent, url) => {
+    if (!url.startsWith(RENDERER_DIR_URL)) navEvent.preventDefault();
+  });
+});
+
 // 根據平台選擇正確的 icon 格式
 function getWindowIconPath() {
   if (process.platform === 'win32') {
@@ -246,6 +256,38 @@ app.whenReady().then(async () => {
   }
 });
 
+// 關閉舊的資料庫與資料夾監控後重建。
+// 舊 watcher 若不停，會繼續把檔案事件寫進已關閉的資料庫連線
+async function shutdownDataLayer() {
+  if (videoScanner) {
+    videoScanner.stopAllWatching();
+    videoScanner = null;
+  }
+  if (database) {
+    const old = database;
+    database = null;
+    try {
+      await old.close();
+    } catch (error) {
+      console.warn('關閉資料庫失敗:', error);
+    }
+  }
+}
+
+async function recreateDatabase() {
+  await shutdownDataLayer();
+  database = await DatabaseFactory.create();
+  videoScanner = new VideoScanner(database);
+}
+
+let isQuitting = false;
+app.on('before-quit', (event) => {
+  if (isQuitting) return;
+  isQuitting = true;
+  event.preventDefault();
+  shutdownDataLayer().finally(() => app.quit());
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -289,12 +331,7 @@ ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
 
 ipcMain.handle('get-videos', async (event, filters = {}) => {
   try {
-    const result = await database.getVideos(filters);
-    // 為了向下兼容，如果返回的是陣列，轉換為新格式
-    if (Array.isArray(result)) {
-      return result;
-    }
-    return result;
+    return await database.getVideos(filters);
   } catch (error) {
     console.error('Error getting videos:', error);
     return { videos: [], total: 0, page: 1, pageSize: 9, totalPages: 0 };
@@ -364,12 +401,7 @@ ipcMain.handle('get-all-tags', async () => {
 
 ipcMain.handle('search-videos', async (event, searchTerm, tags = [], filters = {}) => {
   try {
-    const result = await database.searchVideos(searchTerm, tags, filters);
-    // 為了向下兼容，如果返回的是陣列，轉換為新格式
-    if (Array.isArray(result)) {
-      return result;
-    }
-    return result;
+    return await database.searchVideos(searchTerm, tags, filters);
   } catch (error) {
     console.error('Error searching videos:', error);
     return { videos: [], total: 0, page: 1, pageSize: 9, totalPages: 0 };
@@ -765,25 +797,41 @@ ipcMain.handle('get-folder-videos', async (event, folderPath) => {
 });
 
 // 開啟標籤管理視窗
-ipcMain.handle('open-tag-manager', async () => {
-  const tagWindow = new BrowserWindow({
-    width: 900,
-    height: 700,
+// 開啟子視窗（設定、標籤管理）；已開啟時只把它叫到前景，避免重複開出多個 modal
+const childWindows = new Map();
+function openChildWindow(key, file, options) {
+  const existing = childWindows.get(key);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return existing;
+  }
+
+  const win = new BrowserWindow({
+    ...options,
     parent: mainWindow,
     modal: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
-    },
-    title: '標籤管理器'
+    }
   });
+  childWindows.set(key, win);
+  win.on('closed', () => childWindows.delete(key));
 
-  tagWindow.loadFile('src/renderer/tag-manager.html');
+  win.loadFile(file);
 
   if (process.argv.includes('--dev')) {
-    tagWindow.webContents.openDevTools();
+    win.webContents.openDevTools();
   }
+  return win;
+}
 
+ipcMain.handle('open-tag-manager', async () => {
+  openChildWindow('tag-manager', 'src/renderer/tag-manager.html', {
+    width: 900,
+    height: 700,
+    title: '標籤管理器'
+  });
   return { success: true };
 });
 
@@ -899,24 +947,11 @@ ipcMain.handle('migrate-thumbnails', async () => {
 
 // 設置頁面相關的 IPC 處理程序
 ipcMain.handle('open-settings', async () => {
-  const settingsWindow = new BrowserWindow({
+  openChildWindow('settings', 'src/renderer/settings.html', {
     width: 1000,
     height: 700,
-    parent: mainWindow,
-    modal: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
-    },
     title: '應用程式設定'
   });
-
-  settingsWindow.loadFile('src/renderer/settings.html');
-
-  if (process.argv.includes('--dev')) {
-    settingsWindow.webContents.openDevTools();
-  }
-
   return { success: true };
 });
 
@@ -940,11 +975,7 @@ ipcMain.handle('save-config', async (event, settings) => {
     const databaseTypeChanged = success && previousConfig.database.type !== settings.database.type;
     if (databaseTypeChanged) {
       // 資料庫類型改變，重新初始化資料庫
-      if (database) {
-        database.close();
-      }
-      database = await DatabaseFactory.create();
-      videoScanner = new VideoScanner(database);
+      await recreateDatabase();
     }
 
     if (success) {
@@ -980,11 +1011,7 @@ ipcMain.handle('reset-config', async () => {
     await config.init();
 
     // 重新創建資料庫實例
-    if (database) {
-      database.close();
-    }
-    database = await DatabaseFactory.create();
-    videoScanner = new VideoScanner(database);
+    await recreateDatabase();
 
     // 重置後套用預設主題與單頁顯示數量
     const resetConfig = await config.load();
@@ -1087,8 +1114,13 @@ ipcMain.handle('dialog-save-file', async (event, options) => {
 });
 
 // 以系統預設程式開啟檔案（renderer 不直接使用 shell，統一走 IPC）
+// 只允許開啟影片檔，避免被用來執行任意程式
 ipcMain.handle('open-path', async (event, targetPath) => {
   try {
+    const ext = path.extname(String(targetPath || '')).toLowerCase();
+    if (!videoScanner || !videoScanner.supportedFormats.includes(ext)) {
+      return { success: false, error: '不支援開啟此類型的檔案' };
+    }
     const result = await shell.openPath(targetPath);
     // shell.openPath 成功時回傳空字串，失敗時回傳錯誤訊息
     return { success: result === '', error: result || null };

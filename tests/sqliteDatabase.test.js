@@ -241,6 +241,35 @@ describe('SQLiteDatabase', () => {
     });
   });
 
+  describe('排序', () => {
+    beforeEach(async () => {
+      await addVideo({ fingerprint: 'a', filename: 'b.mp4', filepath: 'C:\\v\\b.mp4', filesize: 300, file_created_at: new Date('2026-01-02') });
+      await addVideo({ fingerprint: 'b', filename: 'A.mp4', filepath: 'C:\\v\\A.mp4', filesize: 100, file_created_at: new Date('2026-01-03') });
+      await addVideo({ fingerprint: 'c', filename: 'c.mp4', filepath: 'C:\\v\\c.mp4', filesize: 200, file_created_at: new Date('2026-01-01') });
+    });
+
+    test('預設依檔案建立時間降序', async () => {
+      const result = await db.getVideos({});
+      expect(result.videos.map(v => v.fingerprint)).toEqual(['b', 'a', 'c']);
+    });
+
+    test('排序作用於全部結果而非單頁', async () => {
+      const page1 = await db.getVideos({ sortBy: 'filesize', sortOrder: 'asc', limit: 2, offset: 0 });
+      const page2 = await db.getVideos({ sortBy: 'filesize', sortOrder: 'asc', limit: 2, offset: 2 });
+      expect([...page1.videos, ...page2.videos].map(v => v.filesize)).toEqual([100, 200, 300]);
+    });
+
+    test('檔名排序不分大小寫', async () => {
+      const result = await db.searchVideos('', [], { sortBy: 'filename', sortOrder: 'asc' });
+      expect(result.videos.map(v => v.filename)).toEqual(['A.mp4', 'b.mp4', 'c.mp4']);
+    });
+
+    test('不在白名單的排序欄位退回預設', async () => {
+      const result = await db.getVideos({ sortBy: 'id; DROP TABLE videos', sortOrder: 'asc' });
+      expect(result.videos.map(v => v.fingerprint)).toEqual(['c', 'a', 'b']);
+    });
+  });
+
   describe('合集', () => {
     beforeEach(async () => {
       await addVideo({ fingerprint: 'fp-main', filepath: '\\\\nas\\d\\series\\ep1.mp4', filename: 'ep1.mp4' });
@@ -290,6 +319,36 @@ describe('SQLiteDatabase', () => {
       // 不符合的關鍵字仍搜不到
       const none = await db.searchVideos('不存在', [], {});
       expect(none.total).toBe(0);
+    });
+
+    test('刪除合集主影片檔案：子影片恢復顯示、合集記錄清除', async () => {
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vn-del-'));
+      const mainPath = path.join(dir, 'ep1.mp4');
+      fs.writeFileSync(mainPath, 'x');
+      fs.writeFileSync(path.join(dir, 'keep.txt'), 'x'); // 資料夾不為空，不會被刪
+      try {
+        // 同指紋 → 更新既有主影片的路徑為真實暫存檔
+        await addVideo({ fingerprint: 'fp-main', filepath: mainPath, filename: 'ep1.mp4' });
+        const { id } = await db.getVideoByPath(mainPath);
+        await db.createVideoCollection('fp-main', ['fp-c1', 'fp-c2'], '我的系列', dir);
+        await db.addVideoTag('fp-main', '動作');
+
+        const result = await db.deleteVideoWithFile(id);
+        expect(result.fileDeleted).not.toBe(false);
+        expect(fs.existsSync(mainPath)).toBe(false);
+
+        const videos = await db.getVideos({});
+        expect(videos.videos.map(v => v.fingerprint).sort()).toEqual(['fp-c1', 'fp-c2']);
+        expect(await db.getVideoCollection('fp-main')).toBeNull();
+        const { n } = db.db.prepare('SELECT COUNT(*) AS n FROM video_collections').get();
+        expect(n).toBe(0);
+        expect(await db.countOrphanTagRelations()).toBe(0);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     test('getVideosByFolder 只回傳同層影片', async () => {

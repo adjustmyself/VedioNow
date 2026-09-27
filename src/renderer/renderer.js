@@ -15,6 +15,13 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+// 本機 / UNC 路徑轉成 file:// URL（直接串 "file://" + 路徑遇到 # % ? 空白會壞掉）
+const { pathToFileURL } = require('url');
+function toFileUrl(filePath, version) {
+  const href = pathToFileURL(filePath).href;
+  return version ? `${href}?t=${version}` : href;
+}
+
 class VideoManager {
   constructor() {
     this.currentVideos = [];
@@ -345,28 +352,53 @@ class VideoManager {
     this.renderTagsFilter();
   }
 
-  async loadVideos() {
-    const filters = {
+  _buildPageFilters() {
+    return {
       limit: this.pageSize,
       offset: (this.currentPage - 1) * this.pageSize,
       rating: this.selectedRating,
-      drivePath: this.selectedDrivePath
+      drivePath: this.selectedDrivePath,
+      sortBy: this.currentSort,
+      sortOrder: this.sortOrder
     };
+  }
 
-    const result = await ipcRenderer.invoke('get-videos', filters);
+  _applyPageResult(result) {
+    this.currentVideos = result.videos || [];
+    this.totalVideos = result.total || 0;
+    this.totalPages = result.totalPages || 0;
+    this.currentPage = result.page || 1;
+  }
 
-    if (Array.isArray(result)) {
-      // 向下兼容舊格式 - 但這不應該發生在分頁模式下
-      console.warn('收到舊格式資料，分頁功能可能異常');
-      this.currentVideos = result;
-      this.totalVideos = result.length;
-      this.totalPages = Math.ceil(result.length / this.pageSize);
-    } else {
-      // 新的分頁格式
-      this.currentVideos = result.videos || [];
-      this.totalVideos = result.total || 0;
-      this.totalPages = result.totalPages || 0;
-      this.currentPage = result.page || 1;
+  // 依目前搜尋字、標籤、篩選與排序查詢 this.currentPage 那一頁
+  _queryCurrentPage() {
+    const searchTerm = this.elements.searchInput.value.trim();
+    const activeTagsArray = Array.from(this.activeTags);
+    return ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, this._buildPageFilters());
+  }
+
+  async loadVideos() {
+    this._applyPageResult(await this._queryCurrentPage());
+  }
+
+  // 重新查詢並重繪目前頁（換頁、排序共用）
+  async fetchPage() {
+    // 與 handleSearch 共用 requestId：換頁中若使用者再輸入搜尋，丟棄本次回應
+    const reqId = ++this._searchReqId;
+    this.showLoading();
+    try {
+      const result = await this._queryCurrentPage();
+      if (reqId !== this._searchReqId) return;
+      this._applyPageResult(result);
+      this.updateStats();
+      this.renderVideos();
+      this.renderPagination();
+    } catch (error) {
+      console.error('載入頁面錯誤:', error);
+    } finally {
+      if (reqId === this._searchReqId) {
+        this.hideLoading();
+      }
     }
   }
 
@@ -455,32 +487,13 @@ class VideoManager {
       this.currentPage = 1;
 
       const trimmedTerm = (searchTerm || '').trim();
-
       const activeTagsArray = Array.from(this.activeTags);
-      const filters = {
-        limit: this.pageSize,
-        offset: (this.currentPage - 1) * this.pageSize,
-        rating: this.selectedRating,
-        drivePath: this.selectedDrivePath
-      };
 
-      const result = await ipcRenderer.invoke('search-videos', trimmedTerm, activeTagsArray, filters);
+      const result = await ipcRenderer.invoke('search-videos', trimmedTerm, activeTagsArray, this._buildPageFilters());
 
       if (reqId !== this._searchReqId) return;
 
-      if (Array.isArray(result)) {
-        // 向下兼容舊格式 - 但這不應該發生在分頁模式下
-        console.warn('搜尋收到舊格式資料，分頁功能可能異常');
-        this.currentVideos = result;
-        this.totalVideos = result.length;
-        this.totalPages = Math.ceil(result.length / this.pageSize);
-      } else {
-        // 新的分頁格式
-        this.currentVideos = result.videos || [];
-        this.totalVideos = result.total || 0;
-        this.totalPages = result.totalPages || 0;
-        this.currentPage = result.page || 1;
-      }
+      this._applyPageResult(result);
 
       this.updateStats();
       this.renderVideos();
@@ -507,35 +520,18 @@ class VideoManager {
     this.renderVideos();
   }
 
+  // 排序在後端處理，才會對全部結果排序而不是只排目前這一頁
   setSortField(field) {
     this.currentSort = field;
-    this.sortVideos();
-    this.renderVideos();
+    this.currentPage = 1;
+    this.fetchPage();
   }
 
   toggleSortOrder() {
     this.sortOrder = this.sortOrder === 'desc' ? 'asc' : 'desc';
     this.elements.sortOrderBtn.textContent = this.sortOrder === 'desc' ? '降序' : '升序';
-    this.sortVideos();
-    this.renderVideos();
-  }
-
-  sortVideos() {
-    this.currentVideos.sort((a, b) => {
-      let valueA = a[this.currentSort];
-      let valueB = b[this.currentSort];
-
-      if (typeof valueA === 'string') {
-        valueA = valueA.toLowerCase();
-        valueB = valueB.toLowerCase();
-      }
-
-      if (this.sortOrder === 'desc') {
-        return valueA > valueB ? -1 : valueA < valueB ? 1 : 0;
-      } else {
-        return valueA < valueB ? -1 : valueA > valueB ? 1 : 0;
-      }
-    });
+    this.currentPage = 1;
+    this.fetchPage();
   }
 
   renderVideos() {
@@ -765,7 +761,7 @@ class VideoManager {
       fallbackElement.innerHTML = `
         <div style="text-align: center;">
           <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🎬</div>
-          <div style="font-size: 0.7rem; opacity: 0.8;">${extension}</div>
+          <div style="font-size: 0.7rem; opacity: 0.8;">${escapeHtml(extension)}</div>
           <div style="font-size: 0.6rem; opacity: 0.6;">無法預覽</div>
         </div>
       `;
@@ -796,7 +792,7 @@ class VideoManager {
     // 縮圖檔名固定（路徑 hash），重產後需用版本號破壞渲染器快取，否則沿用舊圖。
     // 版本號持久化於 thumbnailVersions，重新渲染列表時仍會帶上，避免又跳回舊圖。
     const version = this.thumbnailVersions.get(container.dataset.filepath);
-    img.src = version ? `file://${thumbnailPath}?t=${version}` : `file://${thumbnailPath}`;
+    img.src = toFileUrl(thumbnailPath, version);
 
     img.addEventListener('load', () => {
       if (fallbackElement) {
@@ -831,7 +827,7 @@ class VideoManager {
       video.muted = true;
 
       const source = document.createElement('source');
-      source.src = videoPath;
+      source.src = toFileUrl(videoPath);
       video.appendChild(source);
 
       const fallback = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
@@ -905,7 +901,7 @@ class VideoManager {
           const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
           fallback.innerHTML = `
             <div style="text-align: center; font-size: 0.7rem;">
-              <div>🎬 ${extension}</div>
+              <div>🎬 ${escapeHtml(extension)}</div>
               <div style="margin: 2px 0;">載入失敗</div>
               <div class="retry-btn" style="cursor: pointer; color: #667eea;">點擊重試</div>
             </div>
@@ -1289,11 +1285,12 @@ class VideoManager {
       const tagSelector = document.getElementById('tag-selector');
 
       if (!tagsByGroup || tagsByGroup.length === 0) {
+        this._bindTagSelectorEvents(tagSelector);
         tagSelector.innerHTML = `
           <div style="text-align: center; padding: 1rem; color: #666;">
             <p>尚無可用標籤</p>
             <p style="font-size: 0.8rem;">請先到「標籤管理」頁面建立標籤群組和標籤</p>
-            <button onclick="ipcRenderer.invoke('open-tag-manager')" style="margin-top: 0.5rem; padding: 0.25rem 0.5rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            <button data-action="open-tag-manager" style="margin-top: 0.5rem; padding: 0.25rem 0.5rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
               開啟標籤管理
             </button>
           </div>
@@ -1323,25 +1320,32 @@ class VideoManager {
       // 重新渲染後重新套用目前的搜尋條件（保留使用者輸入）
       this.applyTagSearchFilter();
 
-      // 使用事件委派綁定標籤選擇事件（只綁定一次）
-      if (!this.tagSelectorEventBound) {
-        tagSelector.addEventListener('click', (e) => {
-          const tagItem = e.target.closest('.tag-item-selector');
-          if (tagItem) {
-            const tagName = tagItem.dataset.tagName;
-            if (tagItem.classList.contains('selected')) {
-              this.removeVideoTag(tagName);
-            } else {
-              this.addVideoTag(tagName);
-            }
-          }
-        });
-        this.tagSelectorEventBound = true;
-      }
+      this._bindTagSelectorEvents(tagSelector);
     } catch (error) {
       console.error('載入標籤選擇器錯誤:', error);
       document.getElementById('tag-selector').innerHTML = '<p>載入標籤失敗</p>';
     }
+  }
+
+  // 使用事件委派綁定標籤選擇事件（只綁定一次）
+  _bindTagSelectorEvents(tagSelector) {
+    if (this.tagSelectorEventBound) return;
+    tagSelector.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="open-tag-manager"]')) {
+        ipcRenderer.invoke('open-tag-manager');
+        return;
+      }
+      const tagItem = e.target.closest('.tag-item-selector');
+      if (tagItem) {
+        const tagName = tagItem.dataset.tagName;
+        if (tagItem.classList.contains('selected')) {
+          this.removeVideoTag(tagName);
+        } else {
+          this.addVideoTag(tagName);
+        }
+      }
+    });
+    this.tagSelectorEventBound = true;
   }
 
   setModalRating(rating) {
@@ -1492,7 +1496,10 @@ class VideoManager {
         throw new Error('影片缺少 fingerprint，無法添加標籤');
       }
 
-      await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
+      const result = await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
+      if (!result || !result.success) {
+        throw new Error(result?.error || '新增標籤失敗');
+      }
 
       this.selectedVideo.tags.push(actualTagName);
 
@@ -1509,6 +1516,7 @@ class VideoManager {
       this.renderTagsFilter();
     } catch (error) {
       console.error('新增標籤錯誤:', error);
+      alert(`新增標籤失敗：${error.message}`);
     }
   }
 
@@ -1519,7 +1527,10 @@ class VideoManager {
         throw new Error('影片缺少 fingerprint，無法移除標籤');
       }
 
-      await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
+      const result = await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
+      if (!result || !result.success) {
+        throw new Error(result?.error || '移除標籤失敗');
+      }
 
       this.selectedVideo.tags = this.selectedVideo.tags.filter(tag => tag !== tagName);
 
@@ -1536,6 +1547,7 @@ class VideoManager {
       this.renderTagsFilter();
     } catch (error) {
       console.error('移除標籤錯誤:', error);
+      alert(`移除標籤失敗：${error.message}`);
     }
   }
 
@@ -1553,7 +1565,7 @@ class VideoManager {
 
   updateVideoTagsDisplay(videoId) {
     // 更新首頁影片卡片的標籤顯示，不重新加載圖片
-    const videoCard = document.querySelector(`[data-video-id="${videoId}"]`);
+    const videoCard = document.querySelector(`[data-video-id="${CSS.escape(String(videoId))}"]`);
     if (!videoCard) return;
 
     const video = this.currentVideos.find(v => v.id === videoId);
@@ -1570,7 +1582,7 @@ class VideoManager {
 
   async saveVideoChanges() {
     const description = document.getElementById('modal-description').value;
-    const rating = document.querySelectorAll('.star.active').length;
+    const rating = document.querySelectorAll('#video-modal .rating .star.active').length;
 
     try {
       // 使用基於指紋的新方法來儲存評分和描述
@@ -1728,7 +1740,7 @@ class VideoManager {
         alert('縮圖生成成功！');
 
         // 重新載入頁面上的縮圖（如果當前影片在列表中顯示）
-        const videoCard = document.querySelector(`[data-video-id="${this.selectedVideo.id}"]`);
+        const videoCard = document.querySelector(`[data-video-id="${CSS.escape(String(this.selectedVideo.id))}"]`);
         if (videoCard) {
           const thumbnailContainer = videoCard.querySelector('.video-thumbnail, .video-list-thumbnail');
           if (thumbnailContainer) {
@@ -1963,56 +1975,7 @@ class VideoManager {
     }
 
     this.currentPage = page;
-    // 與 handleSearch 共用 requestId：換頁中若使用者再輸入搜尋，丟棄本次回應
-    const reqId = ++this._searchReqId;
-    this.showLoading();
-
-    try {
-      const searchTerm = this.elements.searchInput.value.trim();
-      const activeTagsArray = Array.from(this.activeTags);
-
-      if (searchTerm || activeTagsArray.length > 0) {
-        // 有搜尋條件時，保持搜尋狀態進行分頁
-        const filters = {
-          limit: this.pageSize,
-          offset: (this.currentPage - 1) * this.pageSize,
-          rating: this.selectedRating,
-          drivePath: this.selectedDrivePath
-        };
-
-        const result = await ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, filters);
-
-        if (reqId !== this._searchReqId) return;
-
-        if (Array.isArray(result)) {
-          console.warn('搜尋收到舊格式資料，分頁功能可能異常');
-          this.currentVideos = result;
-          this.totalVideos = result.length;
-          this.totalPages = Math.ceil(result.length / this.pageSize);
-        } else {
-          this.currentVideos = result.videos || [];
-          this.totalVideos = result.total || 0;
-          this.totalPages = result.totalPages || 0;
-          this.currentPage = result.page || 1;
-        }
-
-        this.updateStats();
-        this.renderVideos();
-        this.renderPagination();
-      } else {
-        // 沒有搜尋條件時，使用一般載入
-        await this.loadVideos();
-        if (reqId !== this._searchReqId) return;
-        this.renderVideos();
-        this.renderPagination();
-      }
-    } catch (error) {
-      console.error('切換頁面錯誤:', error);
-    } finally {
-      if (reqId === this._searchReqId) {
-        this.hideLoading();
-      }
-    }
+    await this.fetchPage();
   }
 
   // 依頁碼容器可用寬度，計算目前頁左右各顯示幾個頁碼（越寬顯示越多）
@@ -2290,8 +2253,7 @@ class VideoManager {
       if (result.success) {
         alert('合集建立成功！');
         this.hideCollectionModal();
-        // 重新載入影片列表
-        await this.loadVideos();
+        await this.refreshCurrentView();
       } else {
         alert('建立合集失敗: ' + result.error);
       }
@@ -2331,8 +2293,7 @@ class VideoManager {
           : '合集已刪除';
         alert(deletedMsg);
         this.hideVideoModal();
-        // 重新載入影片列表
-        await this.loadVideos();
+        await this.refreshCurrentView();
       } else {
         alert('刪除合集失敗: ' + result.error);
       }

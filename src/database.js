@@ -408,91 +408,106 @@ class MongoDatabase extends DatabaseInterface {
         ];
     }
 
-    async getVideos(filters = {}) {
-        // 分頁參數
-        const limit = filters.limit || 9;
-        const offset = filters.offset || 0;
-        const needCount = filters.count !== false;
+    // 使用者輸入轉成字面比對的 RegExp（避免 "(" "[" 等字元讓查詢拋錯或回溯爆炸）
+    _literalRegex(text) {
+        return new RegExp(String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    }
 
-        // 第四步：篩選條件
-        const matchStage = {};
+    // 組合篩選條件（getVideos / searchVideos / getTagCountsForFilter 共用）。
+    // 標籤條件先查 video_tag_relations（有索引）換成 fingerprint $in，
+    // 讓後續管道不必對全部影片做 $lookup，只在分頁後 join 一頁的標籤。
+    async _buildMatch(searchTerm, tags = [], filters = {}) {
+        const match = { ...this._masterMatch() };
+
+        if (searchTerm && searchTerm.trim()) {
+            const searchRegex = this._literalRegex(searchTerm.trim());
+            match.$or = [
+                { filename: searchRegex },
+                { description: searchRegex }
+            ];
+            // 合集子影片（is_master = false）不會出現在列表，檔名符合時回傳其所屬合集的主影片
+            const mainFingerprints = await this._findCollectionMainsByChildFilename(searchRegex);
+            if (mainFingerprints.length > 0) {
+                match.$or.push({ fingerprint: { $in: mainFingerprints } });
+            }
+        }
+
         if (filters.filename) {
-            matchStage.filename = new RegExp(filters.filename, 'i');
+            match.filename = this._literalRegex(filters.filename);
         }
-        if (filters.tag) {
-            matchStage.tags = filters.tag;
+
+        const allTags = [...(tags || [])];
+        if (filters.tag) allTags.push(filters.tag);
+        if (allTags.length > 0) {
+            const relations = await this.db.collection('video_tag_relations')
+                .find({ tags: { $all: allTags } })
+                .project({ fingerprint: 1 })
+                .toArray();
+            match.fingerprint = { $in: relations.map(r => r.fingerprint) };
         }
+
         if (filters.rating && filters.rating > 0) {
-            matchStage.rating = filters.rating;
+            match.rating = filters.rating;
         }
+
         if (filters.drivePath && filters.drivePath.trim()) {
             // 硬碟路徑篩選：匹配第二層路徑
             // 例如：\\192.168.1.147\16tb-SN-2BH171AN\...
             const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
-        }
-        // 只有用到 tags 的篩選才需要先 join video_tag_relations。
-        // 沒有 tag 條件時，先排序分頁再 join，$lookup 只跑一頁（例如 6 筆）而不是全部兩萬筆。
-        const needsTagJoinBeforeMatch = matchStage.tags !== undefined;
-
-        let pipeline;
-        if (needsTagJoinBeforeMatch) {
-            pipeline = this._buildBasePipeline();
-            pipeline.push({ $match: matchStage });
-            pipeline.push({ $sort: { file_created_at: -1, created_at: -1 } });
-            pipeline.push({ $skip: offset });
-            pipeline.push({ $limit: limit });
-        } else {
-            pipeline = [{ $match: this._masterMatch() }];
-            if (Object.keys(matchStage).length > 0) {
-                pipeline.push({ $match: matchStage });
-            }
-            pipeline.push({ $sort: { file_created_at: -1, created_at: -1 } });
-            pipeline.push({ $skip: offset });
-            pipeline.push({ $limit: limit });
-            pipeline.push(...this._tagJoinStages());
+            match.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
         }
 
-        // 最後：清理欄位
-        pipeline.push({
-            $project: {
-                tag_relation: 0
-            }
-        });
+        return match;
+    }
 
-        const videos = await this.db.collection('videos').aggregate(pipeline).toArray();
+    // 排序欄位白名單；預設排序對應 {is_master, file_created_at, created_at} 索引
+    _buildSort(filters = {}) {
+        const allowed = ['file_created_at', 'created_at', 'filename', 'filesize', 'rating'];
+        const field = allowed.includes(filters.sortBy) ? filters.sortBy : 'file_created_at';
+        const dir = filters.sortOrder === 'asc' ? 1 : -1;
+        const sort = { [field]: dir };
+        if (field !== 'created_at') sort.created_at = dir;
+        return sort;
+    }
 
+    async _queryVideosPage(searchTerm, tags, filters) {
+        const limit = filters.limit || 9;
+        const offset = filters.offset || 0;
+        const needCount = filters.count !== false;
+
+        const match = await this._buildMatch(searchTerm, tags, filters);
+        const pipeline = [
+            { $match: match },
+            { $sort: this._buildSort(filters) },
+            { $skip: offset },
+            { $limit: limit },
+            ...this._tagJoinStages(),
+            { $project: { tag_relation: 0 } }
+        ];
+        // 檔名排序不分大小寫
+        const options = filters.sortBy === 'filename' ? { collation: { locale: 'en', strength: 2 } } : {};
+
+        const videos = await this.db.collection('videos').aggregate(pipeline, options).toArray();
         const mappedVideos = videos.map(video => ({
             ...video,
             id: video._id.toString(),
             tags: video.tags || []
         }));
 
-        // 如果需要計算總數，執行額外查詢
-        if (needCount) {
-            let total;
-            if (needsTagJoinBeforeMatch) {
-                const countPipeline = this._buildBasePipeline();
-                countPipeline.push({ $match: matchStage });
-                countPipeline.push({ $count: 'total' });
-                const countResult = await this.db.collection('videos').aggregate(countPipeline).toArray();
-                total = countResult.length > 0 ? countResult[0].total : 0;
-            } else {
-                // 不需要標籤資料時直接數，省掉對全部影片做 $lookup 的聚合
-                total = await this.db.collection('videos')
-                    .countDocuments({ ...this._masterMatch(), ...matchStage });
-            }
+        if (!needCount) return { videos: mappedVideos };
 
-            return {
-                videos: mappedVideos,
-                total: total,
-                page: Math.floor(offset / limit) + 1,
-                pageSize: limit,
-                totalPages: Math.ceil(total / limit)
-            };
-        } else {
-            return { videos: mappedVideos };
-        }
+        const total = await this.db.collection('videos').countDocuments(match);
+        return {
+            videos: mappedVideos,
+            total,
+            page: Math.floor(offset / limit) + 1,
+            pageSize: limit,
+            totalPages: Math.ceil(total / limit)
+        };
+    }
+
+    async getVideos(filters = {}) {
+        return this._queryVideosPage(null, [], filters);
     }
 
     // 找出「子影片檔名符合」的合集主影片指紋
@@ -512,130 +527,19 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async searchVideos(searchTerm, tags = [], filters = {}) {
-        // 分頁參數
-        const limit = filters.limit || 9;
-        const offset = filters.offset || 0;
-        const needCount = filters.count !== false;
-
-        const pipeline = this._buildBasePipeline();
-
-        // 第四步：篩選條件
-        const matchStage = {};
-
-        if (searchTerm && searchTerm.trim()) {
-            // 使用 RegExp 支援部分字串比對與中文搜尋
-            // $text 全文索引不支援子字串匹配且與 $lookup 管道不相容
-            const searchRegex = new RegExp(searchTerm, 'i');
-            matchStage.$or = [
-                { filename: searchRegex },
-                { description: searchRegex }
-            ];
-
-            // 合集子影片（is_master = false）不會出現在列表，檔名符合時回傳其所屬合集的主影片
-            const mainFingerprints = await this._findCollectionMainsByChildFilename(searchRegex);
-            if (mainFingerprints.length > 0) {
-                matchStage.$or.push({ fingerprint: { $in: mainFingerprints } });
-            }
-        }
-
-        if (tags.length > 0) {
-            // 使用 $all 確保所有指定的標籤都存在
-            matchStage.tags = { $all: tags };
-        }
-
-        if (filters.rating && filters.rating > 0) {
-            matchStage.rating = filters.rating;
-        }
-
-        if (filters.drivePath && filters.drivePath.trim()) {
-            // 硬碟路徑篩選：匹配第二層路徑
-            // 例如：\\192.168.1.147\16tb-SN-2BH171AN\...
-            const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
-        }
-
-        if (Object.keys(matchStage).length > 0) {
-            pipeline.push({ $match: matchStage });
-        }
-
-        // 第五步：排序
-        pipeline.push({
-            $sort: { file_created_at: -1, created_at: -1 }
-        });
-
-        // 第六步：分頁
-        pipeline.push({ $skip: offset });
-        pipeline.push({ $limit: limit });
-
-        // 第七步：清理欄位
-        pipeline.push({
-            $project: {
-                tag_relation: 0
-            }
-        });
-
-        const videos = await this.db.collection('videos').aggregate(pipeline).toArray();
-
-        const mappedVideos = videos.map(video => ({
-            ...video,
-            id: video._id.toString(),
-            tags: video.tags || []
-        }));
-
-        // 如果需要計算總數，執行額外查詢
-        if (needCount) {
-            const countPipeline = this._buildBasePipeline();
-
-            if (Object.keys(matchStage).length > 0) {
-                countPipeline.push({ $match: matchStage });
-            }
-
-            countPipeline.push({ $count: 'total' });
-
-            const countResult = await this.db.collection('videos').aggregate(countPipeline).toArray();
-            const total = countResult.length > 0 ? countResult[0].total : 0;
-
-            return {
-                videos: mappedVideos,
-                total: total,
-                page: Math.floor(offset / limit) + 1,
-                pageSize: limit,
-                totalPages: Math.ceil(total / limit)
-            };
-        } else {
-            return { videos: mappedVideos };
-        }
+        return this._queryVideosPage(searchTerm, tags, filters);
     }
 
     // 多面向篩選用：依目前篩選條件回傳每個標籤的影片計數
     // 回傳 { tagName: count } 物件，渲染端可即時更新側邊欄計數
     async getTagCountsForFilter(searchTerm, tags = [], filters = {}) {
-        const pipeline = this._buildBasePipeline();
-        const matchStage = {};
-
-        if (searchTerm && searchTerm.trim()) {
-            matchStage.$or = [
-                { filename: new RegExp(searchTerm, 'i') },
-                { description: new RegExp(searchTerm, 'i') }
-            ];
-        }
-        if (tags.length > 0) {
-            matchStage.tags = { $all: tags };
-        }
-        if (filters.rating && filters.rating > 0) {
-            matchStage.rating = filters.rating;
-        }
-        if (filters.drivePath && filters.drivePath.trim()) {
-            const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            matchStage.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
-        }
-
-        if (Object.keys(matchStage).length > 0) {
-            pipeline.push({ $match: matchStage });
-        }
-
-        pipeline.push({ $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } });
-        pipeline.push({ $group: { _id: '$tags', count: { $sum: 1 } } });
+        const match = await this._buildMatch(searchTerm, tags, filters);
+        const pipeline = [
+            { $match: match },
+            ...this._tagJoinStages(),
+            { $unwind: { path: '$tags', preserveNullAndEmptyArrays: false } },
+            { $group: { _id: '$tags', count: { $sum: 1 } } }
+        ];
 
         const results = await this.db.collection('videos').aggregate(pipeline).toArray();
         const counts = {};
@@ -663,11 +567,20 @@ class MongoDatabase extends DatabaseInterface {
         return { removed: result.deletedCount };
     }
 
+    // 只保留白名單欄位，避免 renderer 傳入任意欄位寫進資料庫（與 SQLite 版一致）
+    _pickAllowed(updates, allowed) {
+        const picked = {};
+        for (const key of allowed) {
+            if (updates[key] !== undefined) picked[key] = updates[key];
+        }
+        return picked;
+    }
+
     async updateVideo(videoId, updates) {
         const objectId = new ObjectId(videoId);
         const updateDoc = {
             $set: {
-                ...updates,
+                ...this._pickAllowed(updates, ['filename', 'filepath', 'filesize', 'duration', 'description', 'rating', 'is_master', 'fingerprint', 'file_created_at']),
                 updated_at: new Date()
             }
         };
@@ -694,73 +607,35 @@ class MongoDatabase extends DatabaseInterface {
     }
 
     async addVideoTag(fingerprint, tagName) {
-        // 確保影片存在
-        const video = await this.db.collection('videos').findOne({ fingerprint });
-        if (!video) {
-            throw new Error(`找不到指紋為 ${fingerprint} 的影片`);
-        }
+        await this._assertVideoExists(fingerprint);
 
-        // 從 video_tag_relations 集合獲取當前標籤
-        const relation = await this.db.collection('video_tag_relations').findOne({ fingerprint });
-
-        let tags = [];
-        if (relation && relation.tags) {
-            tags = Array.isArray(relation.tags) ? relation.tags : [];
-        }
-
-        // 添加新標籤（如果不存在）
-        if (!tags.includes(tagName)) {
-            tags.push(tagName);
-        }
-
-        // 更新或插入到 video_tag_relations 集合
+        // 原子操作：連續快速點擊也不會互相覆蓋
         await this.db.collection('video_tag_relations').updateOne(
             { fingerprint },
             {
-                $set: {
-                    tags,
-                    updated_at: new Date()
-                },
-                $setOnInsert: {
-                    created_at: new Date()
-                }
+                $addToSet: { tags: tagName },
+                $set: { updated_at: new Date() },
+                $setOnInsert: { created_at: new Date() }
             },
             { upsert: true }
         );
     }
 
     async removeVideoTag(fingerprint, tagName) {
-        // 確保影片存在
-        const video = await this.db.collection('videos').findOne({ fingerprint });
-        if (!video) {
+        await this._assertVideoExists(fingerprint);
+
+        await this.db.collection('video_tag_relations').updateOne(
+            { fingerprint },
+            { $pull: { tags: tagName }, $set: { updated_at: new Date() } }
+        );
+        // 沒有標籤了就刪除記錄
+        await this.db.collection('video_tag_relations').deleteOne({ fingerprint, tags: { $size: 0 } });
+    }
+
+    async _assertVideoExists(fingerprint) {
+        const exists = await this.db.collection('videos').countDocuments({ fingerprint }, { limit: 1 });
+        if (!exists) {
             throw new Error(`找不到指紋為 ${fingerprint} 的影片`);
-        }
-
-        // 從 video_tag_relations 集合獲取當前標籤
-        const relation = await this.db.collection('video_tag_relations').findOne({ fingerprint });
-
-        let tags = [];
-        if (relation && relation.tags) {
-            tags = Array.isArray(relation.tags) ? relation.tags : [];
-        }
-
-        // 移除標籤
-        tags = tags.filter(tag => tag !== tagName);
-
-        if (tags.length === 0) {
-            // 如果沒有標籤了，刪除記錄
-            await this.db.collection('video_tag_relations').deleteOne({ fingerprint });
-        } else {
-            // 更新標籤陣列
-            await this.db.collection('video_tag_relations').updateOne(
-                { fingerprint },
-                {
-                    $set: {
-                        tags,
-                        updated_at: new Date()
-                    }
-                }
-            );
         }
     }
 
@@ -1195,11 +1070,17 @@ class MongoDatabase extends DatabaseInterface {
     async deleteTag(tagId) {
         const objectId = new ObjectId(tagId);
 
-        // 先從所有影片中移除此標籤
+        // 先從所有影片中移除此標籤（與 SQLite 版一致：清掉 video_tag_relations 的關聯）
         const tag = await this.db.collection('tags').findOne({ _id: objectId });
         if (tag) {
+            await this.db.collection('video_tag_relations').updateMany(
+                { tags: tag.name },
+                { $pull: { tags: tag.name }, $set: { updated_at: new Date() } }
+            );
+            await this.db.collection('video_tag_relations').deleteMany({ tags: { $size: 0 } });
+            // 舊版資料把標籤直接存在 videos.tags
             await this.db.collection('videos').updateMany(
-                { tags: { $in: [tag.name] } },
+                { tags: tag.name },
                 { $pull: { tags: tag.name } }
             );
         }
@@ -1234,10 +1115,8 @@ class MongoDatabase extends DatabaseInterface {
         try {
             console.log('更新標籤群組:', { groupId, updates });
 
-            const updateDoc = { ...updates };
-            if (updateDoc.updated_at === undefined) {
-                updateDoc.updated_at = new Date();
-            }
+            const updateDoc = this._pickAllowed(updates, ['name', 'color', 'description', 'sort_order']);
+            updateDoc.updated_at = new Date();
 
             const result = await this.db.collection('tag_groups').updateOne(
                 { _id: new ObjectId(groupId) },
@@ -1501,7 +1380,7 @@ class MongoDatabase extends DatabaseInterface {
         try {
             const result = await this.db.collection('video_collections').updateOne(
                 { fingerprint: mainVideoFingerprint, is_main: true },
-                { $set: { ...updates, updated_at: new Date() } }
+                { $set: { ...this._pickAllowed(updates, ['collection_name', 'folder_path', 'sort_order']), updated_at: new Date() } }
             );
             return { success: result.modifiedCount > 0 };
         } catch (error) {
