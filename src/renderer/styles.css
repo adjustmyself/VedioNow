@@ -1557,21 +1557,6 @@ select {
 
 /* ========== 影片合集相關樣式 ========== */
 
-/* 合集徽章 */
-.collection-badge {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    background: rgba(102, 126, 234, 0.95);
-    color: white;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    z-index: 10;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-}
-
 /* 合集控制按鈕 */
 .collection-controls {
     display: flex;
@@ -1591,21 +1576,6 @@ select {
     margin: 0 0 1rem 0;
     color: #667eea;
     font-size: 1rem;
-}
-
-/* 合集名稱編輯 */
-.collection-name-edit {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-.collection-name-edit input {
-    flex: 1;
-    padding: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 0.9rem;
 }
 
 /* 合集影片清單 */
@@ -1659,13 +1629,6 @@ select {
     white-space: nowrap;
 }
 
-.episode-actions {
-    display: flex;
-    gap: 0.5rem;
-}
-
-.btn-remove-episode,
-.btn-play-episode,
 .btn-play {
     padding: 0.25rem 0.75rem;
     font-size: 0.75rem;
@@ -1676,23 +1639,12 @@ select {
     flex-shrink: 0;
 }
 
-.btn-remove-episode {
-    background: #ff4444;
-    color: white;
-}
-
-.btn-remove-episode:hover {
-    background: #cc0000;
-}
-
-.btn-play-episode,
 .btn-play {
     background: #667eea;
     color: white;
     font-weight: 500;
 }
 
-.btn-play-episode:hover,
 .btn-play:hover {
     background: #5568d3;
     transform: translateY(-1px);
@@ -1750,56 +1702,44 @@ select {
     background: #f8f9fa;
 }
 
-.video-select-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    background: white;
-    border-radius: 6px;
-    margin-bottom: 0.5rem;
-    cursor: move;
-    border: 2px solid transparent;
-    transition: all 0.2s;
-}
-
-.video-select-item:hover {
-    border-color: #667eea;
-}
-
-.video-select-item.selected {
-    background: #e8eaf6;
-    border-color: #667eea;
-}
-
-.video-select-item.dragging {
-    opacity: 0.5;
-}
-
-.video-checkbox {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-}
-
-.video-select-name {
-    flex: 1;
-    font-size: 0.9rem;
-    color: #333;
-}
-
-.drag-handle {
-    color: #999;
-    cursor: move;
-    font-size: 1.2rem;
-}
-
 /* 縮圖重試按鈕樣式 */
 .retry-btn {
     transition: all 0.2s ease;
     border-radius: 4px;
     padding: 2px 6px;
     margin-top: 2px;
+    cursor: pointer;
+    color: #667eea;
+}
+
+/* 無法產生縮圖時的佔位背景 */
+.thumbnail-fallback.unavailable,
+.thumbnail-fallback-small.unavailable {
+    background: linear-gradient(45deg, #757575, #9e9e9e);
+}
+
+[data-theme="dark"] .thumbnail-fallback.unavailable,
+[data-theme="dark"] .thumbnail-fallback-small.unavailable {
+    background: linear-gradient(45deg, #3a3e48, #50555f);
+}
+
+/* 影片詳情：尚無標籤時的提示 */
+.tag-selector-empty {
+    text-align: center;
+    padding: 1rem;
+    color: #666;
+}
+
+.tag-selector-empty-hint {
+    font-size: 0.8rem;
+}
+
+.tag-selector-empty .btn {
+    margin-top: 0.5rem;
+}
+
+[data-theme="dark"] .tag-selector-empty {
+    color: #b6bac2;
 }
 
 .retry-btn:hover {
@@ -1985,8 +1925,7 @@ select {
 [data-theme="dark"] .tag-search-input,
 [data-theme="dark"] .thumb-seconds-input,
 [data-theme="dark"] .tag-input-container input,
-[data-theme="dark"] .path-input-container input,
-[data-theme="dark"] .collection-name-edit input {
+[data-theme="dark"] .path-input-container input {
     background: #2d313b;
     color: #e4e6eb;
     border-color: #3f4452;
@@ -2035,7 +1974,6 @@ select {
 
 /* 巢狀項目：保持比背景亮一點 */
 [data-theme="dark"] .episode-item,
-[data-theme="dark"] .video-select-item,
 [data-theme="dark"] .recent-path-item,
 [data-theme="dark"] .current-file,
 [data-theme="dark"] .tag-item-selector {
@@ -2069,7 +2007,6 @@ select {
 [data-theme="dark"] .video-selection-hint,
 [data-theme="dark"] .folder-path-display,
 [data-theme="dark"] .episode-name,
-[data-theme="dark"] .video-select-name,
 [data-theme="dark"] .recent-path-text,
 [data-theme="dark"] .loading,
 [data-theme="dark"] .empty-state,

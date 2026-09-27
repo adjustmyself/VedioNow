@@ -338,27 +338,6 @@ ipcMain.handle('get-videos', async (event, filters = {}) => {
   }
 });
 
-ipcMain.handle('add-tag', async (event, videoId, tagName) => {
-  try {
-    console.log('Adding tag:', { videoId, tagName });
-    await database.addTag(videoId, tagName);
-    console.log('Tag added successfully');
-    return { success: true };
-  } catch (error) {
-    console.error('Error adding tag:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('remove-tag', async (event, videoId, tagName) => {
-  try {
-    await database.removeTag(videoId, tagName);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-});
-
 // 新的基於指紋的標籤操作
 ipcMain.handle('add-video-tag', async (event, fingerprint, tagName) => {
   try {
@@ -387,15 +366,6 @@ ipcMain.handle('set-video-metadata', async (event, fingerprint, metadata) => {
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('get-all-tags', async () => {
-  try {
-    return await database.getAllTags();
-  } catch (error) {
-    console.error('Error getting tags:', error);
-    return [];
   }
 });
 
@@ -679,11 +649,7 @@ async function migrateTagImages() {
 
 ipcMain.handle('get-tags-by-group', async () => {
   try {
-    console.log('開始獲取標籤群組...');
-    const result = await database.getTagsByGroup();
-    console.log('成功獲取標籤群組，數量:', result.length);
-    console.log('標籤群組內容:', JSON.stringify(result, null, 2));
-    return result;
+    return await database.getTagsByGroup();
   } catch (error) {
     console.error('Error getting tags by group:', error);
     return [];
@@ -762,26 +728,6 @@ ipcMain.handle('get-collection', async (event, mainFingerprint) => {
     return { success: true, data: collection };
   } catch (error) {
     console.error('Error getting collection:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('update-collection', async (event, mainFingerprint, updates) => {
-  try {
-    const result = await database.updateVideoCollection(mainFingerprint, updates);
-    return { success: true, data: result };
-  } catch (error) {
-    console.error('Error updating collection:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('remove-video-from-collection', async (event, mainFingerprint, childFingerprint) => {
-  try {
-    const result = await database.removeVideoFromCollection(mainFingerprint, childFingerprint);
-    return { success: true, data: result };
-  } catch (error) {
-    console.error('Error removing video from collection:', error);
     return { success: false, error: error.message };
   }
 });
@@ -1085,17 +1031,6 @@ ipcMain.handle('upload-subtitle', async (event, videoPath) => {
   }
 });
 
-// 檔案對話框
-ipcMain.handle('dialog-save-file', async (event, options) => {
-  try {
-    const result = await dialog.showSaveDialog(mainWindow, options);
-    return result;
-  } catch (error) {
-    console.error('檔案對話框錯誤:', error);
-    throw error;
-  }
-});
-
 // 以系統預設程式開啟檔案（renderer 不直接使用 shell，統一走 IPC）
 // 只允許開啟影片檔，避免被用來執行任意程式
 ipcMain.handle('open-path', async (event, targetPath) => {
@@ -1140,21 +1075,6 @@ ipcMain.handle('restart-app', async () => {
   app.exit(0);
 });
 
-// 手動觸發舊標籤系統遷移
-ipcMain.handle('migrate-legacy-tags', async () => {
-  try {
-    const result = await database.migrateLegacyTags();
-    return {
-      success: true,
-      message: `遷移完成：已遷移 ${result.migrated} 個標籤，${result.metadataMigrated} 個影片元數據`,
-      result
-    };
-  } catch (error) {
-    console.error('手動遷移舊標籤系統失敗:', error);
-    return { success: false, error: error.message };
-  }
-});
-
 // 獲取最近掃描路徑
 ipcMain.handle('get-recent-scan-paths', async () => {
   try {
@@ -1163,17 +1083,6 @@ ipcMain.handle('get-recent-scan-paths', async () => {
   } catch (error) {
     console.error('獲取最近掃描路徑失敗:', error);
     return { success: false, error: error.message, paths: [] };
-  }
-});
-
-// 清空最近掃描路徑
-ipcMain.handle('clear-recent-scan-paths', async () => {
-  try {
-    const success = await config.clearRecentScanPaths();
-    return { success };
-  } catch (error) {
-    console.error('清空最近掃描路徑失敗:', error);
-    return { success: false, error: error.message };
   }
 });
 

@@ -76,25 +76,6 @@ class FileFingerprint {
    * @param {Array<{filepath: string, stat?: fs.Stats}>} files
    * @returns {Promise<Array<{filepath: string, fingerprint: string}>>}
    */
-  async calculateBatchFingerprints(files) {
-    const results = [];
-
-    for (const file of files) {
-      try {
-        const fingerprint = await this.calculateFingerprint(file.filepath, file.stat);
-        results.push({
-          filepath: file.filepath,
-          fingerprint
-        });
-      } catch (error) {
-        console.error(`批量計算指紋失敗: ${file.filepath}`, error);
-        // 繼續處理其他檔案
-      }
-    }
-
-    return results;
-  }
-
   /**
    * 驗證檔案是否匹配指紋
    * @param {string} filepath

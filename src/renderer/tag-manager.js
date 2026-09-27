@@ -1,15 +1,5 @@
 const { ipcRenderer } = require('electron');
-
-// HTML escape，避免群組/標籤名稱中的 <、>、" 等字元破壞畫面或造成 XSS
-function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const { escapeHtml, toTagImageUrl } = require('./shared/util');
 
 class TagManager {
   constructor() {
@@ -542,11 +532,7 @@ class TagManager {
   // 將資料庫值（檔名；或相容舊版的絕對路徑）轉成正規的 file:// URL
   async resolveTagImageUrl(value) {
     if (!value) return '';
-    const path = require('path');
-    const { pathToFileURL } = require('url');
-    const isAbsolute = /[\\/]/.test(value) || /^[a-zA-Z]:/.test(value);
-    const abs = isAbsolute ? value : path.join(await this.getTagImagesDir(), value);
-    return pathToFileURL(abs).href;
+    return toTagImageUrl(value, await this.getTagImagesDir());
   }
 
   // 設定目前標籤圖片檔名並更新預覽（空字串=清除）
@@ -584,14 +570,10 @@ class TagManager {
     try {
       let result;
       if (this.editingTag) {
-        console.log('更新標籤:', this.editingTag.id, tagData);
         result = await ipcRenderer.invoke('update-tag', this.editingTag.id, tagData);
       } else {
-        console.log('創建標籤:', tagData);
         result = await ipcRenderer.invoke('create-tag', tagData);
       }
-
-      console.log('標籤操作結果:', result);
 
       if (result && result.success === false) {
         alert(`操作失敗: ${result.error}`);
@@ -607,9 +589,6 @@ class TagManager {
   }
 
   editTag(tagId) {
-    console.log('編輯標籤:', tagId);
-    console.log('可用的標籤群組:', this.tagsByGroup);
-
     let tag = null;
     for (const group of this.tagsByGroup) {
       tag = group.tags.find(t => t.id === tagId);
@@ -618,8 +597,6 @@ class TagManager {
         break;
       }
     }
-
-    console.log('找到的標籤:', tag);
 
     if (tag) {
       this.showTagModal(tag);
@@ -639,9 +616,7 @@ class TagManager {
       this.elements.confirmMessage.textContent =
         `確定要刪除標籤「${tag.name}」嗎？這會從所有影片中移除此標籤。`;
       this.deleteCallback = async () => {
-        console.log('刪除標籤:', tagId);
         const result = await ipcRenderer.invoke('delete-tag', tagId);
-        console.log('刪除結果:', result);
 
         if (result && result.success === false) {
           alert(`刪除失敗: ${result.error}`);

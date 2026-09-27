@@ -61,18 +61,6 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 migrateLegacyTags 方法');
     }
 
-    async addTag(videoId, tagName) {
-        throw new Error('子類別必須實作 addTag 方法');
-    }
-
-    async removeTag(videoId, tagName) {
-        throw new Error('子類別必須實作 removeTag 方法');
-    }
-
-    async getAllTags() {
-        throw new Error('子類別必須實作 getAllTags 方法');
-    }
-
     async createTagGroup(groupData) {
         throw new Error('子類別必須實作 createTagGroup 方法');
     }
@@ -809,74 +797,6 @@ class MongoDatabase extends DatabaseInterface {
         };
     }
 
-    async addTag(videoId, tagName) {
-        // 確保標籤存在
-        await this.db.collection('tags').updateOne(
-            { name: tagName },
-            {
-                $setOnInsert: {
-                    name: tagName,
-                    color: '#3b82f6',
-                    group_id: null,
-                    created_at: new Date()
-                }
-            },
-            { upsert: true }
-        );
-
-        // 將標籤加到影片
-        const objectId = new ObjectId(videoId);
-        await this.db.collection('videos').updateOne(
-            { _id: objectId },
-            {
-                $addToSet: { tags: tagName },
-                $set: { updated_at: new Date() }
-            }
-        );
-    }
-
-    async removeTag(videoId, tagName) {
-        const objectId = new ObjectId(videoId);
-        await this.db.collection('videos').updateOne(
-            { _id: objectId },
-            {
-                $pull: { tags: tagName },
-                $set: { updated_at: new Date() }
-            }
-        );
-    }
-
-    async getAllTags() {
-        const pipeline = [
-            {
-                $lookup: {
-                    from: 'videos',
-                    localField: 'name',
-                    foreignField: 'tags',
-                    as: 'videos'
-                }
-            },
-            {
-                $project: {
-                    name: 1,
-                    color: 1,
-                    description: 1,
-                    description_image: 1,
-                    group_id: 1,
-                    created_at: 1,
-                    video_count: { $size: '$videos' }
-                }
-            },
-            { $sort: { name: 1 } }
-        ];
-
-        const tags = await this.db.collection('tags').aggregate(pipeline).toArray();
-        return tags.map(tag => ({
-            ...tag,
-            id: tag._id.toString()
-        }));
-    }
-
     async createTagGroup(groupData) {
         const { name, color, description, sort_order } = groupData;
         const group = {
@@ -1384,33 +1304,6 @@ class MongoDatabase extends DatabaseInterface {
             };
         } catch (error) {
             console.error('取得影片合集失敗:', error);
-            throw error;
-        }
-    }
-
-    async updateVideoCollection(mainVideoFingerprint, updates) {
-        try {
-            const result = await this.db.collection('video_collections').updateOne(
-                { fingerprint: mainVideoFingerprint, is_main: true },
-                { $set: { ...this._pickAllowed(updates, ['collection_name', 'folder_path', 'sort_order']), updated_at: new Date() } }
-            );
-            return { success: result.modifiedCount > 0 };
-        } catch (error) {
-            console.error('更新影片合集失敗:', error);
-            throw error;
-        }
-    }
-
-    async removeVideoFromCollection(mainVideoFingerprint, childFingerprint) {
-        try {
-            const result = await this.db.collection('video_collections').deleteOne({
-                fingerprint: childFingerprint,
-                is_main: false,
-                main_fingerprint: mainVideoFingerprint
-            });
-            return { success: result.deletedCount > 0 };
-        } catch (error) {
-            console.error('從合集移除影片失敗:', error);
             throw error;
         }
     }

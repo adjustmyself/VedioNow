@@ -4,23 +4,7 @@ const { ipcRenderer } = require('electron');
 const FULLY_SUPPORTED_FORMATS = new Set(['mp4', 'webm', 'ogg', 'ogv', 'm4v']);
 const UNSUPPORTED_FORMATS = new Set(['avi', 'wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts']);
 
-// HTML escape，避免 filename / tag name 中的 <、>、" 等字元破壞畫面或造成 XSS
-function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// 本機 / UNC 路徑轉成 file:// URL（直接串 "file://" + 路徑遇到 # % ? 空白會壞掉）
-const { pathToFileURL } = require('url');
-function toFileUrl(filePath, version) {
-  const href = pathToFileURL(filePath).href;
-  return version ? `${href}?t=${version}` : href;
-}
+const { escapeHtml, toFileUrl, toTagImageUrl, debounce } = require('./shared/util');
 
 let rendererThumbnailGenerator = null;
 function getRendererThumbnailGenerator() {
@@ -160,13 +144,15 @@ class VideoManager {
     this.elements.tagManagerBtn.addEventListener('click', () => this.openTagManager());
     this.elements.settingsBtn.addEventListener('click', () => this.openSettings());
     this.elements.scanBtn.addEventListener('click', () => this.showScanModal());
-    this.elements.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
+    const debouncedSearch = debounce((value) => this.handleSearch(value), 250);
+    this.elements.searchInput.addEventListener('input', (e) => debouncedSearch(e.target.value));
     this.elements.driveFilterSelect.addEventListener('change', (e) => this.handleDriveFilterChange(e.target.value));
     this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
+    const debouncedTagFilter = debounce(() => this.renderTagsFilter(), 120);
     this.elements.tagFilterSearch?.addEventListener('input', (e) => {
       this.tagSearchQuery = e.target.value.trim().toLowerCase();
       this.elements.tagFilterSearchClear?.classList.toggle('hidden', !this.tagSearchQuery);
-      this.renderTagsFilter();
+      debouncedTagFilter();
     });
     this.elements.tagFilterSearchClear?.addEventListener('click', () => {
       this.elements.tagFilterSearch.value = '';
@@ -419,15 +405,11 @@ class VideoManager {
     this.tagColors = new Map();
     this.tagDescriptions = new Map();
     this.tagImages = new Map();
-    // 圖片資料庫只存檔名，需組出 userData 下的 file:// URL（相容舊版存的絕對路徑）
-    const tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
-    const { pathToFileURL } = require('url');
-    const path = require('path');
-    const toImageUrl = (value) => {
-      const isAbsolute = /[\\/]/.test(value) || /^[a-zA-Z]:/.test(value);
-      const abs = isAbsolute ? value : path.join(tagImagesDir, value);
-      return pathToFileURL(abs).href;
-    };
+    // 圖片資料庫只存檔名，需組出 userData 下的 file:// URL；資料夾不會變，只查一次
+    if (this._tagImagesDir === undefined) {
+      this._tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
+    }
+    const toImageUrl = (value) => toTagImageUrl(value, this._tagImagesDir);
     this.tagsByGroup.forEach(group => {
       if (group.tags && Array.isArray(group.tags)) {
         this.allTags.push(...group.tags);
@@ -544,6 +526,10 @@ class VideoManager {
   }
 
   renderVideos() {
+    // 資料已到：取消還沒出現的載入提示，免得它在後續 await 期間才觸發、把剛畫好的列表藏起來
+    clearTimeout(this._loadingTimer);
+    this.elements.loading.classList.add('hidden');
+
     if (this.currentVideos.length === 0) {
       this.elements.videosContainer.style.display = 'none';
       this.elements.emptyState.classList.remove('hidden');
@@ -735,6 +721,7 @@ class VideoManager {
     const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
     if (fallbackElement) {
       fallbackElement.classList.add('loading');
+      fallbackElement.classList.remove('unavailable');
       fallbackElement.innerHTML = '<div style="font-size: 0.8rem;">⏳ 等待載入</div>';
       fallbackElement.style.display = 'flex';
     }
@@ -812,7 +799,7 @@ class VideoManager {
         </div>
       `;
       fallbackElement.style.display = 'flex';
-      fallbackElement.style.background = 'linear-gradient(45deg, #757575, #9e9e9e)';
+      fallbackElement.classList.add('unavailable');
     }
   }
 
@@ -944,7 +931,7 @@ class VideoManager {
           <div style="text-align: center; font-size: 0.7rem;">
             <div>🎬 ${escapeHtml(extension)}</div>
             <div style="margin: 2px 0;">載入失敗</div>
-            <div class="retry-btn" style="cursor: pointer; color: #667eea;">點擊重試</div>
+            <div class="retry-btn">點擊重試</div>
           </div>
         `);
       }
@@ -1317,12 +1304,10 @@ class VideoManager {
       if (!tagsByGroup || tagsByGroup.length === 0) {
         this._bindTagSelectorEvents(tagSelector);
         tagSelector.innerHTML = `
-          <div style="text-align: center; padding: 1rem; color: #666;">
+          <div class="tag-selector-empty">
             <p>尚無可用標籤</p>
-            <p style="font-size: 0.8rem;">請先到「標籤管理」頁面建立標籤群組和標籤</p>
-            <button data-action="open-tag-manager" style="margin-top: 0.5rem; padding: 0.25rem 0.5rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-              開啟標籤管理
-            </button>
+            <p class="tag-selector-empty-hint">請先到「標籤管理」頁面建立標籤群組和標籤</p>
+            <button data-action="open-tag-manager" class="btn btn-primary btn-small">開啟標籤管理</button>
           </div>
         `;
         return;
@@ -2118,12 +2103,16 @@ class VideoManager {
   }
 
   showLoading() {
-    this.elements.loading.classList.remove('hidden');
-    this.elements.videosContainer.style.display = 'none';
-    this.elements.emptyState.classList.add('hidden');
+    clearTimeout(this._loadingTimer);
+    this._loadingTimer = setTimeout(() => {
+      this.elements.loading.classList.remove('hidden');
+      this.elements.videosContainer.style.display = 'none';
+      this.elements.emptyState.classList.add('hidden');
+    }, 150);
   }
 
   hideLoading() {
+    clearTimeout(this._loadingTimer);
     this.elements.loading.classList.add('hidden');
   }
 

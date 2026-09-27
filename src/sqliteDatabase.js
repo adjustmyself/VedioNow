@@ -555,40 +555,6 @@ class SQLiteDatabase {
         return { recordDeleted: true, fileDeleted: true, folderDeleted, folderDeleteError };
     }
 
-    // 舊制 API（依影片 id 加減標籤）：轉為指紋制操作
-    async addTag(videoId, tagName) {
-        this._stmt(`
-            INSERT INTO tags (name, color, group_id, created_at)
-            VALUES (?, '#3b82f6', NULL, ?)
-            ON CONFLICT(name) DO NOTHING
-        `).run(tagName, this._now());
-
-        const video = this._stmt('SELECT fingerprint FROM videos WHERE id = ?').get(Number(videoId));
-        if (video && video.fingerprint) {
-            await this.addVideoTag(video.fingerprint, tagName);
-        }
-    }
-
-    async removeTag(videoId, tagName) {
-        const video = this._stmt('SELECT fingerprint FROM videos WHERE id = ?').get(Number(videoId));
-        if (video && video.fingerprint) {
-            await this.removeVideoTag(video.fingerprint, tagName);
-        }
-    }
-
-    async getAllTags() {
-        const rows = this._stmt(`
-            SELECT t.*, (
-                SELECT COUNT(*) FROM video_tags vt
-                JOIN videos v ON v.fingerprint = vt.fingerprint AND v.is_master = 1
-                WHERE vt.tag_name = t.name
-            ) AS video_count
-            FROM tags t
-            ORDER BY t.name
-        `).all();
-        return rows.map(t => ({ ...t, id: String(t.id), group_id: t.group_id != null ? String(t.group_id) : null }));
-    }
-
     async createTagGroup(groupData) {
         const { name, color, description, sort_order } = groupData;
         const result = this._stmt(`
@@ -921,34 +887,6 @@ class SQLiteDatabase {
                 return { ...this._mapVideo(video), sort_order };
             })
         };
-    }
-
-    async updateVideoCollection(mainVideoFingerprint, updates) {
-        const allowed = ['collection_name', 'folder_path', 'sort_order'];
-        const sets = [];
-        const params = [];
-        for (const key of allowed) {
-            if (updates[key] !== undefined) {
-                sets.push(`${key} = ?`);
-                params.push(updates[key]);
-            }
-        }
-        if (sets.length === 0) return { success: false };
-        sets.push('updated_at = ?');
-        params.push(this._now(), mainVideoFingerprint);
-
-        const result = this._stmt(
-            `UPDATE video_collections SET ${sets.join(', ')} WHERE fingerprint = ? AND is_main = 1`
-        ).run(...params);
-        return { success: result.changes > 0 };
-    }
-
-    async removeVideoFromCollection(mainVideoFingerprint, childFingerprint) {
-        const result = this._stmt(`
-            DELETE FROM video_collections
-            WHERE fingerprint = ? AND is_main = 0 AND main_fingerprint = ?
-        `).run(childFingerprint, mainVideoFingerprint);
-        return { success: result.changes > 0 };
     }
 
     close() {
