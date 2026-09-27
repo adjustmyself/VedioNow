@@ -1106,8 +1106,33 @@ select {
     color: #5568d3;
 }
 
-.duplicate-open {
+/* 影片詳情：路徑 + 複製按鈕 */
+.path-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.path-row .path-text {
+    flex: 1;
+    min-width: 0;
+    padding: 0.5rem 0;
+    color: #666;
+    word-break: break-all;
+}
+
+.copy-path-btn {
     flex-shrink: 0;
+}
+
+.copy-path-btn.copied {
+    background: #22a06b;
+    border-color: #22a06b;
+    color: #fff;
+}
+
+[data-theme="dark"] .path-row .path-text {
+    color: #b6bac2;
 }
 
 [data-theme="dark"] .duplicate-item {

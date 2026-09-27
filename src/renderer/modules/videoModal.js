@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：影片詳情彈窗：標籤增刪、評分與描述、刪除、開檔、字幕
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, clipboard } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 class VideoModalMethods {
@@ -60,20 +60,34 @@ class VideoModalMethods {
     document.getElementById('modal-duplicates-label').textContent = `重複檔案（另有 ${duplicates.length} 份）:`;
     list.innerHTML = duplicates.map(d => `
       <li class="duplicate-item">
-        <span class="duplicate-path" title="${escapeHtml(d.filepath)}">${escapeHtml(d.filepath)}</span>
+        <span class="duplicate-path path-text" title="${escapeHtml(d.filepath)}">${escapeHtml(d.filepath)}</span>
         ${d.is_master ? '' : '<span class="duplicate-badge">合集子影片</span>'}
-        <button class="btn btn-small duplicate-open" data-filepath="${escapeHtml(d.filepath)}">開啟</button>
+        <button class="btn btn-small copy-path-btn" type="button" data-filepath="${escapeHtml(d.filepath)}">複製</button>
       </li>
     `).join('');
 
     if (!this._duplicateListBound) {
       list.addEventListener('click', (e) => {
-        const btn = e.target.closest('.duplicate-open');
-        if (btn) ipcRenderer.invoke('open-path', btn.dataset.filepath);
+        const btn = e.target.closest('.copy-path-btn');
+        if (btn) this.copyPathToClipboard(btn.dataset.filepath, btn);
       });
       this._duplicateListBound = true;
     }
     group.classList.remove('hidden');
+  }
+
+  // 複製路徑到剪貼簿，按鈕短暫顯示「已複製」
+  copyPathToClipboard(text, button) {
+    if (!text) return;
+    clipboard.writeText(text);
+    if (!button) return;
+    clearTimeout(button._copiedTimer);
+    button.textContent = '已複製';
+    button.classList.add('copied');
+    button._copiedTimer = setTimeout(() => {
+      button.textContent = '複製';
+      button.classList.remove('copied');
+    }, 1500);
   }
 
   hideVideoModal() {
@@ -212,6 +226,12 @@ class VideoModalMethods {
       } else if (target.id === 'upload-subtitle') {
         this.uploadSubtitle();
       }
+    });
+
+    // 複製檔案路徑
+    const copyFilepathBtn = document.getElementById('copy-filepath');
+    copyFilepathBtn.addEventListener('click', () => {
+      if (this.selectedVideo) this.copyPathToClipboard(this.selectedVideo.filepath, copyFilepathBtn);
     });
 
     // 綁定新增標籤按鈕
