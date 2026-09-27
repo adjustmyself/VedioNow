@@ -1069,6 +1069,61 @@ select {
     word-break: break-all;
 }
 
+/* 影片詳情：重複檔案清單 */
+.duplicate-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.duplicate-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    background: #f8f9fa;
+    border: 1px solid #e3e5e8;
+    border-radius: 6px;
+}
+
+.duplicate-path {
+    flex: 1;
+    min-width: 0;
+    color: #666;
+    font-size: 0.85rem;
+    word-break: break-all;
+}
+
+.duplicate-badge {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    background: #e8eaf6;
+    color: #5568d3;
+}
+
+.duplicate-open {
+    flex-shrink: 0;
+}
+
+[data-theme="dark"] .duplicate-item {
+    background: #2d313b;
+    border-color: #3f4452;
+}
+
+[data-theme="dark"] .duplicate-path {
+    color: #b6bac2;
+}
+
+[data-theme="dark"] .duplicate-badge {
+    background: #2f3d63;
+    color: #a9bcff;
+}
+
 .info-group textarea {
     width: 100%;
     min-height: 80px;

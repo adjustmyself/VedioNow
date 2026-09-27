@@ -253,7 +253,7 @@ describe('SQLiteDatabase', () => {
 
     const refs = async () => (await db.getAllVideoRefs()).sort((x, y) => x.filepath.localeCompare(y.filepath));
 
-    test('兩份都已有記錄：回傳 duplicate，兩筆都保留、各自指紋不變', async () => {
+    test('兩份都已有記錄：回傳 duplicate，兩筆都保留，複本指紋改為連結原檔且標籤跟著走', async () => {
       await addVideo({ filepath: A, fingerprint: 'fp-x' });
       await addVideo({ filepath: B, fingerprint: 'fp-old' });
       await db.addVideoTag('fp-old', '複本標籤');
@@ -262,11 +262,33 @@ describe('SQLiteDatabase', () => {
       expect(result).toBe('duplicate');
 
       const all = await refs();
-      expect(all.map(v => [v.filepath, v.fingerprint])).toEqual([[A, 'fp-x'], [B, 'fp-old']]);
+      expect(all.map(v => v.filepath)).toEqual([A, B]);
+      expect(all[0].fingerprint).toBe('fp-x');
+      expect(all[1].fingerprint).toMatch(/^fp-x:dup:[0-9a-f]{12}$/);
       expect(all[1].file_mtime).toBe(123); // 記下修改時間，下次掃描可略過
-      const bVideo = await db.getVideoByPath(B);
       expect((await db.searchVideos('', ['複本標籤'], {})).videos.map(v => v.filepath)).toEqual([B]);
-      expect(bVideo).not.toBeNull();
+      expect(await db.countOrphanTagRelations()).toBe(0);
+
+      // 再掃一次同一份複本：指紋不再變動
+      expect(await addVideo({ filepath: B, fingerprint: 'fp-x' })).toBe('duplicate');
+      expect((await refs())[1].fingerprint).toBe(all[1].fingerprint);
+    });
+
+    test('getDuplicateVideos：從原檔或任一複本都能找到其他份', async () => {
+      const C = 'C:\\v\\other\\a.mp4';
+      onDisk.add(C);
+      await addVideo({ filepath: A, fingerprint: 'fp-x' });
+      await addVideo({ filepath: B, fingerprint: 'fp-x' });
+      await addVideo({ filepath: C, fingerprint: 'fp-x' });
+      await addVideo({ filepath: 'C:\\v\\unrelated.mp4', fingerprint: 'fp-y' });
+
+      const [a, b, c] = await Promise.all([A, B, C].map(p => db.getVideoByPath(p)));
+      expect((await db.getDuplicateVideos(a.fingerprint, a.id)).map(v => v.filepath)).toEqual([B, C]);
+      expect((await db.getDuplicateVideos(b.fingerprint, b.id)).map(v => v.filepath)).toEqual([A, C]);
+      expect((await db.getDuplicateVideos(c.fingerprint, c.id)).map(v => v.filepath)).toEqual([A, B]);
+
+      const unrelated = await db.getVideoByPath('C:\\v\\unrelated.mp4');
+      expect(await db.getDuplicateVideos(unrelated.fingerprint, unrelated.id)).toEqual([]);
     });
 
     test('新發現的複本：另建一筆，原檔記錄不被搬走', async () => {

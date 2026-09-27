@@ -103,4 +103,7 @@ FileFingerprint.duplicateFingerprint = (fingerprint, filepath) => {
   return `${fingerprint}:dup:${pathHash}`;
 };
 
+// 取回複本指紋的基礎指紋（一般指紋原樣回傳）
+FileFingerprint.baseFingerprint = (fingerprint) => String(fingerprint).split(':dup:')[0];
+
 module.exports = FileFingerprint;

@@ -722,6 +722,16 @@ ipcMain.handle('remove-collection', async (event, mainFingerprint) => {
   }
 });
 
+// 內容相同的重複檔案（影片詳情顯示用）
+ipcMain.handle('get-duplicate-videos', async (event, fingerprint, videoId) => {
+  try {
+    return { success: true, data: await database.getDuplicateVideos(fingerprint, videoId) };
+  } catch (error) {
+    console.error('取得重複檔案失敗:', error);
+    return { success: false, error: error.message, data: [] };
+  }
+});
+
 ipcMain.handle('get-collection', async (event, mainFingerprint) => {
   try {
     const collection = await database.getVideoCollection(mainFingerprint);

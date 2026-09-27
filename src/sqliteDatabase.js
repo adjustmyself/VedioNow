@@ -237,11 +237,16 @@ class SQLiteDatabase {
             if (byFp && byFp.filepath !== filepath) {
                 if (this._fileExists(byFp.filepath)) {
                     if (byPath) {
-                        // 複本已有自己的記錄：只更新檔案資訊，保留它原本的指紋（連同標籤）
+                        // 複本已有自己的記錄：保留記錄與標籤，指紋改成「原指紋 + 路徑雜湊」，
+                        // 之後才能從任一份找到其他複本
+                        const dupFingerprint = FileFingerprint.duplicateFingerprint(fingerprint, filepath);
+                        if (byPath.fingerprint && byPath.fingerprint !== dupFingerprint) {
+                            this._migrateFingerprintReferencesSync(byPath.fingerprint, dupFingerprint);
+                        }
                         this._stmt(`
-                            UPDATE videos SET filename = ?, filesize = ?, file_created_at = ?, file_mtime = ?, updated_at = ?
+                            UPDATE videos SET filename = ?, filesize = ?, fingerprint = ?, file_created_at = ?, file_mtime = ?, updated_at = ?
                             WHERE id = ?
-                        `).run(filename, filesize || 0, fileCreatedAtIso, fileMtime, this._now(), byPath.id);
+                        `).run(filename, filesize || 0, dupFingerprint, fileCreatedAtIso, fileMtime, this._now(), byPath.id);
                         return 'duplicate';
                     }
                     // 新發現的複本：另建一筆，指紋加上路徑雜湊避免與原檔衝突
@@ -297,6 +302,18 @@ class SQLiteDatabase {
             videoData.file_mtime ?? null, this._now(), this._now()
         );
         return String(result.lastInsertRowid);
+    }
+
+    // 內容相同的其他檔案（原檔與各複本共用同一個基礎指紋）
+    async getDuplicateVideos(fingerprint, excludeId) {
+        if (!fingerprint) return [];
+        const base = FileFingerprint.baseFingerprint(fingerprint);
+        const rows = this._stmt(`
+            SELECT id, filename, filepath, filesize, is_master FROM videos
+            WHERE (fingerprint = ? OR fingerprint LIKE ? ESCAPE '\\') AND id != ?
+            ORDER BY filepath
+        `).all(base, this._escapeLike(base) + ':dup:%', Number(excludeId) || 0);
+        return rows.map(r => ({ ...r, id: String(r.id), is_master: r.is_master !== 0 }));
     }
 
     // 判斷檔案是否存在（同步；只在「同指紋出現在不同路徑」時呼叫，測試可替換）

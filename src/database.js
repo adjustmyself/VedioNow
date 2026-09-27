@@ -241,13 +241,19 @@ class MongoDatabase extends DatabaseInterface {
             if (byFp && byFp.filepath !== filepath) {
                 if (await fs.pathExists(byFp.filepath)) {
                     if (byPath) {
-                        // 複本已有自己的記錄：只更新檔案資訊，保留它原本的指紋（連同標籤）
+                        // 複本已有自己的記錄：保留記錄與標籤，指紋改成「原指紋 + 路徑雜湊」，
+                        // 之後才能從任一份找到其他複本
+                        const dupFingerprint = FileFingerprint.duplicateFingerprint(fingerprint, filepath);
+                        if (byPath.fingerprint && byPath.fingerprint !== dupFingerprint) {
+                            await this._migrateFingerprintReferences(byPath.fingerprint, dupFingerprint);
+                        }
                         await videos.updateOne(
                             { _id: byPath._id },
                             {
                                 $set: {
                                     filename,
                                     filesize: filesize || 0,
+                                    fingerprint: dupFingerprint,
                                     file_created_at: file_created_at || null,
                                     file_mtime,
                                     updated_at: new Date()
@@ -304,6 +310,28 @@ class MongoDatabase extends DatabaseInterface {
         } catch (error) {
             throw error;
         }
+    }
+
+    // 內容相同的其他檔案（原檔與各複本共用同一個基礎指紋）
+    async getDuplicateVideos(fingerprint, excludeId) {
+        if (!fingerprint) return [];
+        const base = FileFingerprint.baseFingerprint(fingerprint);
+        const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const query = {
+            $or: [{ fingerprint: base }, { fingerprint: { $regex: `^${escaped}:dup:` } }]
+        };
+        if (excludeId && ObjectId.isValid(excludeId)) query._id = { $ne: new ObjectId(excludeId) };
+        const docs = await this.db.collection('videos')
+            .find(query, { projection: { filename: 1, filepath: 1, filesize: 1, is_master: 1 } })
+            .sort({ filepath: 1 })
+            .toArray();
+        return docs.map(d => ({
+            id: d._id.toString(),
+            filename: d.filename,
+            filepath: d.filepath,
+            filesize: d.filesize,
+            is_master: d.is_master !== false
+        }));
     }
 
     async _insertVideo(videoData) {

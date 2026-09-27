@@ -26,7 +26,10 @@ class VideoModalMethods {
     this.elements.collectionList.classList.add('hidden');
     this.elements.removeCollectionBtn.classList.add('hidden');
 
-    // 立即顯示彈窗，合集資訊在背景載入
+    // 先隱藏重複檔案區，避免顯示上一部影片的殘留資料
+    document.getElementById('modal-duplicates-group').classList.add('hidden');
+
+    // 立即顯示彈窗，合集與重複檔案資訊在背景載入
     this.elements.videoModal.classList.remove('hidden');
 
     if (this.selectedVideo.fingerprint) {
@@ -34,7 +37,43 @@ class VideoModalMethods {
       this.loadCollectionInfo(fingerprint).catch(err => {
         console.error('背景載入合集資訊失敗:', err);
       });
+      this.loadDuplicateFiles(this.selectedVideo).catch(err => {
+        console.error('背景載入重複檔案失敗:', err);
+      });
     }
+  }
+
+  // 列出內容相同、存在於其他路徑的檔案
+  async loadDuplicateFiles(video) {
+    const result = await ipcRenderer.invoke('get-duplicate-videos', video.fingerprint, video.id);
+    // 載入期間已切換到別部影片就不要覆蓋
+    if (this.selectedVideo !== video) return;
+
+    const group = document.getElementById('modal-duplicates-group');
+    const list = document.getElementById('modal-duplicates');
+    const duplicates = (result && result.success && result.data) || [];
+    if (duplicates.length === 0) {
+      group.classList.add('hidden');
+      return;
+    }
+
+    document.getElementById('modal-duplicates-label').textContent = `重複檔案（另有 ${duplicates.length} 份）:`;
+    list.innerHTML = duplicates.map(d => `
+      <li class="duplicate-item">
+        <span class="duplicate-path" title="${escapeHtml(d.filepath)}">${escapeHtml(d.filepath)}</span>
+        ${d.is_master ? '' : '<span class="duplicate-badge">合集子影片</span>'}
+        <button class="btn btn-small duplicate-open" data-filepath="${escapeHtml(d.filepath)}">開啟</button>
+      </li>
+    `).join('');
+
+    if (!this._duplicateListBound) {
+      list.addEventListener('click', (e) => {
+        const btn = e.target.closest('.duplicate-open');
+        if (btn) ipcRenderer.invoke('open-path', btn.dataset.filepath);
+      });
+      this._duplicateListBound = true;
+    }
+    group.classList.remove('hidden');
   }
 
   hideVideoModal() {
