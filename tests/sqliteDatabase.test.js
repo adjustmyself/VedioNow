@@ -23,6 +23,28 @@ describe('SQLiteDatabase', () => {
     ...overrides
   });
 
+  test('同一個資料庫檔可重複開啟（欄位遷移不會重複執行）', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vn-reopen-'));
+    const file = path.join(dir, 'videonow.db');
+    try {
+      for (let i = 0; i < 3; i++) {
+        const fileDb = new SQLiteDatabase(file);
+        await fileDb.init();
+        await fileDb.addVideo({ filename: `v${i}.mp4`, filepath: `C:\\v\\v${i}.mp4`, filesize: 1, fingerprint: `fp-${i}` });
+        fileDb.close();
+      }
+      const fileDb = new SQLiteDatabase(file);
+      await fileDb.init();
+      expect((await fileDb.getVideos({})).total).toBe(3);
+      fileDb.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   describe('addVideo', () => {
     test('新增後可用分頁查詢取回', async () => {
       const id = await addVideo();

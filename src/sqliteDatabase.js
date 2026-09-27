@@ -62,7 +62,8 @@ class SQLiteDatabase {
     // 為既有資料庫補上後來新增的欄位（CREATE TABLE IF NOT EXISTS 不會改動既有表）
     _migrateSchema() {
         const hasColumn = (table, column) =>
-            this._stmt(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
+            // table_xinfo 才會列出生成欄位（table_info 不會，會導致每次啟動重複 ALTER）
+            this._stmt(`PRAGMA table_xinfo(${table})`).all().some(c => c.name === column);
 
         if (!hasColumn('videos', 'file_mtime')) {
             // 重新掃描時用「大小 + 修改時間」判斷檔案沒變、略過指紋計算
