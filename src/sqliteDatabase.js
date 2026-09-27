@@ -73,6 +73,19 @@ class SQLiteDatabase {
             CREATE INDEX IF NOT EXISTS idx_videos_master_filecreated_v2 ON videos(is_master, file_created_at DESC, created_at DESC);
         `);
 
+        if (!hasColumn('videos', 'content_fingerprint')) {
+            // 內容相同的檔案（原檔與各複本）共用的基礎指紋，由 SQLite 依 fingerprint 自動計算
+            this.db.exec(`
+                ALTER TABLE videos ADD COLUMN content_fingerprint TEXT
+                GENERATED ALWAYS AS (
+                    CASE WHEN instr(fingerprint, ':dup:') > 0
+                         THEN substr(fingerprint, 1, instr(fingerprint, ':dup:') - 1)
+                         ELSE fingerprint END
+                ) VIRTUAL
+            `);
+        }
+        this.db.exec('CREATE INDEX IF NOT EXISTS idx_videos_content_fp ON videos(content_fingerprint)');
+
         if (!hasColumn('tags', 'description')) {
             this.db.exec("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
         }
@@ -310,10 +323,24 @@ class SQLiteDatabase {
         const base = FileFingerprint.baseFingerprint(fingerprint);
         const rows = this._stmt(`
             SELECT id, filename, filepath, filesize, is_master FROM videos
-            WHERE (fingerprint = ? OR fingerprint LIKE ? ESCAPE '\\') AND id != ?
+            WHERE content_fingerprint = ? AND id != ?
             ORDER BY filepath
-        `).all(base, this._escapeLike(base) + ':dup:%', Number(excludeId) || 0);
+        `).all(base, Number(excludeId) || 0);
         return rows.map(r => ({ ...r, id: String(r.id), is_master: r.is_master !== 0 }));
+    }
+
+    // 重複檔案統計：有重複的影片數（列表可見的主影片）與重複組數
+    async getDuplicateSummary() {
+        return this._stmt(`
+            WITH groups AS (
+                SELECT content_fingerprint FROM videos
+                WHERE content_fingerprint IS NOT NULL
+                GROUP BY content_fingerprint HAVING COUNT(*) > 1
+            )
+            SELECT
+                (SELECT COUNT(*) FROM videos WHERE is_master = 1 AND content_fingerprint IN (SELECT content_fingerprint FROM groups)) AS videos,
+                (SELECT COUNT(*) FROM groups) AS groups
+        `).get();
     }
 
     // 判斷檔案是否存在（同步；只在「同指紋出現在不同路徑」時呼叫，測試可替換）
@@ -383,6 +410,14 @@ class SQLiteDatabase {
             params.push(filters.rating);
         }
 
+        if (filters.duplicatesOnly) {
+            where.push(`v.content_fingerprint IN (
+                SELECT content_fingerprint FROM videos
+                WHERE content_fingerprint IS NOT NULL
+                GROUP BY content_fingerprint HAVING COUNT(*) > 1
+            )`);
+        }
+
         if (filters.drivePath && filters.drivePath.trim()) {
             // 硬碟路徑篩選：匹配 UNC 第二層路徑，例如 \\192.168.1.147\16tb-SN-xxx\...
             const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -405,6 +440,7 @@ class SQLiteDatabase {
         const field = columns[filters.sortBy] ? filters.sortBy : 'file_created_at';
         const dir = filters.sortOrder === 'asc' ? 'ASC' : 'DESC';
         const order = [`${columns[field]} ${dir}`];
+        if (filters.duplicatesOnly) order.unshift('v.content_fingerprint');
         if (field !== 'created_at') order.push(`v.created_at ${dir}`);
         return order.join(', ');
     }
@@ -419,7 +455,9 @@ class SQLiteDatabase {
         const rows = this._stmt(`
             SELECT v.*, (
                 SELECT json_group_array(tag_name) FROM video_tags vt WHERE vt.fingerprint = v.fingerprint
-            ) AS tags_json
+            ) AS tags_json, (
+                SELECT COUNT(*) FROM videos d WHERE d.content_fingerprint = v.content_fingerprint AND d.id != v.id
+            ) AS duplicate_count
             FROM videos v
             WHERE ${whereSql}
             ORDER BY ${this._buildOrderBy(filters)}

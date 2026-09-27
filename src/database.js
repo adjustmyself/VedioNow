@@ -514,7 +514,61 @@ class MongoDatabase extends DatabaseInterface {
             match.filepath = new RegExp(`[\\\\/]{2}[^\\\\/]+[\\\\/]${escapedDrive}[\\\\/]`, 'i');
         }
 
+        if (filters.duplicatesOnly) {
+            // 標籤篩選可能已經設了 match.fingerprint，用 $and 疊加
+            const { fingerprints } = await this._duplicateGroups();
+            match.$and = [...(match.$and || []), { fingerprint: { $in: fingerprints } }];
+        }
+
         return match;
+    }
+
+    // 找出所有重複檔案組（只讀取，不寫入任何欄位）。
+    // 每組至少有一份複本的指紋帶 ":dup:"，從這些複本回推基礎指紋，再確認原檔是否還在。
+    // 回傳 sizeByBase：基礎指紋 -> 該組檔案數（>1），fingerprints：所有屬於重複組的指紋
+    async _duplicateGroups() {
+        const videos = this.db.collection('videos');
+        const copies = await videos
+            .find({ fingerprint: { $regex: ':dup:' } }, { projection: { fingerprint: 1 } })
+            .toArray();
+
+        const sizeByBase = new Map();
+        const fingerprintsByBase = new Map();
+        for (const { fingerprint } of copies) {
+            const base = FileFingerprint.baseFingerprint(fingerprint);
+            sizeByBase.set(base, (sizeByBase.get(base) || 0) + 1);
+            if (!fingerprintsByBase.has(base)) fingerprintsByBase.set(base, []);
+            fingerprintsByBase.get(base).push(fingerprint);
+        }
+
+        const bases = [...sizeByBase.keys()];
+        if (bases.length > 0) {
+            const originals = await videos
+                .find({ fingerprint: { $in: bases } }, { projection: { fingerprint: 1 } })
+                .toArray();
+            for (const { fingerprint } of originals) {
+                sizeByBase.set(fingerprint, sizeByBase.get(fingerprint) + 1);
+                fingerprintsByBase.get(fingerprint).push(fingerprint);
+            }
+        }
+
+        const fingerprints = [];
+        for (const [base, size] of sizeByBase) {
+            if (size > 1) {
+                fingerprints.push(...fingerprintsByBase.get(base));
+            } else {
+                sizeByBase.delete(base);
+            }
+        }
+        return { sizeByBase, fingerprints };
+    }
+
+    // 重複檔案統計：有重複的影片數（列表可見的主影片）與重複組數
+    async getDuplicateSummary() {
+        const { sizeByBase, fingerprints } = await this._duplicateGroups();
+        const videos = fingerprints.length === 0 ? 0 : await this.db.collection('videos')
+            .countDocuments({ ...this._masterMatch(), fingerprint: { $in: fingerprints } });
+        return { videos, groups: sizeByBase.size };
     }
 
     // 排序欄位白名單；預設排序對應 {is_master, file_created_at, created_at} 索引
@@ -533,9 +587,12 @@ class MongoDatabase extends DatabaseInterface {
         const needCount = filters.count !== false;
 
         const match = await this._buildMatch(searchTerm, tags, filters);
+        const sort = filters.duplicatesOnly
+            ? { fingerprint: 1, ...this._buildSort(filters) }
+            : this._buildSort(filters);
         const pipeline = [
             { $match: match },
-            { $sort: this._buildSort(filters) },
+            { $sort: sort },
             { $skip: offset },
             { $limit: limit },
             ...this._tagJoinStages(),
@@ -545,11 +602,16 @@ class MongoDatabase extends DatabaseInterface {
         const options = filters.sortBy === 'filename' ? { collation: { locale: 'en', strength: 2 } } : {};
 
         const videos = await this.db.collection('videos').aggregate(pipeline, options).toArray();
-        const mappedVideos = videos.map(video => ({
-            ...video,
-            id: video._id.toString(),
-            tags: video.tags || []
-        }));
+        const { sizeByBase } = await this._duplicateGroups();
+        const mappedVideos = videos.map(video => {
+            const size = video.fingerprint ? sizeByBase.get(FileFingerprint.baseFingerprint(video.fingerprint)) : 0;
+            return {
+                ...video,
+                id: video._id.toString(),
+                tags: video.tags || [],
+                duplicate_count: size ? size - 1 : 0
+            };
+        });
 
         if (!needCount) return { videos: mappedVideos };
 

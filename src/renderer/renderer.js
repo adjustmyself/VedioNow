@@ -16,6 +16,7 @@ class VideoManager {
     this._searchReqId = 0;
     this.selectedRating = 0; // 0 表示全部
     this.selectedDrivePath = ''; // 選中的硬碟路徑
+    this.duplicatesOnly = false; // 只看有重複檔案的影片
     this.currentSort = 'file_created_at';
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
@@ -75,6 +76,8 @@ class VideoManager {
       scanBtn: document.getElementById('scan-btn'),
       searchInput: document.getElementById('search-input'),
       driveFilterSelect: document.getElementById('drive-filter-select'),
+      duplicateFilterToggle: document.getElementById('duplicate-filter-toggle'),
+      duplicateFilterCount: document.getElementById('duplicate-filter-count'),
       tagsFilter: document.getElementById('tags-filter'),
       tagFilterSearch: document.getElementById('tag-filter-search'),
       tagFilterSearchClear: document.getElementById('tag-filter-search-clear'),
@@ -134,6 +137,13 @@ class VideoManager {
     const debouncedSearch = debounce((value) => this.handleSearch(value), 250);
     this.elements.searchInput.addEventListener('input', (e) => debouncedSearch(e.target.value));
     this.elements.driveFilterSelect.addEventListener('change', (e) => this.handleDriveFilterChange(e.target.value));
+    this.elements.duplicateFilterToggle.addEventListener('click', () => this.setDuplicatesOnly(!this.duplicatesOnly));
+    this.elements.duplicateFilterToggle.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.setDuplicatesOnly(!this.duplicatesOnly);
+      }
+    });
     this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
     const debouncedTagFilter = debounce(() => this.renderTagsFilter(), 120);
     this.elements.tagFilterSearch?.addEventListener('input', (e) => {
@@ -227,7 +237,8 @@ class VideoManager {
       await Promise.all([
         this.loadVideos(),
         this.loadTags(),
-        this.loadDrivePaths()
+        this.loadDrivePaths(),
+        this.loadDuplicateSummary()
       ]);
       this.updateStats();
       this.renderVideos();
@@ -247,11 +258,12 @@ class VideoManager {
     // 重新載入標籤和硬碟路徑列表
     await Promise.all([
       this.loadTags(),
-      this.loadDrivePaths()
+      this.loadDrivePaths(),
+      this.loadDuplicateSummary()
     ]);
 
     // 如果有搜尋條件或篩選，使用 handleSearch 保持條件
-    if (searchTerm || this.activeTags.size > 0 || this.selectedRating > 0 || this.selectedDrivePath) {
+    if (searchTerm || this.isAnyFilterActive()) {
       await this.handleSearch(searchTerm);
     } else {
       // 沒有任何條件，直接載入
@@ -270,6 +282,7 @@ class VideoManager {
       offset: (this.currentPage - 1) * this.pageSize,
       rating: this.selectedRating,
       drivePath: this.selectedDrivePath,
+      duplicatesOnly: this.duplicatesOnly,
       sortBy: this.currentSort,
       sortOrder: this.sortOrder
     };
@@ -377,6 +390,24 @@ class VideoManager {
     } catch (error) {
       console.error('載入硬碟路徑錯誤:', error);
     }
+  }
+
+  // 側邊欄「只看有重複的影片」旁顯示有重複的影片數
+  async loadDuplicateSummary() {
+    try {
+      const summary = await ipcRenderer.invoke('get-duplicate-summary');
+      this.elements.duplicateFilterCount.textContent = summary && summary.videos > 0 ? `(${summary.videos})` : '(0)';
+    } catch (error) {
+      console.error('載入重複檔案統計錯誤:', error);
+    }
+  }
+
+  setDuplicatesOnly(enabled) {
+    this.duplicatesOnly = enabled;
+    this.elements.duplicateFilterToggle.classList.toggle('active', enabled);
+    this.elements.duplicateFilterToggle.setAttribute('aria-pressed', String(enabled));
+    this.currentPage = 1;
+    this.handleSearch(this.elements.searchInput.value);
   }
 
   handleDriveFilterChange(drivePath) {
@@ -488,7 +519,12 @@ class VideoManager {
     const stars = this.generateStars(video.rating || 0);
     const description = escapeHtml((video.description || '').trim());
 
-    return { tags, filename, filepath, filesize, createdDate, stars, description, videoId: escapeHtml(video.id) };
+    const duplicateCount = Number(video.duplicate_count) || 0;
+    const duplicateBadge = duplicateCount > 0
+      ? `<span class="duplicate-mark" title="另有 ${duplicateCount} 份內容相同的檔案">重複 ×${duplicateCount + 1}</span>`
+      : '';
+
+    return { tags, filename, filepath, filesize, createdDate, stars, description, duplicateBadge, videoId: escapeHtml(video.id) };
   }
 
   createVideoCard(video) {
@@ -499,6 +535,7 @@ class VideoManager {
           <div class="thumbnail-fallback">
             <span>🎬</span>
           </div>
+          ${f.duplicateBadge ? `<div class="thumbnail-duplicate-badge">${f.duplicateBadge}</div>` : ''}
           ${f.description ? `<div class="thumbnail-description">${f.description}</div>` : ''}
         </div>
         <div class="video-card-content">
@@ -526,7 +563,7 @@ class VideoManager {
         <div class="video-list-content">
           <div class="video-title">${f.filename}</div>
           <div class="video-meta-row">
-            <div class="video-meta">${f.filesize} • ${f.createdDate}</div>
+            <div class="video-meta">${f.filesize} • ${f.createdDate}${f.duplicateBadge ? ` ${f.duplicateBadge}` : ''}</div>
             <div class="video-rating">${f.stars}</div>
           </div>
           <div class="video-tags">${f.tags}</div>

@@ -238,7 +238,8 @@ class TagFilterBarMethods {
       (this.elements.searchInput?.value || '').trim() ||
       this.activeTags.size > 0 ||
       this.selectedRating > 0 ||
-      this.selectedDrivePath
+      this.selectedDrivePath ||
+      this.duplicatesOnly
     );
   }
 
@@ -255,7 +256,7 @@ class TagFilterBarMethods {
         'get-filtered-tag-counts',
         this.elements.searchInput.value,
         Array.from(this.activeTags),
-        { rating: this.selectedRating, drivePath: this.selectedDrivePath }
+        { rating: this.selectedRating, drivePath: this.selectedDrivePath, duplicatesOnly: this.duplicatesOnly }
       );
       if (reqId === this._tagCountsReqId) {
         this.filteredTagCounts = counts || {};
@@ -338,6 +339,9 @@ class TagFilterBarMethods {
     this.activeTags.clear();
     this.selectedRating = 0;
     this.selectedDrivePath = '';
+    this.duplicatesOnly = false;
+    this.elements.duplicateFilterToggle.classList.remove('active');
+    this.elements.duplicateFilterToggle.setAttribute('aria-pressed', 'false');
     this.elements.searchInput.value = '';
 
     // 重置 UI 元素

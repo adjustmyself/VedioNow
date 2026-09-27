@@ -335,6 +335,36 @@ describe('SQLiteDatabase', () => {
       expect(await db.countOrphanTagRelations()).toBe(0);
     });
 
+    test('列表帶出重複份數，只看重複篩選與其他條件可疊加，統計正確', async () => {
+      const C = 'C:\\v\\other\\a.mp4';
+      onDisk.add(C);
+      await addVideo({ filepath: A, fingerprint: 'fp-x', filename: 'a.mp4' });
+      await addVideo({ filepath: B, fingerprint: 'fp-x', filename: 'a-copy.mp4' });
+      await addVideo({ filepath: C, fingerprint: 'fp-x', filename: 'a-other.mp4' });
+      await addVideo({ filepath: 'C:\\v\\solo.mp4', fingerprint: 'fp-solo', filename: 'solo.mp4' });
+      await db.addVideoTag('fp-solo', '動作');
+      const bFp = (await db.getVideoByPath(B)).fingerprint;
+      await db.addVideoTag(bFp, '動作');
+
+      const all = await db.getVideos({});
+      const countByPath = Object.fromEntries(all.videos.map(v => [v.filepath, v.duplicate_count]));
+      expect(countByPath).toEqual({ [A]: 2, [B]: 2, [C]: 2, 'C:\\v\\solo.mp4': 0 });
+
+      // 只看重複：同一份內容的檔案排在一起
+      const dups = await db.getVideos({ duplicatesOnly: true });
+      expect(dups.total).toBe(3);
+      expect(dups.videos.map(v => v.filepath).sort()).toEqual([A, B, C].sort());
+
+      // 與標籤篩選疊加
+      const tagged = await db.searchVideos('', ['動作'], { duplicatesOnly: true });
+      expect(tagged.videos.map(v => v.filepath)).toEqual([B]);
+
+      // 標籤計數也套用重複篩選
+      expect(await db.getTagCountsForFilter('', [], { duplicatesOnly: true })).toEqual({ '動作': 1 });
+
+      expect(await db.getDuplicateSummary()).toEqual({ videos: 3, groups: 1 });
+    });
+
     test('批次寫入分開統計重複檔案', async () => {
       await addVideo({ filepath: A, fingerprint: 'fp-x' });
       const result = await db.addVideosBatch([

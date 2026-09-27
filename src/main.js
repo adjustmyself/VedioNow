@@ -722,6 +722,16 @@ ipcMain.handle('remove-collection', async (event, mainFingerprint) => {
   }
 });
 
+// 重複檔案統計（側邊欄篩選顯示用）
+ipcMain.handle('get-duplicate-summary', async () => {
+  try {
+    return await database.getDuplicateSummary();
+  } catch (error) {
+    console.error('取得重複檔案統計失敗:', error);
+    return { videos: 0, groups: 0 };
+  }
+});
+
 // 內容相同的重複檔案（影片詳情顯示用）
 ipcMain.handle('get-duplicate-videos', async (event, fingerprint, videoId) => {
   try {

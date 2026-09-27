@@ -43,7 +43,7 @@ This is an Electron application with a main/renderer process architecture:
 - Both implement the same `DatabaseInterface`; all methods return identical shapes (string ids, paginated `{videos, total, page, pageSize, totalPages}`)
 - `src/mongoToSqliteMigration.js` provides one-shot MongoDB→SQLite data migration (triggered from settings UI)
 - Video identity is a content fingerprint (`src/fileFingerprint.js`): MD5 of size + first/last 64KB, deliberately excluding mtime; when a video's fingerprint changes, `addVideo` cascades the change into tag relations and collections
-- Duplicate files (same content at another path that still exists) are copies, not moves: each copy gets its own record with fingerprint `<base>:dup:<pathHash>` (`FileFingerprint.duplicateFingerprint`), and `getDuplicateVideos()` finds all records sharing the base fingerprint
+- Duplicate files (same content at another path that still exists) are copies, not moves: each copy gets its own record with fingerprint `<base>:dup:<pathHash>` (`FileFingerprint.duplicateFingerprint`), and `getDuplicateVideos()` finds all records sharing the base fingerprint. SQLite exposes the base as the generated column `content_fingerprint`; Mongo derives duplicate groups at query time (`_duplicateGroups()`, read-only). List queries return `duplicate_count` and accept `filters.duplicatesOnly`
 
 **VideoScanner (`src/videoScanner.js`)**
 - Scans directories for video files
