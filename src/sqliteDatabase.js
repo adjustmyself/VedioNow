@@ -715,6 +715,29 @@ class SQLiteDatabase {
         return result.changes > 0;
     }
 
+    // 影片有關聯、卻沒有標籤資料的名稱（舊版手動輸入的標籤、合集自動加的「合集」），
+    // 補建到未分類，才會出現在篩選列與標籤管理。只看仍存在的影片，避免補出 0 部影片的標籤
+    async backfillOrphanTags() {
+        const names = this._stmt(`
+            SELECT DISTINCT tag_name FROM video_tags
+            WHERE tag_name NOT IN (SELECT name FROM tags)
+              AND fingerprint IN (SELECT fingerprint FROM videos WHERE fingerprint IS NOT NULL)
+            ORDER BY tag_name
+        `).all().map(r => r.tag_name).filter(Boolean);
+        if (names.length === 0) return { created: 0, names };
+
+        const run = this.db.transaction(() => {
+            const insert = this._stmt(`
+                INSERT OR IGNORE INTO tags (name, color, description, description_image, group_id, sort_order, created_at)
+                VALUES (?, '#3b82f6', '', '', NULL, ?, ?)
+            `);
+            const now = this._now();
+            for (const name of names) insert.run(name, this._nextTagSortOrder(null), now);
+        });
+        run();
+        return { created: names.length, names };
+    }
+
     // 新標籤排到所屬群組末端；若一律給 0，新標籤會全部擠在最前面
     _nextTagSortOrder(groupId) {
         const row = groupId == null

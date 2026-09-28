@@ -62,6 +62,10 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 migrateLegacyTags 方法');
     }
 
+    async backfillOrphanTags() {
+        throw new Error('子類別必須實作 backfillOrphanTags 方法');
+    }
+
     async createTagGroup(groupData) {
         throw new Error('子類別必須實作 createTagGroup 方法');
     }
@@ -973,6 +977,19 @@ class MongoDatabase extends DatabaseInterface {
             ...group,
             id: group._id.toString()
         }));
+    }
+
+    // 影片有關聯、卻沒有標籤資料的名稱補建到未分類（與 SQLite 版一致，只看仍存在的影片）
+    async backfillOrphanTags() {
+        const videoFingerprints = await this.db.collection('videos').distinct('fingerprint');
+        const used = await this.db.collection('video_tag_relations')
+            .distinct('tags', { fingerprint: { $in: videoFingerprints } });
+        const existing = new Set(await this.db.collection('tags').distinct('name'));
+        const names = used.filter(name => typeof name === 'string' && name && !existing.has(name)).sort();
+        for (const name of names) {
+            await this.createTag({ name });
+        }
+        return { created: names.length, names };
     }
 
     // 新標籤排到所屬群組末端；若一律給 0，新標籤會全部擠在最前面

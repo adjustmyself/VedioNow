@@ -236,6 +236,16 @@ app.whenReady().then(async () => {
       console.warn('舊標籤系統遷移失敗:', error);
     }
 
+    // 只有影片關聯、沒有標籤資料的「孤兒標籤」補建到未分類（每次啟動檢查，已補過的不會重複）
+    try {
+      const { created, names } = await database.backfillOrphanTags();
+      if (created > 0) {
+        console.log(`已將 ${created} 個孤兒標籤補進未分類：${names.join('、')}`);
+      }
+    } catch (error) {
+      console.warn('補建孤兒標籤失敗:', error);
+    }
+
     // 標籤圖片改存 userData（資料庫只存檔名），遷移舊有絕對路徑資料
     await migrateTagImages();
 

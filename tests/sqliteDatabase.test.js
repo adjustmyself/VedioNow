@@ -187,6 +187,29 @@ describe('SQLiteDatabase', () => {
       expect(updated).toBe(true);
     });
 
+    test('孤兒標籤補建到未分類，已存在的標籤與已刪除影片的關聯不補', async () => {
+      await addVideo({ fingerprint: 'fp-1', filepath: 'p1' });
+      const groupId = await db.createTagGroup({ name: '類型', color: '#f00' });
+      await db.createTag({ name: '動作', color: '#00f', group_id: groupId });
+      await db.addVideoTag('fp-1', '動作');
+      await db.addVideoTag('fp-1', '手動標籤');
+      await db.addVideoTag('fp-1', '合集');
+      // 影片記錄已刪除但關聯仍在（關聯以指紋保存）
+      db.db.prepare("INSERT INTO video_tags (fingerprint, tag_name, created_at) VALUES ('fp-gone', '幽靈', '')").run();
+
+      const result = await db.backfillOrphanTags();
+      expect(result).toEqual({ created: 2, names: ['合集', '手動標籤'] });
+
+      const byGroup = await db.getTagsByGroup();
+      const ungrouped = byGroup.find(g => g.name === '未分類');
+      expect(ungrouped.tags.map(t => t.name).sort()).toEqual(['合集', '手動標籤']);
+      expect(ungrouped.tags.every(t => t.video_count === 1)).toBe(true);
+      expect(byGroup.find(g => g.name === '類型').tags.map(t => t.name)).toEqual(['動作']);
+
+      // 再跑一次不會重複建立
+      expect(await db.backfillOrphanTags()).toEqual({ created: 0, names: [] });
+    });
+
     test('標籤改名同步影片關聯', async () => {
       await addVideo({ fingerprint: 'fp-1', filepath: 'p1' });
       const tagId = await db.createTag({ name: '舊名', color: '#00f', group_id: null });
