@@ -1445,10 +1445,24 @@ select {
     border-color: #adb5bd;
 }
 
+/* 選中時直接用標籤本身的顏色，和卡片上的標籤一致 */
 .tag-item-selector.selected {
-    background: #007bff;
+    background: var(--tag-color, #007bff);
     color: white;
-    border-color: #007bff;
+    border-color: var(--tag-color, #007bff);
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+
+/* 色點與底色相同，加白圈才看得出來 */
+.tag-item-selector.selected .tag-color-selector {
+    box-shadow: 0 0 0 1.5px white;
+}
+
+.tag-group-count-selector {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #868e96;
 }
 
 .tag-color-selector {
@@ -2136,17 +2150,17 @@ select {
 
 /* 影片詳情：深色模式下選中的標籤需明顯有別於未選中
    （上方未選規則特異度與 .selected 相同且寫在後面，會蓋掉選取色，故在此重新指定） */
-[data-theme="dark"] .tag-item-selector.selected {
-    background: #4f8cff;
-    border-color: #6ea0ff;
+[data-theme="dark"] .tag-item-selector.selected,
+[data-theme="dark"] .tag-item-selector.selected:hover {
+    background: var(--tag-color, #4f8cff);
+    border-color: var(--tag-color, #6ea0ff);
     color: #fff;
     font-weight: 600;
-    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.35);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
 }
 
-[data-theme="dark"] .tag-item-selector.selected:hover {
-    background: #4f8cff;
-    border-color: #6ea0ff;
+[data-theme="dark"] .tag-group-count-selector {
+    color: #8b909b;
 }
 
 [data-theme="dark"] .tag-pinned-section {

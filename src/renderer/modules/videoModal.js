@@ -141,10 +141,12 @@ class VideoModalMethods {
           <div class="tag-group-header-selector">
             <div class="tag-group-color-selector" style="background-color: ${escapeHtml(group.color)};"></div>
             <div class="tag-group-name-selector">${escapeHtml(group.name)}</div>
+            <span class="tag-group-count-selector"></span>
           </div>
           <div class="tags-list-selector">
             ${(group.tags || []).map(tag => `
               <div class="tag-item-selector ${this.selectedVideo.tags.includes(tag.name) ? 'selected' : ''}"
+                   style="--tag-color: ${escapeHtml(tag.color || '#3b82f6')};"
                    data-tag-name="${escapeHtml(tag.name)}"
                    data-tag-name-lower="${escapeHtml((tag.name || '').toLowerCase())}">
                 <div class="tag-color-selector" style="background-color: ${escapeHtml(tag.color)};"></div>
@@ -154,6 +156,8 @@ class VideoModalMethods {
           </div>
         </div>
       `).join('');
+
+      this._updateSelectorGroupCounts();
 
       // 手動輸入框的自動完成清單
       document.getElementById('tag-name-options').innerHTML = this.allTags
@@ -178,18 +182,34 @@ class VideoModalMethods {
         return;
       }
       const tagItem = e.target.closest('.tag-item-selector');
-      if (tagItem) {
-        const tagName = tagItem.dataset.tagName;
-        if (tagItem.classList.contains('selected')) {
-          this.removeVideoTag(tagName);
-        } else {
-          this.addVideoTag(tagName);
-        }
-        // 點選後清掉搜尋，方便接著搜下一個標籤
-        this.resetTagSearch();
-      }
+      if (tagItem) this._toggleSelectorTag(tagItem);
     });
     this.tagSelectorEventBound = true;
+  }
+
+  // 套用 / 移除選擇器中的標籤（點選或在搜尋框按 Enter）
+  _toggleSelectorTag(tagItem) {
+    const tagName = tagItem.dataset.tagName;
+    if (tagItem.classList.contains('selected')) {
+      this.removeVideoTag(tagName);
+    } else {
+      this.addVideoTag(tagName);
+    }
+    // 點選後清掉搜尋，方便接著搜下一個標籤
+    this.resetTagSearch();
+  }
+
+  // 群組標題旁顯示「已選 / 總數」
+  _updateSelectorGroupCounts() {
+    const tagSelector = document.getElementById('tag-selector');
+    if (!tagSelector || !this.selectedVideo) return;
+    tagSelector.querySelectorAll('.tag-group-selector').forEach(group => {
+      const counter = group.querySelector('.tag-group-count-selector');
+      if (!counter) return;
+      const total = group.querySelectorAll('.tag-item-selector').length;
+      const selected = group.querySelectorAll('.tag-item-selector.selected').length;
+      counter.textContent = selected > 0 ? `(已選 ${selected}/${total})` : `(${total})`;
+    });
   }
 
   setModalRating(rating) {
@@ -262,6 +282,16 @@ class VideoModalMethods {
       tagSearchInput.addEventListener('input', () => {
         tagSearchClear.classList.toggle('hidden', !tagSearchInput.value);
         this.applyTagSearchFilter();
+      });
+      // Enter：套用 / 移除第一個符合的標籤（注音等輸入法選字中的 Enter 不算）
+      tagSearchInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        if (!tagSearchInput.value.trim()) return;
+        const first = document.querySelector(
+          '#tag-selector .tag-group-selector:not(.hidden) .tag-item-selector:not(.hidden)');
+        if (!first) return;
+        e.preventDefault();
+        this._toggleSelectorTag(first);
       });
     }
     if (tagSearchClear) {
@@ -435,6 +465,7 @@ class VideoModalMethods {
       const isSelected = this.selectedVideo.tags.includes(tagName);
       tagItem.classList.toggle('selected', isSelected);
     });
+    this._updateSelectorGroupCounts();
   }
 
   updateVideoTagsDisplay(videoId) {
