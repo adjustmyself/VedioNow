@@ -98,21 +98,44 @@ class VideoModalMethods {
 
   renderModalTags() {
     const modalTags = document.getElementById('modal-tags');
+    clearTimeout(this._tagRemoveTimer);
     modalTags.innerHTML = this._sortTags(this.selectedVideo.tags).map(tag => {
       const color = this.tagColors?.get(tag) || '#3b82f6';
-      return `<span class="tag removable" data-tag="${escapeHtml(tag)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(tag)}</span>`;
+      return `<span class="tag removable" data-tag="${escapeHtml(tag)}" title="點一下後再按一次即可移除" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(tag)}</span>`;
     }).join('');
 
     // 使用事件委派綁定標籤移除事件（只綁定一次）
+    // 第一下只進入待確認狀態，同一個標籤再按一次才移除，避免誤刪
     if (!this.modalTagsEventBound) {
       modalTags.addEventListener('click', (e) => {
         const tagElement = e.target.closest('.tag.removable');
-        if (tagElement) {
+        if (!tagElement) return;
+        if (tagElement.classList.contains('confirm-remove')) {
           this.removeVideoTag(tagElement.dataset.tag);
+        } else {
+          this._armTagRemoval(tagElement);
         }
       });
       this.modalTagsEventBound = true;
     }
+  }
+
+  // 標籤進入「確定移除？」狀態；3 秒內沒再按就還原（一次只會有一個待確認）
+  _armTagRemoval(tagElement) {
+    const modalTags = document.getElementById('modal-tags');
+    modalTags.querySelectorAll('.tag.confirm-remove').forEach(el => {
+      el.classList.remove('confirm-remove');
+      el.textContent = el.dataset.tag;
+    });
+    this._hideTagTooltip?.();
+    tagElement.classList.add('confirm-remove');
+    tagElement.textContent = `移除「${tagElement.dataset.tag}」？`;
+    clearTimeout(this._tagRemoveTimer);
+    this._tagRemoveTimer = setTimeout(() => {
+      if (!tagElement.isConnected) return;
+      tagElement.classList.remove('confirm-remove');
+      tagElement.textContent = tagElement.dataset.tag;
+    }, 3000);
   }
 
   async renderTagSelector() {
