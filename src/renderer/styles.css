@@ -736,6 +736,15 @@ body {
     box-shadow: 0 1px 2px rgba(0,0,0,0.15);
 }
 
+/* 正在篩選的標籤：外圈用卡片底色隔開，再套標籤色外框 */
+.video-tags .tag.active {
+    box-shadow: 0 0 0 2px white, 0 0 0 3px var(--tag-color, #1565c0);
+}
+
+[data-theme="dark"] .video-tags .tag.active {
+    box-shadow: 0 0 0 2px #23262e, 0 0 0 3px var(--tag-color, #4f8cff);
+}
+
 .tag-more {
     font-size: 0.7rem;
     padding: 0.2rem 0.5rem;

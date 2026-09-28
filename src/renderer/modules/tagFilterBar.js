@@ -18,6 +18,8 @@ class TagFilterBarMethods {
       tip.classList.add('hidden');
       currentName = null;
     };
+    // 點卡片標籤會重畫列表，被移除的元素不會觸發 mouseout，需由外部主動收起
+    this._hideTagTooltip = hide;
 
     const position = (anchorEl) => {
       const rect = anchorEl.getBoundingClientRect();
@@ -98,6 +100,8 @@ class TagFilterBarMethods {
 
     // 取得標籤顯示計數 + class（多面向篩選用）
     const tagDisplay = (tag) => {
+      // 不在標籤表內的標籤（只出現在已選區）沒有總數可顯示
+      if (tag.video_count == null) return { countText: '', empty: false };
       if (!useFiltered) {
         return { countText: `${tag.video_count}`, empty: false };
       }
@@ -118,7 +122,7 @@ class TagFilterBarMethods {
       return `<span class="${classes.join(' ')}"
              data-tag="${escapeHtml(tag.name)}"
              style="--tag-color: ${escapeHtml(tag.color)};">
-        ${escapeHtml(tag.name)} (${d.countText})
+        ${escapeHtml(tag.name)}${d.countText ? ` (${d.countText})` : ''}
       </span>`;
     };
 
@@ -127,6 +131,13 @@ class TagFilterBarMethods {
     if (this.activeTags.size > 0) {
       const allTagsFlat = this.tagsByGroup.flatMap(g => g.tags || []);
       const selected = allTagsFlat.filter(t => this.activeTags.has(t.name));
+      // 從卡片點選、但不在標籤表內的標籤也要列出，才能在這裡取消
+      const known = new Set(allTagsFlat.map(t => t.name));
+      this.activeTags.forEach(name => {
+        if (!known.has(name)) {
+          selected.push({ name, color: this.tagColors?.get(name) || '#64748b', video_count: null });
+        }
+      });
       if (selected.length > 0) {
         pinnedHtml = `
           <div class="tag-pinned-section">

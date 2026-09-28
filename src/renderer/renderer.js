@@ -510,7 +510,9 @@ class VideoManager {
     const name = typeof tag === 'string' ? tag : tag.name;
     // 字串標籤從顏色對照表查；查不到才用預設色
     const color = (typeof tag === 'string' ? this.tagColors?.get(tag) : tag.color) || '#3b82f6';
-    return `<span class="tag" data-tag="${escapeHtml(name)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(name)}</span>`;
+    // 正在篩選的標籤加上 active 外框，點卡片上的標籤可切換篩選
+    const active = this.activeTags.has(name) ? ' active' : '';
+    return `<span class="tag${active}" data-tag="${escapeHtml(name)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(name)}</span>`;
   }
 
   // 依標籤管理的群組與標籤順序排列；不在標籤表內的排最後（維持原本相對順序）
@@ -623,6 +625,13 @@ class VideoManager {
     if (this.videoEventsBound) return;
 
     this.elements.videosContainer.addEventListener('click', async (e) => {
+      // 點卡片上的標籤：切換該標籤篩選，不開詳情
+      const tagEl = e.target.closest('.video-tags .tag[data-tag]');
+      if (tagEl) {
+        this._hideTagTooltip?.();
+        this.toggleTagFilter(tagEl.dataset.tag);
+        return;
+      }
       const card = e.target.closest('[data-video-id]');
       if (card) {
         this.showVideoModal(card.dataset.videoId);
