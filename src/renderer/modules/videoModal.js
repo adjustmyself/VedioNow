@@ -255,6 +255,12 @@ class VideoModalMethods {
       }
     });
 
+    // 複製檔案名稱
+    const copyFilenameBtn = document.getElementById('copy-filename');
+    copyFilenameBtn.addEventListener('click', () => {
+      if (this.selectedVideo) this.copyPathToClipboard(this.selectedVideo.filename, copyFilenameBtn);
+    });
+
     // 複製檔案路徑
     const copyFilepathBtn = document.getElementById('copy-filepath');
     copyFilepathBtn.addEventListener('click', () => {
