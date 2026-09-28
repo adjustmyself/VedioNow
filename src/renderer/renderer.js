@@ -20,6 +20,7 @@ class VideoManager {
     this.selectedRating = 0; // 0 表示全部
     this.selectedDrivePath = ''; // 選中的硬碟路徑
     this.duplicatesOnly = false; // 只看有重複檔案的影片
+    this.unwatchedOnly = false; // 只看開啟次數為 0 的影片
     this.currentSort = 'file_created_at';
     this.sortOrder = 'desc';
     this.viewMode = 'grid';
@@ -81,6 +82,7 @@ class VideoManager {
       driveFilterSelect: document.getElementById('drive-filter-select'),
       duplicateFilterToggle: document.getElementById('duplicate-filter-toggle'),
       duplicateFilterCount: document.getElementById('duplicate-filter-count'),
+      unwatchedFilterToggle: document.getElementById('unwatched-filter-toggle'),
       tagsFilter: document.getElementById('tags-filter'),
       tagFilterSearch: document.getElementById('tag-filter-search'),
       tagFilterSearchClear: document.getElementById('tag-filter-search-clear'),
@@ -145,6 +147,13 @@ class VideoManager {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         this.setDuplicatesOnly(!this.duplicatesOnly);
+      }
+    });
+    this.elements.unwatchedFilterToggle.addEventListener('click', () => this.setUnwatchedOnly(!this.unwatchedOnly));
+    this.elements.unwatchedFilterToggle.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.setUnwatchedOnly(!this.unwatchedOnly);
       }
     });
     this.elements.resetTagsBtn.addEventListener('click', () => this.resetTagsFilter());
@@ -286,6 +295,7 @@ class VideoManager {
       rating: this.selectedRating,
       drivePath: this.selectedDrivePath,
       duplicatesOnly: this.duplicatesOnly,
+      unwatchedOnly: this.unwatchedOnly,
       sortBy: this.currentSort,
       sortOrder: this.sortOrder
     };
@@ -414,6 +424,14 @@ class VideoManager {
     this.duplicatesOnly = enabled;
     this.elements.duplicateFilterToggle.classList.toggle('active', enabled);
     this.elements.duplicateFilterToggle.setAttribute('aria-pressed', String(enabled));
+    this.currentPage = 1;
+    this.handleSearch(this.elements.searchInput.value);
+  }
+
+  setUnwatchedOnly(enabled) {
+    this.unwatchedOnly = enabled;
+    this.elements.unwatchedFilterToggle.classList.toggle('active', enabled);
+    this.elements.unwatchedFilterToggle.setAttribute('aria-pressed', String(enabled));
     this.currentPage = 1;
     this.handleSearch(this.elements.searchInput.value);
   }

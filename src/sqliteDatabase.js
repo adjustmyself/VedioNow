@@ -428,6 +428,10 @@ class SQLiteDatabase {
             )`);
         }
 
+        if (filters.unwatchedOnly) {
+            where.push('IFNULL(v.play_count, 0) = 0');
+        }
+
         if (filters.drivePath && filters.drivePath.trim()) {
             // 硬碟路徑篩選：匹配 UNC 第二層路徑，例如 \\192.168.1.147\16tb-SN-xxx\...
             const escapedDrive = filters.drivePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

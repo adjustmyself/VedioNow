@@ -93,16 +93,19 @@ body {
     margin-bottom: 2rem;
 }
 
-.duplicate-filter {
+.duplicate-filter,
+.unwatched-filter {
     margin-bottom: 2rem;
 }
 
-.duplicate-filter-toggle {
+.duplicate-filter-toggle,
+.filter-toggle {
     gap: 0.4rem;
     user-select: none;
 }
 
-.duplicate-filter-toggle:focus-visible {
+.duplicate-filter-toggle:focus-visible,
+.filter-toggle:focus-visible {
     outline: 2px solid #667eea;
     outline-offset: 2px;
 }

@@ -533,6 +533,11 @@ class MongoDatabase extends DatabaseInterface {
             match.$and = [...(match.$and || []), { fingerprint: { $in: fingerprints } }];
         }
 
+        if (filters.unwatchedOnly) {
+            // null 也會命中沒有 play_count 欄位的舊文件
+            match.play_count = { $in: [0, null] };
+        }
+
         return match;
     }
 

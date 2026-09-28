@@ -522,6 +522,29 @@ describe('SQLiteDatabase', () => {
       expect(video.filepath).toBe('D:\\moved\\movie.mp4');
       expect(video.play_count).toBe(1);
     });
+
+    test('只看未觀看：篩掉開啟過的影片，可與標籤、搜尋疊加，標籤計數也套用', async () => {
+      await addVideo({ fingerprint: 'seen', filename: 'seen.mp4', filepath: 'C:\\v\\seen.mp4' });
+      await addVideo({ fingerprint: 'new1', filename: 'new1.mp4', filepath: 'C:\\v\\new1.mp4' });
+      await addVideo({ fingerprint: 'new2', filename: 'other.mp4', filepath: 'C:\\v\\other.mp4' });
+      await db.recordVideoPlay('C:\\v\\seen.mp4');
+      await db.addVideoTag('seen', '動作');
+      await db.addVideoTag('new1', '動作');
+      // 舊資料可能是 NULL，也要算未觀看
+      db.db.prepare('UPDATE videos SET play_count = NULL WHERE fingerprint = ?').run('new2');
+
+      const unwatched = await db.getVideos({ unwatchedOnly: true });
+      expect(unwatched.total).toBe(2);
+      expect(unwatched.videos.map(v => v.fingerprint).sort()).toEqual(['new1', 'new2']);
+
+      const tagged = await db.searchVideos('', ['動作'], { unwatchedOnly: true });
+      expect(tagged.videos.map(v => v.fingerprint)).toEqual(['new1']);
+
+      const searched = await db.searchVideos('other', [], { unwatchedOnly: true });
+      expect(searched.videos.map(v => v.fingerprint)).toEqual(['new2']);
+
+      expect(await db.getTagCountsForFilter('', [], { unwatchedOnly: true })).toEqual({ '動作': 1 });
+    });
   });
 
   describe('合集', () => {
