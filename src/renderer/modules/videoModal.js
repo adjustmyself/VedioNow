@@ -155,6 +155,10 @@ class VideoModalMethods {
         </div>
       `).join('');
 
+      // 手動輸入框的自動完成清單
+      document.getElementById('tag-name-options').innerHTML = this.allTags
+        .map(tag => `<option value="${escapeHtml(tag.name)}"></option>`).join('');
+
       // 重新渲染後重新套用目前的搜尋條件（保留使用者輸入）
       this.applyTagSearchFilter();
 
@@ -326,6 +330,7 @@ class VideoModalMethods {
 
   async addVideoTag(tagName = null) {
     let actualTagName;
+    let needsCreate = false;
 
     if (tagName) {
       actualTagName = tagName;
@@ -336,6 +341,16 @@ class VideoModalMethods {
       if (!actualTagName) return;
 
       tagInput.value = '';
+
+      // 只差大小寫的既有標籤沿用原名；真正的新名稱要先建立標籤，
+      // 否則只有關聯、沒有標籤資料，不會出現在篩選列與標籤管理
+      const lower = actualTagName.toLowerCase();
+      const existing = this.allTags.find(t => (t.name || '').toLowerCase() === lower);
+      if (existing) {
+        actualTagName = existing.name;
+      } else {
+        needsCreate = true;
+      }
     }
 
     // 檢查標籤是否已存在
@@ -345,6 +360,14 @@ class VideoModalMethods {
       // 只使用基於指紋的新方法
       if (!this.selectedVideo.fingerprint) {
         throw new Error('影片缺少 fingerprint，無法添加標籤');
+      }
+
+      if (needsCreate) {
+        // 不指定群組 → 歸入「未分類」，之後可到標籤管理調整
+        const created = await ipcRenderer.invoke('create-tag', { name: actualTagName });
+        if (!created || !created.success) {
+          throw new Error(created?.error || '建立標籤失敗');
+        }
       }
 
       const result = await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
