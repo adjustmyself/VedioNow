@@ -98,7 +98,7 @@ class VideoModalMethods {
 
   renderModalTags() {
     const modalTags = document.getElementById('modal-tags');
-    modalTags.innerHTML = this.selectedVideo.tags.map(tag => {
+    modalTags.innerHTML = this._sortTags(this.selectedVideo.tags).map(tag => {
       const color = this.tagColors?.get(tag) || '#3b82f6';
       return `<span class="tag removable" data-tag="${escapeHtml(tag)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(tag)}</span>`;
     }).join('');
@@ -424,10 +424,7 @@ class VideoModalMethods {
 
     const tagsElement = videoCard.querySelector('.video-tags');
     if (tagsElement) {
-      const tags = video.tags && video.tags.length > 0
-        ? video.tags.map(tag => this._videoTagHtml(tag)).join('')
-        : '<span class="no-tags">無標籤</span>';
-      tagsElement.innerHTML = tags;
+      tagsElement.innerHTML = this._videoTagsHtml(video);
     }
   }
 

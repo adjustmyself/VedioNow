@@ -335,6 +335,8 @@ class VideoManager {
     this.tagColors = new Map();
     this.tagDescriptions = new Map();
     this.tagImages = new Map();
+    // 標籤名稱 -> 在標籤管理中的顯示順序（群組順序 + 群組內順序），供卡片與詳情排序
+    this.tagOrder = new Map();
     // 圖片資料庫只存檔名，需組出 userData 下的 file:// URL；資料夾不會變，只查一次
     if (this._tagImagesDir === undefined) {
       this._tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
@@ -344,6 +346,7 @@ class VideoManager {
       if (group.tags && Array.isArray(group.tags)) {
         this.allTags.push(...group.tags);
         group.tags.forEach(tag => {
+          if (!this.tagOrder.has(tag.name)) this.tagOrder.set(tag.name, this.tagOrder.size);
           if (tag.color) this.tagColors.set(tag.name, tag.color);
           if (tag.description) this.tagDescriptions.set(tag.name, tag.description);
           if (tag.description_image) this.tagImages.set(tag.name, toImageUrl(tag.description_image));
@@ -358,6 +361,8 @@ class VideoManager {
       await this.loadTags();
       this.renderTagsFilter();
       this.updateStats();
+      // 標籤管理改了順序或顏色：就地更新卡片上的標籤（不重畫整個列表，縮圖不重載）
+      this.currentVideos.forEach(video => this.updateVideoTagsDisplay(video.id));
 
       // 影片彈窗開啟中：重建標籤選擇器，讓剛新增的標籤馬上可以點選
       const modalOpen = this.selectedVideo &&
@@ -505,10 +510,25 @@ class VideoManager {
     return `<span class="tag" data-tag="${escapeHtml(name)}" style="--tag-color: ${escapeHtml(color)};">${escapeHtml(name)}</span>`;
   }
 
+  // 依標籤管理的群組與標籤順序排列；不在標籤表內的排最後（維持原本相對順序）
+  _sortTags(tags) {
+    const order = this.tagOrder;
+    if (!order || order.size === 0) return [...tags];
+    const rank = (tag) => {
+      const index = order.get(typeof tag === 'string' ? tag : tag.name);
+      return index === undefined ? order.size : index;
+    };
+    return [...tags].sort((a, b) => rank(a) - rank(b));
+  }
+
+  // 卡片 / 清單項目的整排標籤；開詳情改標籤後由 updateVideoTagsDisplay() 就地更新
+  _videoTagsHtml(video) {
+    if (!video.tags || video.tags.length === 0) return '<span class="no-tags">無標籤</span>';
+    return this._sortTags(video.tags).map(tag => this._videoTagHtml(tag)).join('');
+  }
+
   _buildVideoFields(video) {
-    const tags = video.tags && video.tags.length > 0
-      ? video.tags.map(tag => this._videoTagHtml(tag)).join('')
-      : '<span class="no-tags">無標籤</span>';
+    const tags = this._videoTagsHtml(video);
 
     const filename = escapeHtml(video.filename || '未知檔名');
     const filepath = escapeHtml(video.filepath || '');
