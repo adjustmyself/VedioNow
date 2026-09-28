@@ -2,6 +2,9 @@ const { ipcRenderer } = require('electron');
 
 const { escapeHtml, toTagImageUrl, debounce } = require('./shared/util');
 
+// 影片卡片最多顯示幾個標籤，其餘收成「+N」，避免標籤多的卡片撐高整排
+const CARD_TAG_LIMIT = 6;
+
 class VideoManager {
   constructor() {
     this.currentVideos = [];
@@ -522,9 +525,14 @@ class VideoManager {
   }
 
   // 卡片 / 清單項目的整排標籤；開詳情改標籤後由 updateVideoTagsDisplay() 就地更新
+  // 超過 CARD_TAG_LIMIT 個時其餘收成「+N」，hover 看完整名單、點它開詳情
   _videoTagsHtml(video) {
     if (!video.tags || video.tags.length === 0) return '<span class="no-tags">無標籤</span>';
-    return this._sortTags(video.tags).map(tag => this._videoTagHtml(tag)).join('');
+    const sorted = this._sortTags(video.tags);
+    const shown = sorted.slice(0, CARD_TAG_LIMIT).map(tag => this._videoTagHtml(tag)).join('');
+    const rest = sorted.slice(CARD_TAG_LIMIT).map(tag => (typeof tag === 'string' ? tag : tag.name));
+    if (rest.length === 0) return shown;
+    return `${shown}<span class="tag-more" title="${escapeHtml(rest.join('、'))}">+${rest.length}</span>`;
   }
 
   _buildVideoFields(video) {
