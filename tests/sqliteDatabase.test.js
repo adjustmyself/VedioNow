@@ -197,17 +197,42 @@ describe('SQLiteDatabase', () => {
       // 影片記錄已刪除但關聯仍在（關聯以指紋保存）
       db.db.prepare("INSERT INTO video_tags (fingerprint, tag_name, created_at) VALUES ('fp-gone', '幽靈', '')").run();
 
+      // 與啟動順序相同：先把「合集」放進系統群組，再補其餘孤兒標籤
+      expect(await db.ensureCollectionTag({ onlyIfUsed: true })).toBe(true);
       const result = await db.backfillOrphanTags();
-      expect(result).toEqual({ created: 2, names: ['合集', '手動標籤'] });
+      expect(result).toEqual({ created: 1, names: ['手動標籤'] });
 
       const byGroup = await db.getTagsByGroup();
       const ungrouped = byGroup.find(g => g.name === '未分類');
-      expect(ungrouped.tags.map(t => t.name).sort()).toEqual(['合集', '手動標籤']);
-      expect(ungrouped.tags.every(t => t.video_count === 1)).toBe(true);
+      expect(ungrouped.tags.map(t => t.name)).toEqual(['手動標籤']);
+      expect(ungrouped.tags[0].video_count).toBe(1);
+      expect(byGroup.find(g => g.name === '系統').tags.map(t => t.name)).toEqual(['合集']);
       expect(byGroup.find(g => g.name === '類型').tags.map(t => t.name)).toEqual(['動作']);
+      // 系統群組排在使用者群組之後
+      expect(byGroup.map(g => g.name)).toEqual(['類型', '系統', '未分類']);
 
       // 再跑一次不會重複建立
+      expect(await db.ensureCollectionTag({ onlyIfUsed: true })).toBe(false);
       expect(await db.backfillOrphanTags()).toEqual({ created: 0, names: [] });
+    });
+
+    test('合集標籤：沒用到不建立、已補進未分類的會搬進系統、使用者自選的群組不動', async () => {
+      await addVideo({ fingerprint: 'fp-1', filepath: 'p1' });
+      expect(await db.ensureCollectionTag({ onlyIfUsed: true })).toBe(false);
+      expect(await db.getTagsByGroup()).toEqual([]);
+
+      // 先前版本補進未分類的「合集」
+      await db.createTag({ name: '合集', color: '#123456', group_id: null });
+      expect(await db.ensureCollectionTag({ onlyIfUsed: true })).toBe(true);
+      let tag = (await db.getTagsByGroup()).find(g => g.name === '系統').tags[0];
+      expect(tag).toMatchObject({ name: '合集', color: '#123456' });
+
+      // 使用者自己移到別的群組 → 不再搬回
+      const mine = await db.createTagGroup({ name: '我的', color: '#f00' });
+      await db.updateTag(tag.id, { group_id: mine });
+      expect(await db.ensureCollectionTag()).toBe(false);
+      tag = (await db.getTagsByGroup()).find(g => g.name === '我的').tags[0];
+      expect(tag.name).toBe('合集');
     });
 
     test('標籤改名同步影片關聯', async () => {
@@ -515,6 +540,10 @@ describe('SQLiteDatabase', () => {
       expect(videos.total).toBe(1);
       expect(videos.videos[0].fingerprint).toBe('fp-main');
       expect(videos.videos[0].tags).toContain('合集');
+
+      // 「合集」標籤建立在「系統」群組
+      const system = (await db.getTagsByGroup()).find(g => g.name === '系統');
+      expect(system.tags.map(t => t.name)).toEqual(['合集']);
 
       // 合集內容正確且按順序
       const collection = await db.getVideoCollection('fp-main');

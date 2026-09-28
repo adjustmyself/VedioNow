@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const FileFingerprint = require('./fileFingerprint');
+const { COLLECTION_TAG, COLLECTION_TAG_COLOR, SYSTEM_GROUP } = require('./systemTags');
 
 // SQLite 資料庫實作（better-sqlite3，行程內、零安裝依賴）
 //
@@ -715,8 +716,44 @@ class SQLiteDatabase {
         return result.changes > 0;
     }
 
-    // 影片有關聯、卻沒有標籤資料的名稱（舊版手動輸入的標籤、合集自動加的「合集」），
+    // 「合集」標籤放進「系統」群組（群組不存在就建立）。
+    // 只搬未分類的：使用者自己移到別的群組就尊重，不再搬動。
+    // onlyIfUsed：啟動檢查用，標籤不存在且沒有影片用到時不建立。回傳是否有變更
+    async ensureCollectionTag({ onlyIfUsed = false } = {}) {
+        const run = this.db.transaction(() => {
+            const tag = this._stmt('SELECT id, group_id FROM tags WHERE name = ?').get(COLLECTION_TAG);
+            if (tag && tag.group_id != null) return false;
+            if (!tag && onlyIfUsed &&
+                !this._stmt('SELECT 1 FROM video_tags WHERE tag_name = ? LIMIT 1').get(COLLECTION_TAG)) {
+                return false;
+            }
+
+            const now = this._now();
+            let group = this._stmt('SELECT id FROM tag_groups WHERE name = ?').get(SYSTEM_GROUP.name);
+            if (!group) {
+                const result = this._stmt(`
+                    INSERT INTO tag_groups (name, color, description, sort_order, created_at) VALUES (?, ?, ?, ?, ?)
+                `).run(SYSTEM_GROUP.name, SYSTEM_GROUP.color, SYSTEM_GROUP.description, SYSTEM_GROUP.sort_order, now);
+                group = { id: Number(result.lastInsertRowid) };
+            }
+
+            if (tag) {
+                this._stmt('UPDATE tags SET group_id = ?, sort_order = ?, updated_at = ? WHERE id = ?')
+                    .run(group.id, this._nextTagSortOrder(group.id), now, tag.id);
+            } else {
+                this._stmt(`
+                    INSERT INTO tags (name, color, description, description_image, group_id, sort_order, created_at)
+                    VALUES (?, ?, '', '', ?, ?, ?)
+                `).run(COLLECTION_TAG, COLLECTION_TAG_COLOR, group.id, this._nextTagSortOrder(group.id), now);
+            }
+            return true;
+        });
+        return run();
+    }
+
+    // 影片有關聯、卻沒有標籤資料的名稱（例如舊版手動輸入的標籤），
     // 補建到未分類，才會出現在篩選列與標籤管理。只看仍存在的影片，避免補出 0 部影片的標籤
+    // （「合集」由 ensureCollectionTag() 放進系統群組，須先執行）
     async backfillOrphanTags() {
         const names = this._stmt(`
             SELECT DISTINCT tag_name FROM video_tags
@@ -965,8 +1002,9 @@ class SQLiteDatabase {
         });
 
         const insertedCount = run();
-        // 為主影片加上「合集」標籤
-        await this.addVideoTag(mainVideoFingerprint, '合集');
+        // 為主影片加上「合集」標籤，並確保它在「系統」群組
+        await this.addVideoTag(mainVideoFingerprint, COLLECTION_TAG);
+        await this.ensureCollectionTag();
         return { success: true, insertedCount };
     }
 

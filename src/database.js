@@ -4,6 +4,7 @@ const fs = require('fs-extra');
 const Config = require('./config');
 const { getUserDataDir } = require('./appPaths');
 const FileFingerprint = require('./fileFingerprint');
+const { COLLECTION_TAG, COLLECTION_TAG_COLOR, SYSTEM_GROUP } = require('./systemTags');
 
 // app_meta 內記錄「舊標籤系統已遷移」的旗標 id
 const LEGACY_TAG_MIGRATION_KEY = 'legacy_tags_migrated';
@@ -64,6 +65,10 @@ class DatabaseInterface {
 
     async backfillOrphanTags() {
         throw new Error('子類別必須實作 backfillOrphanTags 方法');
+    }
+
+    async ensureCollectionTag(options) {
+        throw new Error('子類別必須實作 ensureCollectionTag 方法');
     }
 
     async createTagGroup(groupData) {
@@ -979,6 +984,31 @@ class MongoDatabase extends DatabaseInterface {
         }));
     }
 
+    // 「合集」標籤放進「系統」群組（與 SQLite 版一致：只搬未分類的，onlyIfUsed 供啟動檢查用）
+    async ensureCollectionTag({ onlyIfUsed = false } = {}) {
+        const tags = this.db.collection('tags');
+        const tag = await tags.findOne({ name: COLLECTION_TAG });
+        if (tag && tag.group_id) return false;
+        if (!tag && onlyIfUsed &&
+            !await this.db.collection('video_tag_relations').findOne({ tags: COLLECTION_TAG })) {
+            return false;
+        }
+
+        const group = await this.db.collection('tag_groups').findOne({ name: SYSTEM_GROUP.name });
+        const groupId = group
+            ? group._id
+            : new ObjectId(await this.createTagGroup({ ...SYSTEM_GROUP }));
+
+        if (tag) {
+            await tags.updateOne({ _id: tag._id }, {
+                $set: { group_id: groupId, sort_order: await this._nextTagSortOrder(groupId), updated_at: new Date() }
+            });
+        } else {
+            await this.createTag({ name: COLLECTION_TAG, color: COLLECTION_TAG_COLOR, group_id: groupId.toString() });
+        }
+        return true;
+    }
+
     // 影片有關聯、卻沒有標籤資料的名稱補建到未分類（與 SQLite 版一致，只看仍存在的影片）
     async backfillOrphanTags() {
         const videoFingerprints = await this.db.collection('videos').distinct('fingerprint');
@@ -1359,8 +1389,9 @@ class MongoDatabase extends DatabaseInterface {
                 { $set: { is_master: true, updated_at: new Date() } }
             );
 
-            // 為主影片加上「合集」標籤
-            await this.addVideoTag(mainVideoFingerprint, '合集');
+            // 為主影片加上「合集」標籤，並確保它在「系統」群組
+            await this.addVideoTag(mainVideoFingerprint, COLLECTION_TAG);
+            await this.ensureCollectionTag();
 
             return { success: true, insertedCount: result.insertedCount };
         } catch (error) {

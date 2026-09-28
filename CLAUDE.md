@@ -106,6 +106,7 @@ dist/                    # Build output directory
 - FFmpeg is bundled via `ffmpeg-static` (PATH `ffmpeg` is the fallback); `asarUnpack` in package.json keeps the binary spawnable after packaging
 - Tests live in `tests/` and run via `npm test`, which executes Jest through Electron's Node (`ELECTRON_RUN_AS_NODE`) so native modules (better-sqlite3) match the Electron ABI — plain `npx jest` will fail with ABI errors
 - `getVideos()`/`searchVideos()` are paginated (default 9/page) and sorted server-side via whitelisted `filters.sortBy`/`sortOrder`; maintenance code that needs every video must use `getAllVideoRefs()`
+- Tag relations are stored by name, so a relation can exist without a `tags` row ("orphan tag"). On startup `ensureCollectionTag()` puts the auto-added `合集` tag into the `系統` group (`src/systemTags.js`), then `backfillOrphanTags()` creates any remaining orphans in 未分類
 - Open stats: every successful `open-path` calls `recordVideoPlay(filepath)` (`play_count` +1, `last_played_at`); playback is in an external player, so watch duration is not tracked
 - Rescans skip files whose size + `file_mtime` are unchanged (reusing the stored fingerprint); SQLite scans write through `addVideosBatch()`
 - Renderer pages have a CSP meta tag: no inline scripts/handlers — bind events in JS; file paths must go through `toFileUrl()`

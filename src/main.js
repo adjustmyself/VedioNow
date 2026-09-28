@@ -236,6 +236,15 @@ app.whenReady().then(async () => {
       console.warn('舊標籤系統遷移失敗:', error);
     }
 
+    // 「合集」放進「系統」群組（包含先前被補進未分類的），須在補建孤兒標籤之前
+    try {
+      if (await database.ensureCollectionTag({ onlyIfUsed: true })) {
+        console.log('已將「合集」標籤放進「系統」群組');
+      }
+    } catch (error) {
+      console.warn('整理合集標籤失敗:', error);
+    }
+
     // 只有影片關聯、沒有標籤資料的「孤兒標籤」補建到未分類（每次啟動檢查，已補過的不會重複）
     try {
       const { created, names } = await database.backfillOrphanTags();
@@ -715,6 +724,8 @@ ipcMain.handle('delete-tag', async (event, tagId) => {
 ipcMain.handle('create-collection', async (event, mainFingerprint, childFingerprints, collectionName, folderPath) => {
   try {
     const result = await database.createVideoCollection(mainFingerprint, childFingerprints, collectionName, folderPath);
+    // 主影片多了「合集」標籤（第一次還會建立「系統」群組），讓篩選列與計數同步
+    broadcastTagsChanged();
     return { success: true, data: result };
   } catch (error) {
     console.error('Error creating collection:', error);
