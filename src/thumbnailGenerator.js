@@ -27,6 +27,10 @@ const FFMPEG_PATH = resolveFfmpegPath();
 const MAX_FFMPEG_PROCESSES = Math.min(3, Math.max(1, Math.floor(os.cpus().length / 2)));
 // 失敗時只保留最後這麼多字的 stderr 供錯誤訊息使用
 const STDERR_TAIL_CHARS = 2000;
+// 滑過預覽：一張橫向長條圖，PREVIEW_FRAMES 格、每格 PREVIEW_WIDTH x PREVIEW_HEIGHT（不足的比例補黑邊）
+const PREVIEW_FRAMES = 10;
+const PREVIEW_WIDTH = 320;
+const PREVIEW_HEIGHT = 180;
 // Duration 出現在 stderr 開頭的輸入資訊裡；只保留尾段會被串流/中繼資料擠掉，所以另存開頭這段來解析長度
 const STDERR_HEAD_CHARS = 16000;
 
@@ -69,6 +73,8 @@ class ThumbnailGenerator {
     this.thumbnailsDir = path.join(getUserDataDir(), 'thumbnails');
     // 同一支影片的縮圖同時只產一次（重複請求共用同一個 Promise）
     this.inflight = new Map();
+    // 滑過預覽的長條圖，命名方式與縮圖相同
+    this.previewsDir = path.join(getUserDataDir(), 'previews');
     // 產縮圖時順便得知影片長度就回呼 (videoPath, seconds)，由主行程寫回資料庫
     this.onDuration = null;
   }
@@ -94,6 +100,10 @@ class ThumbnailGenerator {
   // 產生縮圖路徑 (在本地快取目錄中)
   getThumbnailPath(videoPath, fingerprint) {
     return path.join(this.thumbnailsDir, `${this.thumbnailKey(videoPath, fingerprint)}.jpg`);
+  }
+
+  getPreviewPath(videoPath, fingerprint) {
+    return path.join(this.previewsDir, `${this.thumbnailKey(videoPath, fingerprint)}.jpg`);
   }
 
   getLegacyThumbnailPath(videoPath) {
@@ -238,6 +248,81 @@ class ThumbnailGenerator {
     throw new Error(`FFmpeg failed for all time offsets\n${lastError}`);
   }
 
+  // 預覽各格的擷取時間點：平均分布在影片 5%～95%
+  static previewOffsets(duration, frames = PREVIEW_FRAMES) {
+    return Array.from({ length: frames }, (_, i) =>
+      Math.round(duration * (0.05 + 0.9 * i / (frames - 1)) * 10) / 10
+    );
+  }
+
+  // 一次 FFmpeg 執行：每個時間點各開一個輸入（-ss 在 -i 前快速定位），縮放補邊後橫向拼接
+  buildPreviewArgs(videoPath, outputPath, offsets) {
+    const input = this.normalizeInputPath(videoPath);
+    const args = ['-hide_banner'];
+    for (const offset of offsets) args.push('-ss', String(offset), '-i', input);
+    const scaled = offsets.map((_, i) =>
+      `[${i}:v:0]scale=${PREVIEW_WIDTH}:${PREVIEW_HEIGHT}:force_original_aspect_ratio=decrease,` +
+      `pad=${PREVIEW_WIDTH}:${PREVIEW_HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
+    );
+    const stack = `${offsets.map((_, i) => `[v${i}]`).join('')}hstack=inputs=${offsets.length}[out]`;
+    args.push(
+      '-filter_complex', `${scaled.join(';')};${stack}`,
+      '-map', '[out]',
+      '-frames:v', '1',
+      '-q:v', '4',
+      '-f', 'image2',
+      '-update', '1',
+      '-y', outputPath.replace(/\\/g, '/')
+    );
+    return args;
+  }
+
+  async previewExists(videoPath, fingerprint) {
+    const previewPath = this.getPreviewPath(videoPath, fingerprint);
+    return await this._isValidFile(previewPath) ? previewPath : null;
+  }
+
+  // 產生滑過預覽（已存在就直接回傳）。knownDuration 為資料庫裡的長度，沒有時先讀檔頭
+  async generatePreview(videoPath, fingerprint, knownDuration = 0) {
+    const previewPath = this.getPreviewPath(videoPath, fingerprint);
+    const pending = this.inflight.get(previewPath);
+    if (pending) return pending;
+
+    const task = (async () => {
+      if (await this._isValidFile(previewPath)) return previewPath;
+
+      let duration = Number(knownDuration) > 0 ? Number(knownDuration) : null;
+      if (!duration) {
+        duration = await this.probeDuration(videoPath);
+        if (duration) this._reportDuration(videoPath, duration);
+      }
+      if (!duration || duration < 2) throw new Error('無法取得影片長度或影片太短');
+
+      await fs.ensureDir(this.previewsDir);
+      const tmpPath = `${previewPath}.tmp.jpg`;
+      try {
+        const offsets = ThumbnailGenerator.previewOffsets(duration);
+        const { code, stderr } = await withFfmpegSlot(() =>
+          this._runFfmpeg(this.buildPreviewArgs(videoPath, tmpPath, offsets))
+        );
+        if (code !== 0 || !await this._isValidFile(tmpPath)) {
+          throw new Error(`FFmpeg 產生預覽失敗 (exit ${code}): ${stderr.slice(-300)}`);
+        }
+        await fs.move(tmpPath, previewPath, { overwrite: true });
+        return previewPath;
+      } finally {
+        await fs.remove(tmpPath).catch(() => {});
+      }
+    })();
+
+    this.inflight.set(previewPath, task);
+    try {
+      return await task;
+    } finally {
+      this.inflight.delete(previewPath);
+    }
+  }
+
   _reportDuration(videoPath, seconds) {
     if (!this.onDuration || !(seconds > 0)) return;
     try {
@@ -324,64 +409,55 @@ class ThumbnailGenerator {
         if (fingerprint) validHashes.add(this.thumbnailKey(filepath, fingerprint));
       }
 
-      let cleanupCount = 0;
-
-      // 檢查本地縮圖目錄
-      if (!await fs.pathExists(this.thumbnailsDir)) {
-        return;
-      }
-
-      try {
-        const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
-
-        for (const thumbnailFile of thumbnailFiles) {
-          // 只處理jpg檔案（中斷留下的 .tmp.jpg 一併清掉）
-          if (path.extname(thumbnailFile).toLowerCase() === '.jpg') {
-            const fileHash = path.basename(thumbnailFile, '.jpg');
-
-            // 如果這個hash不在有效列表中，就刪除縮圖
-            if (!validHashes.has(fileHash)) {
-              const thumbnailPath = path.join(this.thumbnailsDir, thumbnailFile);
-              await fs.remove(thumbnailPath);
-              cleanupCount++;
-            }
-          }
-        }
-      } catch (error) {
-        console.warn(`清理縮圖目錄失敗 ${this.thumbnailsDir}:`, error.message);
-      }
-
-      if (cleanupCount > 0) {
-        console.log(`縮圖清理完成，共刪除 ${cleanupCount} 個過期縮圖`);
+      // 縮圖與滑過預覽用同一套檔名，一起清理
+      const thumbnails = await this._cleanupDir(this.thumbnailsDir, validHashes);
+      const previews = await this._cleanupDir(this.previewsDir, validHashes);
+      if (thumbnails + previews > 0) {
+        console.log(`縮圖清理完成，共刪除 ${thumbnails} 個過期縮圖、${previews} 個過期預覽`);
       }
     } catch (error) {
       console.error('清理縮圖時發生錯誤:', error);
     }
   }
 
-  // 獲取縮圖統計資訊
+  // 刪除目錄中檔名不在 validHashes 的 jpg（中斷留下的 .tmp.jpg 一併清掉），回傳刪除數
+  async _cleanupDir(dir, validHashes) {
+    if (!await fs.pathExists(dir)) return 0;
+    let count = 0;
+    try {
+      for (const file of await fs.readdir(dir)) {
+        if (path.extname(file).toLowerCase() !== '.jpg') continue;
+        if (validHashes.has(path.basename(file, '.jpg'))) continue;
+        await fs.remove(path.join(dir, file));
+        count++;
+      }
+    } catch (error) {
+      console.warn(`清理目錄失敗 ${dir}:`, error.message);
+    }
+    return count;
+  }
+
+  // 獲取縮圖統計資訊（previews：滑過預覽）
   async getThumbnailStats() {
     try {
-      // 檢查本地縮圖目錄
-      if (!await fs.pathExists(this.thumbnailsDir)) {
-        return { total: 0, size: 0 };
-      }
-
-      const thumbnailFiles = await fs.readdir(this.thumbnailsDir);
-      const jpgFiles = thumbnailFiles.filter(file => path.extname(file).toLowerCase() === '.jpg');
-
-      const sizes = await Promise.all(jpgFiles.map(file =>
-        fs.stat(path.join(this.thumbnailsDir, file)).then(s => s.size).catch(() => 0)
-      ));
-
-      return {
-        total: jpgFiles.length,
-        size: sizes.reduce((sum, size) => sum + size, 0)
-      };
+      const [thumbnails, previews] = await Promise.all([
+        this._dirStats(this.thumbnailsDir),
+        this._dirStats(this.previewsDir)
+      ]);
+      return { ...thumbnails, previews };
     } catch (error) {
       console.error('獲取縮圖統計資訊失敗:', error);
-      return { total: 0, size: 0 };
+      return { total: 0, size: 0, previews: { total: 0, size: 0 } };
     }
+  }
+
+  async _dirStats(dir) {
+    if (!await fs.pathExists(dir)) return { total: 0, size: 0 };
+    const jpgFiles = (await fs.readdir(dir)).filter(file => path.extname(file).toLowerCase() === '.jpg');
+    const sizes = await Promise.all(jpgFiles.map(file =>
+      fs.stat(path.join(dir, file)).then(st => st.size).catch(() => 0)
+    ));
+    return { total: jpgFiles.length, size: sizes.reduce((sum, size) => sum + size, 0) };
   }
 
   // 為前端提供的生成縮圖方法 (在渲染進程中調用)

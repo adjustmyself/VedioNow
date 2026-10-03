@@ -170,6 +170,64 @@ describe('ThumbnailGenerator', () => {
     });
   });
 
+  describe('滑過預覽', () => {
+    beforeEach(() => {
+      gen.previewsDir = path.join(dir, 'previews');
+    });
+
+    test('擷取時間點平均分布在 5%～95%', () => {
+      const offsets = ThumbnailGenerator.previewOffsets(100);
+      expect(offsets).toHaveLength(10);
+      expect(offsets[0]).toBe(5);
+      expect(offsets[9]).toBe(95);
+      expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+    });
+
+    test('每個時間點一個快速定位的輸入，橫向拼接成一張', () => {
+      const args = gen.buildPreviewArgs('\\\\nas\\share\\a.mkv', 'C:\\out\\p.jpg', [1, 2, 3]);
+      expect(args.filter(a => a === '-i')).toHaveLength(3);
+      // -ss 都在對應的 -i 前面
+      expect(args.slice(1, 5)).toEqual(['-ss', '1', '-i', '\\\\nas\\share\\a.mkv']);
+      const filter = args[args.indexOf('-filter_complex') + 1];
+      expect(filter).toContain('hstack=inputs=3');
+      expect(filter).toContain('pad=320:180');
+      expect(args[args.length - 1]).toBe('C:/out/p.jpg');
+    });
+
+    test('已有預覽就不再產生；沒有長度時先讀檔頭並回報', async () => {
+      const onDuration = jest.fn();
+      gen.onDuration = onDuration;
+      jest.spyOn(gen, 'probeDuration').mockResolvedValue(60);
+      const run = jest.spyOn(gen, '_runFfmpeg').mockImplementation(async (args) => {
+        fs.writeFileSync(args[args.length - 1], 'jpg');
+        return { code: 0, stderr: '', duration: null };
+      });
+
+      const p = await gen.generatePreview('C:\\v\\a.mp4', '0123456789abcdef0123456789abcdef', 0);
+      expect(path.basename(p)).toBe('fp-0123456789abcdef0123456789abcdef.jpg');
+      expect(onDuration).toHaveBeenCalledWith('C:\\v\\a.mp4', 60);
+
+      await gen.generatePreview('C:\\v\\a.mp4', '0123456789abcdef0123456789abcdef', 60);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    test('FFmpeg 失敗時丟出錯誤、不留下暫存檔', async () => {
+      jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: 1, stderr: 'Invalid data', duration: null });
+      await expect(gen.generatePreview('C:\\v\\bad.mp4', null, 30)).rejects.toThrow('FFmpeg 產生預覽失敗');
+      expect(fs.readdirSync(gen.previewsDir)).toEqual([]);
+    });
+
+    test('清理時預覽與縮圖一起清', async () => {
+      fs.mkdirSync(gen.previewsDir, { recursive: true });
+      const keep = gen.getPreviewPath('C:\\v\\a.mp4', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      const orphan = gen.getPreviewPath('C:\\v\\gone.mp4', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+      [keep, orphan].forEach(f => fs.writeFileSync(f, 'jpg'));
+      await gen.cleanupThumbnails([{ filepath: 'C:\\v\\a.mp4', fingerprint: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }]);
+      expect(fs.readdirSync(gen.previewsDir)).toEqual([path.basename(keep)]);
+      expect((await gen.getThumbnailStats()).previews).toEqual({ total: 1, size: 3 });
+    });
+  });
+
   test('全部失敗時不留下任何檔案', async () => {
     const thumbPath = gen.getThumbnailPath('C:\\videos\\bad.mp4');
     jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: 1, stderr: 'Invalid data' });

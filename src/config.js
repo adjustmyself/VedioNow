@@ -28,7 +28,8 @@ class Config {
       app: {
         theme: 'light',
         language: 'zh-TW',
-        pageSize: 9
+        pageSize: 9,
+        hoverPreview: true // 滑鼠停在縮圖上時產生並顯示多格預覽
       },
       scan: {
         recentPaths: [], // 已記憶的掃描路徑（永久保留，除非手動刪除）

@@ -209,6 +209,7 @@ class SettingsManager {
             document.getElementById('app-theme').value = app.theme || 'light';
             document.getElementById('app-language').value = app.language || 'zh-TW';
             document.getElementById('app-page-size').value = app.pageSize || 9;
+            document.getElementById('app-hover-preview').checked = app.hoverPreview !== false;
 
             // 載入縮圖統計
             this.loadThumbnailStats();
@@ -256,7 +257,8 @@ class SettingsManager {
             app: {
                 theme: document.getElementById('app-theme').value,
                 language: document.getElementById('app-language').value,
-                pageSize: this.collectPageSize()
+                pageSize: this.collectPageSize(),
+                hoverPreview: document.getElementById('app-hover-preview').checked
             }
         };
 
@@ -373,6 +375,9 @@ class SettingsManager {
                 const { stats } = result;
                 document.getElementById('thumbnail-count').textContent = stats.total.toLocaleString();
                 document.getElementById('thumbnail-size').textContent = this.formatFileSize(stats.size);
+                const previews = stats.previews || { total: 0, size: 0 };
+                document.getElementById('preview-stats').textContent =
+                    `${previews.total.toLocaleString()} 個，${this.formatFileSize(previews.size)}`;
             } else {
                 document.getElementById('thumbnail-count').textContent = '載入失敗';
                 document.getElementById('thumbnail-size').textContent = '載入失敗';

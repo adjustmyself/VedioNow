@@ -253,6 +253,7 @@ class VideoManager {
     this.setupTagTooltip();
     this.initBatchSelection();
     this.initSavedSearches();
+    this.initHoverPreview();
   }
 
   async loadData() {
@@ -772,7 +773,8 @@ for (const Methods of [
   require('./modules/pagination'),
   require('./modules/collections'),
   require('./modules/batchSelection'),
-  require('./modules/savedSearches')
+  require('./modules/savedSearches'),
+  require('./modules/hoverPreview')
 ]) {
   for (const name of Object.getOwnPropertyNames(Methods.prototype)) {
     if (name === 'constructor') continue;

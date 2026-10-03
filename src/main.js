@@ -999,6 +999,18 @@ ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset, 
   }
 });
 
+// 滑過預覽：需要時才產生（第一次滑過某部影片時），設定裡關閉時回傳 disabled
+ipcMain.handle('get-preview', async (event, videoPath, fingerprint, duration) => {
+  try {
+    const appConfig = (await config.load()).app || {};
+    if (appConfig.hoverPreview === false) return { success: false, disabled: true };
+    const preview = await thumbnailGenerator.generatePreview(videoPath, fingerprint, Number(duration) || 0);
+    return { success: true, path: preview };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // 縮圖清理
 ipcMain.handle('cleanup-thumbnails', async () => {
   try {

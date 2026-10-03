@@ -2119,6 +2119,55 @@ select {
     color: #888;
 }
 
+/* ========== 滑過預覽 ========== */
+.hover-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 4; /* 蓋過縮圖與角落標記，勾選框（11）仍在上面 */
+    display: flex;
+    align-items: center;
+    background: #000;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* 16:9 一格：卡片比較寬時上下裁掉一點，比較窄時上下留黑邊 */
+.hover-preview-frame {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    flex-shrink: 0;
+    background-repeat: no-repeat;
+}
+
+.hover-preview-bar {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    background: #ff4d4f;
+    transition: width 0.08s linear;
+}
+
+/* 第一次產生預覽時：縮圖底部的細長載入動畫 */
+.video-thumbnail.preview-loading::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, #ff4d4f, transparent);
+    background-size: 50% 100%;
+    background-repeat: no-repeat;
+    animation: preview-loading 1s linear infinite;
+}
+
+@keyframes preview-loading {
+    from { background-position: -50% 0; }
+    to { background-position: 150% 0; }
+}
+
 /* ========== 批次多選 ========== */
 .card-select-box {
     position: absolute;

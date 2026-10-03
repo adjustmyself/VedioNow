@@ -168,6 +168,10 @@
                                 <span id="thumbnail-size" class="stat-value">載入中...</span>
                             </div>
                             <div class="stat-row">
+                                <span class="stat-label">滑過預覽:</span>
+                                <span id="preview-stats" class="stat-value">載入中...</span>
+                            </div>
+                            <div class="stat-row">
                                 <span class="stat-label">存儲位置:</span>
                                 <span class="stat-value">data/thumbnails/</span>
                             </div>
@@ -235,6 +239,14 @@
                             <label for="app-page-size">單頁顯示數量:</label>
                             <input type="number" id="app-page-size" min="1" max="200" step="1">
                             <p class="field-description">每一頁要顯示幾部影片（1～200，預設 9）。儲存後即時生效，不需重啟。</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="app-hover-preview">
+                                滑鼠停在縮圖上時顯示多格預覽
+                            </label>
+                            <p class="field-description">第一次滑過某部影片時會用 FFmpeg 擷取 10 個畫面（存在本機，之後直接使用）。影片在很慢的網路磁碟上時可以關閉。</p>
                         </div>
                     </div>
                 </div>
