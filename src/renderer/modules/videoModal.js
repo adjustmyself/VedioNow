@@ -11,6 +11,7 @@ class VideoModalMethods {
     document.getElementById('modal-filename').textContent = this.selectedVideo.filename;
     document.getElementById('modal-filepath').textContent = this.selectedVideo.filepath;
     document.getElementById('modal-filesize').textContent = this.formatFileSize(this.selectedVideo.filesize);
+    document.getElementById('modal-duration').textContent = this.formatDuration(this.selectedVideo.duration) || '尚未取得';
     const createdText = this.selectedVideo.file_created_at
       ? new Date(this.selectedVideo.file_created_at).toLocaleString()
       : (this.selectedVideo.created_at ? new Date(this.selectedVideo.created_at).toLocaleString() : '未知日期');

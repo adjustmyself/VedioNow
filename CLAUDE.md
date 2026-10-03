@@ -109,6 +109,8 @@ dist/                    # Build output directory
 - Tag relations are stored by name, so a relation can exist without a `tags` row ("orphan tag"). On startup `ensureCollectionTag()` puts the auto-added `合集` tag into the `系統` group (`src/systemTags.js`), then `backfillOrphanTags()` creates any remaining orphans in 未分類
 - Open stats: every successful `open-path` calls `recordVideoPlay(filepath)` (`play_count` +1, `last_played_at`); playback is in an external player, so watch duration is not tracked. List queries accept `filters.unwatchedOnly` (play_count 0 or NULL/missing)
 - Rescans skip files whose size + `file_mtime` are unchanged (reusing the stored fingerprint); SQLite scans write through `addVideosBatch()`
+- Video `duration` is never read during scans: it is captured when a thumbnail is made — FFmpeg path via `thumbnailGenerator.onDuration` → `setVideoDuration()`, `<video>`/canvas path via the `set-video-duration` IPC. Old records are filled by the settings-page `backfill-durations` IPC (`probeDuration()` reads only the header). Rescans keep the stored duration unless the fingerprint changed
+- Backups (`src/backupManager.js`, SQLite only): a `VideoNow-backup-<YYYYMMDD-HHmmss>/` folder with `videonow.db` (online `db.backup()`), `config.json`, `tag-images/`, `manifest.json`; thumbnails are not backed up. Auto backup runs ~15s after startup at most once per 24h into `<userData>/backups/auto` (keeps 7). Restore first backs up current data to `backups/pre-restore`, closes the DB, replaces files (keeping the current `database` config section) and relaunches
 - Renderer pages have a CSP meta tag: no inline scripts/handlers — bind events in JS; file paths must go through `toFileUrl()`
 
 ## Supported Video Formats

@@ -214,6 +214,11 @@ class VideoManager {
       this.loadData();
     });
 
+    // 影片資料在背景更新（例如設定頁補齊影片長度）：重新載入目前這一頁
+    ipcRenderer.on('videos-changed', () => {
+      this.refreshCurrentView();
+    });
+
     // 標籤／群組在標籤管理視窗有異動：立即同步標籤快取與畫面，
     // 讓新標籤不必重開主視窗就能選取
     ipcRenderer.on('tags-changed', async () => {
@@ -519,7 +524,7 @@ class VideoManager {
     ).join('');
 
     this.bindVideoEvents();
-    // 立即載入所有縮圖（移除懶載入）
+    // 查詢本頁縮圖快取；尚未產生的由 IntersectionObserver 在卡片進入畫面時才產生
     this.loadAllThumbnails();
   }
 
@@ -561,6 +566,7 @@ class VideoManager {
     const filename = escapeHtml(video.filename || '未知檔名');
     const filepath = escapeHtml(video.filepath || '');
     const filesize = this.formatFileSize(video.filesize);
+    const duration = this.formatDuration(video.duration);
     const createdDate = video.file_created_at
       ? new Date(video.file_created_at).toLocaleDateString()
       : (video.created_at ? new Date(video.created_at).toLocaleDateString() : '未知日期');
@@ -573,7 +579,7 @@ class VideoManager {
       : '';
 
     return {
-      tags, filename, filepath, filesize, createdDate, stars, description, duplicateBadge,
+      tags, filename, filepath, filesize, duration, createdDate, stars, description, duplicateBadge,
       playCount: this._playCountHtml(video),
       videoId: escapeHtml(video.id)
     };
@@ -602,6 +608,7 @@ class VideoManager {
             <span>🎬</span>
           </div>
           ${f.duplicateBadge ? `<div class="thumbnail-duplicate-badge">${f.duplicateBadge}</div>` : ''}
+          ${f.duration ? `<div class="thumbnail-duration">${f.duration}</div>` : ''}
           ${f.description ? `<div class="thumbnail-description">${f.description}</div>` : ''}
         </div>
         <div class="video-card-content">
@@ -629,7 +636,7 @@ class VideoManager {
         <div class="video-list-content">
           <div class="video-title">${f.filename}</div>
           <div class="video-meta-row">
-            <div class="video-meta">${f.filesize} • ${f.createdDate}${f.playCount}${f.duplicateBadge ? ` ${f.duplicateBadge}` : ''}</div>
+            <div class="video-meta">${f.duration ? `${f.duration} • ` : ''}${f.filesize} • ${f.createdDate}${f.playCount}${f.duplicateBadge ? ` ${f.duplicateBadge}` : ''}</div>
             <div class="video-rating">${f.stars}</div>
           </div>
           <div class="video-tags">${f.tags}</div>
@@ -702,6 +709,16 @@ class VideoManager {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  }
+
+  // 影片長度（秒）→ 1:02:03 / 4:05；尚未取得長度（0 或空值）回傳空字串
+  formatDuration(seconds) {
+    const total = Math.round(Number(seconds) || 0);
+    if (total <= 0) return '';
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = String(total % 60).padStart(2, '0');
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
   }
 
   generateStars(rating) {

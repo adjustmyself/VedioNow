@@ -107,6 +107,10 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 recordVideoPlay 方法');
     }
 
+    async setVideoDuration(filepath, seconds) {
+        throw new Error('子類別必須實作 setVideoDuration 方法');
+    }
+
     close() {
         throw new Error('子類別必須實作 close 方法');
     }
@@ -300,6 +304,8 @@ class MongoDatabase extends DatabaseInterface {
                 if (fingerprint && existingVideo.fingerprint && existingVideo.fingerprint !== fingerprint) {
                     await this._migrateFingerprintReferences(existingVideo.fingerprint, fingerprint);
                 }
+                // 掃描不讀影片長度（傳 null）：內容沒變就保留先前從 FFmpeg 取得的長度，內容變了歸零待重新取得
+                const keptDuration = duration || (existingVideo.fingerprint === fingerprint ? existingVideo.duration : 0);
 
                 // 檔案已存在，更新基本檔案資訊，保留用戶設定
                 await this.db.collection('videos').updateOne(
@@ -309,7 +315,7 @@ class MongoDatabase extends DatabaseInterface {
                             filename,
                             filepath,
                             filesize: filesize || 0,
-                            duration: duration || 0,
+                            duration: keptDuration || 0,
                             fingerprint,
                             file_created_at: file_created_at || null,
                             file_mtime,
@@ -413,14 +419,15 @@ class MongoDatabase extends DatabaseInterface {
     // 不可用 getVideos()（預設分頁只回傳一頁）。
     async getAllVideoRefs() {
         const docs = await this.db.collection('videos')
-            .find({}, { projection: { filepath: 1, fingerprint: 1, filesize: 1, file_mtime: 1 } })
+            .find({}, { projection: { filepath: 1, fingerprint: 1, filesize: 1, file_mtime: 1, duration: 1 } })
             .toArray();
         return docs.map(d => ({
             id: d._id.toString(),
             filepath: d.filepath,
             fingerprint: d.fingerprint || null,
             filesize: d.filesize,
-            file_mtime: d.file_mtime ?? null
+            file_mtime: d.file_mtime ?? null,
+            duration: d.duration || 0
         }));
     }
 
@@ -591,7 +598,7 @@ class MongoDatabase extends DatabaseInterface {
 
     // 排序欄位白名單；預設排序對應 {is_master, file_created_at, created_at} 索引
     _buildSort(filters = {}) {
-        const allowed = ['file_created_at', 'created_at', 'filename', 'filesize', 'rating', 'play_count', 'last_played_at'];
+        const allowed = ['file_created_at', 'created_at', 'filename', 'filesize', 'duration', 'rating', 'play_count', 'last_played_at'];
         const field = allowed.includes(filters.sortBy) ? filters.sortBy : 'file_created_at';
         const dir = filters.sortOrder === 'asc' ? 1 : -1;
         const sort = { [field]: dir };
@@ -741,6 +748,12 @@ class MongoDatabase extends DatabaseInterface {
                 }
             }
         );
+    }
+
+    // 寫入影片長度（秒）；路徑不在資料庫時回傳 false
+    async setVideoDuration(filepath, seconds) {
+        const result = await this.db.collection('videos').updateOne({ filepath }, { $set: { duration: seconds } });
+        return result.matchedCount > 0;
     }
 
     // 記錄一次開啟（開啟次數 +1、更新最後開啟時間）；路徑不在資料庫時回傳 null

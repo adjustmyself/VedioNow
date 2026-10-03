@@ -26,6 +26,8 @@ const FFMPEG_PATH = resolveFfmpegPath();
 const MAX_FFMPEG_PROCESSES = Math.min(3, Math.max(1, Math.floor(os.cpus().length / 2)));
 // 失敗時只保留最後這麼多字的 stderr 供錯誤訊息使用
 const STDERR_TAIL_CHARS = 2000;
+// Duration 出現在 stderr 開頭的輸入資訊裡；只保留尾段會被串流/中繼資料擠掉，所以另存開頭這段來解析長度
+const STDERR_HEAD_CHARS = 16000;
 
 let runningProcesses = 0;
 const waitingQueue = [];
@@ -66,6 +68,8 @@ class ThumbnailGenerator {
     this.thumbnailsDir = path.join(getUserDataDir(), 'thumbnails');
     // 同一支影片的縮圖同時只產一次（重複請求共用同一個 Promise）
     this.inflight = new Map();
+    // 產縮圖時順便得知影片長度就回呼 (videoPath, seconds)，由主行程寫回資料庫
+    this.onDuration = null;
   }
 
   // 生成檔案路徑的唯一hash值
@@ -122,9 +126,20 @@ class ThumbnailGenerator {
     ];
   }
 
+  // 標準化路徑：UNC 網路路徑（\\server\share）必須保留反斜線，
+  // FFmpeg 在 Windows 上無法識別 //server/share 格式
+  normalizeInputPath(videoPath) {
+    const isUNC = videoPath.startsWith('\\\\') || videoPath.startsWith('//');
+    return isUNC
+      ? videoPath.replace(/\//g, '\\')
+      : videoPath.replace(/\\/g, '/');
+  }
+
+  // 結果：{ code, stderr（尾段）, duration（從開頭解析，取不到為 null）}
   _runFfmpeg(args) {
     return new Promise((resolve) => {
       let stderrTail = '';
+      let stderrHead = '';
       let settled = false;
       const finish = (result) => {
         if (settled) return;
@@ -141,10 +156,12 @@ class ThumbnailGenerator {
       }
 
       ffmpeg.stderr.on('data', (data) => {
-        stderrTail = (stderrTail + data.toString()).slice(-STDERR_TAIL_CHARS);
+        const text = data.toString();
+        if (stderrHead.length < STDERR_HEAD_CHARS) stderrHead += text.slice(0, STDERR_HEAD_CHARS - stderrHead.length);
+        stderrTail = (stderrTail + text).slice(-STDERR_TAIL_CHARS);
       });
-      ffmpeg.on('error', (error) => finish({ code: -1, stderr: error.message }));
-      ffmpeg.on('close', (code) => finish({ code, stderr: stderrTail }));
+      ffmpeg.on('error', (error) => finish({ code: -1, stderr: error.message, duration: null }));
+      ffmpeg.on('close', (code) => finish({ code, stderr: stderrTail, duration: parseDurationSeconds(stderrHead) }));
     });
   }
 
@@ -165,10 +182,14 @@ class ThumbnailGenerator {
           if (i > 0 && offsets.slice(0, i).includes(offset)) continue;
         }
 
-        const { code, stderr } = await withFfmpegSlot(() =>
+        const result = await withFfmpegSlot(() =>
           this._runFfmpeg(this.buildFfmpegArgs(videoPath, tmpPath, offset))
         );
-        if (duration == null) duration = parseDurationSeconds(stderr);
+        const { code, stderr } = result;
+        if (duration == null) {
+          duration = result.duration ?? parseDurationSeconds(stderr);
+          if (duration != null) this._reportDuration(videoPath, duration);
+        }
 
         // 時間點超過影片長度時 FFmpeg 仍會回傳 0 但不輸出畫面，要檢查檔案
         const stat = await fs.stat(tmpPath).catch(() => null);
@@ -184,6 +205,26 @@ class ThumbnailGenerator {
 
     console.error(`FFmpeg 縮圖生成失敗: ${videoPath}\n${lastError}`);
     throw new Error(`FFmpeg failed for all time offsets\n${lastError}`);
+  }
+
+  _reportDuration(videoPath, seconds) {
+    if (!this.onDuration || !(seconds > 0)) return;
+    try {
+      Promise.resolve(this.onDuration(videoPath, seconds)).catch(err =>
+        console.warn(`寫入影片長度失敗: ${videoPath}`, err.message)
+      );
+    } catch (err) {
+      console.warn(`寫入影片長度失敗: ${videoPath}`, err.message);
+    }
+  }
+
+  // 只讀影片標頭取得長度（秒），不產生任何檔案；取不到回傳 null。
+  // 補齊舊資料用：已經有縮圖的影片不會再跑 generateWithFFmpeg
+  async probeDuration(videoPath) {
+    const { duration, stderr } = await withFfmpegSlot(() =>
+      this._runFfmpeg(['-hide_banner', '-i', this.normalizeInputPath(videoPath)])
+    );
+    return duration ?? parseDurationSeconds(stderr);
   }
 
   // 使用 Canvas 從 video 元素生成縮圖

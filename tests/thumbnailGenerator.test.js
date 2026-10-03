@@ -89,6 +89,30 @@ describe('ThumbnailGenerator', () => {
     expect(offsetsTried).toEqual([30, 1]);
   });
 
+  test('產縮圖時解析到長度就回呼 onDuration（只回呼一次）', async () => {
+    const thumbPath = gen.getThumbnailPath('C:\\videos\\short.mp4');
+    const onDuration = jest.fn();
+    gen.onDuration = onDuration;
+    jest.spyOn(gen, '_runFfmpeg').mockImplementation(async (args) => {
+      const offset = Number(args[args.indexOf('-ss') + 1]);
+      if (offset < 8) fs.writeFileSync(args[args.length - 1], 'jpg');
+      return { code: 0, stderr: '', duration: 8 };
+    });
+
+    await gen.generateWithFFmpeg('C:\\videos\\short.mp4', thumbPath, 30);
+    expect(onDuration).toHaveBeenCalledTimes(1);
+    expect(onDuration).toHaveBeenCalledWith('C:\\videos\\short.mp4', 8);
+  });
+
+  test('probeDuration 只帶 -i 讀檔頭，UNC 路徑保留反斜線', async () => {
+    const spy = jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: 1, stderr: 'At least one output file must be specified', duration: 75.2 });
+    expect(await gen.probeDuration('\\\\nas\\share\\a.mkv')).toBeCloseTo(75.2);
+    expect(spy).toHaveBeenCalledWith(['-hide_banner', '-i', '\\\\nas\\share\\a.mkv']);
+
+    spy.mockResolvedValue({ code: 1, stderr: 'No such file', duration: null });
+    expect(await gen.probeDuration('C:\\missing.mp4')).toBeNull();
+  });
+
   test('全部失敗時不留下任何檔案', async () => {
     const thumbPath = gen.getThumbnailPath('C:\\videos\\bad.mp4');
     jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: 1, stderr: 'Invalid data' });

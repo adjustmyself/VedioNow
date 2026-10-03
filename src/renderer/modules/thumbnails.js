@@ -100,6 +100,25 @@ class ThumbnailMethods {
     }
   }
 
+  // 瀏覽器能播的格式由 <video> 產縮圖、不經過 FFmpeg，長度在這裡取得後寫回資料庫，
+  // 並就地補上卡片的長度標記（不必等重新載入）
+  _recordVideoDuration(container, videoPath, seconds) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    const video = this.currentVideos.find(v => v.filepath === videoPath);
+    if (!video || video.duration > 0) return;
+
+    video.duration = seconds;
+    ipcRenderer.invoke('set-video-duration', videoPath, seconds).catch(err =>
+      console.warn('寫入影片長度失敗:', err)
+    );
+    if (container.classList.contains('video-thumbnail') && !container.querySelector('.thumbnail-duration')) {
+      const badge = document.createElement('div');
+      badge.className = 'thumbnail-duration';
+      badge.textContent = this.formatDuration(seconds);
+      container.appendChild(badge);
+    }
+  }
+
   addLoadingPlaceholder(container) {
     // 為尚未載入的縮圖添加占位符
     const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
@@ -283,6 +302,7 @@ class ThumbnailMethods {
 
     video.addEventListener('loadeddata', () => {
       clearTimeout(timeoutId);
+      this._recordVideoDuration(container, videoPath, video.duration);
       // 跳過開頭避免黑幀
       video.currentTime = Math.max(10, video.duration * 0.1);
     }, { once: true });

@@ -5,6 +5,7 @@ const DatabaseFactory = require('./database');
 const VideoScanner = require('./videoScanner');
 const ThumbnailGenerator = require('./thumbnailGenerator');
 const Config = require('./config');
+const BackupManager = require('./backupManager');
 const { getUserDataDir, LEGACY_DATA_DIR } = require('./appPaths');
 
 // Windows：明確設定 AppUserModelID，否則打包後工作列圖示不會套用自訂 icon
@@ -224,6 +225,9 @@ app.whenReady().then(async () => {
 
     videoScanner = new VideoScanner(database);
     thumbnailGenerator = new ThumbnailGenerator();
+    // 產縮圖時 FFmpeg 會順便印出影片長度，直接寫回資料庫（掃描本身不讀影片內容）。
+    // 用當下的 database 變數：切換資料庫後要寫到新的連線
+    thumbnailGenerator.onDuration = (videoPath, seconds) => database?.setVideoDuration(videoPath, seconds);
 
     // 執行舊標籤系統遷移 (如果需要)
     setSplashStatus('檢查標籤資料…', 65);
@@ -260,6 +264,13 @@ app.whenReady().then(async () => {
 
     setSplashStatus('載入影片清單…', 82);
     createWindow();
+
+    // 每日自動備份：延後到首頁載入完之後，不和啟動時的查詢搶資源
+    setTimeout(() => {
+      getBackupManager().autoBackup(database)
+        .then(dir => { if (dir) console.log(`已建立自動備份: ${dir}`); })
+        .catch(error => console.warn('自動備份失敗:', error));
+    }, 15000);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -904,6 +915,73 @@ ipcMain.handle('cleanup-thumbnails', async () => {
   }
 });
 
+// 渲染器用 <video> 產縮圖時取得的影片長度
+ipcMain.handle('set-video-duration', async (event, videoPath, seconds) => {
+  try {
+    if (typeof videoPath !== 'string' || !Number.isFinite(seconds) || seconds <= 0) {
+      return { success: false, error: '參數錯誤' };
+    }
+    return { success: await database.setVideoDuration(videoPath, seconds) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 補齊影片長度：對資料庫中長度為 0 的影片逐一讀取標頭（已有縮圖的舊資料不會再經過產縮圖流程）
+let durationBackfillRunning = false;
+ipcMain.handle('backfill-durations', async (event) => {
+  if (durationBackfillRunning) {
+    return { success: false, error: '補齊影片長度已在執行中' };
+  }
+  durationBackfillRunning = true;
+  try {
+    const db = database;
+    const refs = (await db.getAllVideoRefs()).filter(ref => !(ref.duration > 0));
+    const total = refs.length;
+    let processed = 0;
+    let updated = 0;
+    let failed = 0;
+    let next = 0;
+
+    // 併發數由 thumbnailGenerator 的全域 FFmpeg 槽位控管，這裡只開同樣多的 worker 避免一次排入上萬個工作
+    const worker = async () => {
+      while (next < refs.length) {
+        const ref = refs[next++];
+        try {
+          const seconds = await fs.pathExists(ref.filepath)
+            ? await thumbnailGenerator.probeDuration(ref.filepath)
+            : null;
+          if (seconds > 0 && await db.setVideoDuration(ref.filepath, seconds)) {
+            updated++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          failed++;
+          console.warn(`讀取影片長度失敗: ${ref.filepath}`, error.message);
+        }
+        processed++;
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('duration-backfill-progress', { processed, total });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 3 }, worker));
+
+    if (updated > 0) {
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) win.webContents.send('videos-changed');
+      });
+    }
+    return { success: true, total, updated, failed };
+  } catch (error) {
+    console.error('補齊影片長度錯誤:', error);
+    return { success: false, error: error.message };
+  } finally {
+    durationBackfillRunning = false;
+  }
+});
+
 // 縮圖統計資訊
 ipcMain.handle('get-thumbnail-stats', async () => {
   try {
@@ -1120,6 +1198,116 @@ ipcMain.handle('migrate-mongodb-to-sqlite', async () => {
     return { success: false, error: error.message };
   }
 });
+
+// ========== 備份與還原 ==========
+let backupManager = null;
+function getBackupManager() {
+  if (!backupManager) {
+    backupManager = new BackupManager({ userDataDir: getUserDataDir(), appVersion: app.getVersion() });
+  }
+  return backupManager;
+}
+
+// 備份 / 還原會關閉並替換資料庫，同時只允許一個在執行
+let backupBusy = false;
+async function withBackupLock(task) {
+  if (backupBusy) return { success: false, error: '另一個備份或還原正在執行' };
+  backupBusy = true;
+  try {
+    return await task();
+  } catch (error) {
+    console.error('備份 / 還原錯誤:', error);
+    return { success: false, error: error.message };
+  } finally {
+    backupBusy = false;
+  }
+}
+
+ipcMain.handle('get-backup-info', async () => {
+  try {
+    const manager = getBackupManager();
+    const autoBackups = await manager.listBackups(manager.autoDir);
+    return {
+      success: true,
+      supported: BackupManager.supports(database),
+      autoDir: manager.autoDir,
+      latestAuto: autoBackups[0]?.createdAt || null,
+      autoCount: autoBackups.length
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('create-backup', (event) => withBackupLock(async () => {
+  if (!BackupManager.supports(database)) {
+    return { success: false, error: '目前使用 MongoDB，備份功能只支援 SQLite' };
+  }
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+    title: '選擇備份要存放的資料夾',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
+
+  const dir = await getBackupManager().createBackup(database, result.filePaths[0]);
+  return { success: true, path: dir };
+}));
+
+ipcMain.handle('open-backup-dir', async () => {
+  const dir = getBackupManager().autoDir;
+  await fs.ensureDir(dir);
+  const error = await shell.openPath(dir);
+  return error ? { success: false, error } : { success: true };
+});
+
+// 選擇要還原的備份資料夾，回傳摘要供確認；實際還原由 restore-backup 執行
+ipcMain.handle('choose-restore-backup', (event) => withBackupLock(async () => {
+  if (!BackupManager.supports(database)) {
+    return { success: false, error: '目前使用 MongoDB，還原功能只支援 SQLite' };
+  }
+  const manager = getBackupManager();
+  await fs.ensureDir(manager.autoDir);
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+    title: '選擇要還原的備份資料夾（VideoNow-backup-…）',
+    defaultPath: manager.autoDir,
+    properties: ['openDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
+
+  return { success: true, backup: await manager.inspectBackup(result.filePaths[0]) };
+}));
+
+// 還原：先備份目前資料 → 關閉資料庫 → 覆蓋檔案 → 重新啟動
+ipcMain.handle('restore-backup', (event, backupDir) => withBackupLock(async () => {
+  if (typeof backupDir !== 'string' || !BackupManager.supports(database)) {
+    return { success: false, error: '無法還原：參數錯誤或目前不是使用 SQLite' };
+  }
+  const manager = getBackupManager();
+  await manager.inspectBackup(backupDir);
+  const safetyDir = await manager.backupBeforeRestore(database);
+
+  await shutdownDataLayer();
+  try {
+    await manager.restoreFiles(backupDir);
+  } catch (error) {
+    // 覆蓋到一半失敗：用還原前的備份把資料放回去，再重新連線
+    console.error('還原失敗，改回還原前的資料:', error);
+    try {
+      await manager.restoreFiles(safetyDir);
+    } catch (rollbackError) {
+      console.error('回復還原前資料也失敗:', rollbackError);
+    }
+    await recreateDatabase().catch(e => console.error('重新連線資料庫失敗:', e));
+    return { success: false, error: `${error.message}（目前資料已備份在 ${safetyDir}）` };
+  }
+
+  // 回應送出後再重啟，讓設定頁有機會顯示結果
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 300);
+  return { success: true, safetyDir };
+}));
 
 // 重新啟動應用程式
 ipcMain.handle('restart-app', async () => {

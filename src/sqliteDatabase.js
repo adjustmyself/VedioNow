@@ -95,6 +95,14 @@ class SQLiteDatabase {
         if (!hasColumn('videos', 'last_played_at')) {
             this.db.exec('ALTER TABLE videos ADD COLUMN last_played_at TEXT');
         }
+        // 側邊欄的排序選項；沒有索引時每次換頁都要全表排序
+        this.db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_videos_rating ON videos(rating);
+            CREATE INDEX IF NOT EXISTS idx_videos_filesize ON videos(filesize);
+            CREATE INDEX IF NOT EXISTS idx_videos_duration ON videos(duration);
+            CREATE INDEX IF NOT EXISTS idx_videos_play_count ON videos(play_count);
+            CREATE INDEX IF NOT EXISTS idx_videos_last_played ON videos(last_played_at);
+        `);
 
         if (!hasColumn('tags', 'description')) {
             this.db.exec("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
@@ -297,13 +305,15 @@ class SQLiteDatabase {
                 if (fingerprint && existing.fingerprint && existing.fingerprint !== fingerprint) {
                     this._migrateFingerprintReferencesSync(existing.fingerprint, fingerprint);
                 }
+                // 掃描不讀影片長度（傳 null）：內容沒變就保留先前從 FFmpeg 取得的長度，內容變了歸零待重新取得
+                const keptDuration = duration || (existing.fingerprint === fingerprint ? existing.duration : 0);
 
                 this._stmt(`
                     UPDATE videos SET filename = ?, filepath = ?, filesize = ?, duration = ?,
                         fingerprint = ?, file_created_at = ?, file_mtime = ?, updated_at = ?
                     WHERE id = ?
                 `).run(
-                    filename, filepath, filesize || 0, duration || 0,
+                    filename, filepath, filesize || 0, keptDuration || 0,
                     fingerprint, fileCreatedAtIso, fileMtime, this._now(), existing.id
                 );
                 return 'updated';
@@ -449,6 +459,7 @@ class SQLiteDatabase {
             created_at: 'v.created_at',
             filename: 'v.filename COLLATE NOCASE',
             filesize: 'v.filesize',
+            duration: 'v.duration',
             rating: 'v.rating',
             play_count: 'v.play_count',
             last_played_at: 'v.last_played_at'
@@ -559,6 +570,12 @@ class SQLiteDatabase {
         const { rating = 0, description = '' } = metadata;
         this._stmt('UPDATE videos SET rating = ?, description = ?, updated_at = ? WHERE fingerprint = ?')
             .run(rating, description, this._now(), fingerprint);
+    }
+
+    // 寫入影片長度（秒）；路徑不在資料庫時回傳 false
+    async setVideoDuration(filepath, seconds) {
+        const result = this._stmt('UPDATE videos SET duration = ? WHERE filepath = ?').run(seconds, filepath);
+        return result.changes > 0;
     }
 
     // 記錄一次開啟（開啟次數 +1、更新最後開啟時間）；路徑不在資料庫時回傳 null
@@ -938,13 +955,14 @@ class SQLiteDatabase {
     }
 
     async getAllVideoRefs() {
-        const rows = this._stmt('SELECT id, filepath, fingerprint, filesize, file_mtime FROM videos').all();
+        const rows = this._stmt('SELECT id, filepath, fingerprint, filesize, file_mtime, duration FROM videos').all();
         return rows.map(r => ({
             id: String(r.id),
             filepath: r.filepath,
             fingerprint: r.fingerprint || null,
             filesize: r.filesize,
-            file_mtime: r.file_mtime
+            file_mtime: r.file_mtime,
+            duration: r.duration || 0
         }));
     }
 
@@ -1065,6 +1083,11 @@ class SQLiteDatabase {
                 return { ...this._mapVideo(video), sort_order };
             })
         };
+    }
+
+    // 線上備份成單一檔案：SQLite 備份 API 會帶入 WAL 中尚未寫回主檔的交易，備份期間不需停止讀寫
+    async backupTo(filePath) {
+        await this.db.backup(filePath);
     }
 
     close() {

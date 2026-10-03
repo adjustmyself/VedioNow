@@ -33,5 +33,4 @@ Thumbs.db
 tmp/
 temp/
 *.bat
-src/config.js
 .claude/settings.local.json

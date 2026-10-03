@@ -72,6 +72,27 @@ class SettingsManager {
             this.cleanupOrphanRelations();
         });
 
+        // 備份與還原
+        document.getElementById('open-backup-dir-btn').addEventListener('click', () => {
+            ipcRenderer.invoke('open-backup-dir');
+        });
+        document.getElementById('create-backup-btn').addEventListener('click', () => {
+            this.createBackup();
+        });
+        document.getElementById('restore-backup-btn').addEventListener('click', () => {
+            this.restoreBackup();
+        });
+
+        // 資料維護：補齊影片長度
+        document.getElementById('backfill-durations-btn').addEventListener('click', () => {
+            this.backfillDurations();
+        });
+        ipcRenderer.on('duration-backfill-progress', (event, { processed, total }) => {
+            const statusEl = document.getElementById('backfill-durations-status');
+            statusEl.className = 'cleanup-status working';
+            statusEl.textContent = `正在讀取影片長度… ${processed} / ${total}`;
+        });
+
         // MongoDB → SQLite 資料遷移
         document.getElementById('migrate-to-sqlite-btn').addEventListener('click', () => {
             this.migrateToSqlite();
@@ -122,6 +143,7 @@ class SettingsManager {
         document.getElementById(`${section}-section`).classList.add('active');
 
         this.currentSection = section;
+        if (section === 'backup') this.loadBackupInfo();
     }
 
     switchTab(tab) {
@@ -447,6 +469,116 @@ class SettingsManager {
                 statusEl.className = 'cleanup-status';
                 statusEl.textContent = '';
             }, 8000);
+        }
+    }
+
+    async loadBackupInfo() {
+        const latestEl = document.getElementById('backup-latest-auto');
+        const countEl = document.getElementById('backup-auto-count');
+        try {
+            const info = await ipcRenderer.invoke('get-backup-info');
+            if (!info.success) throw new Error(info.error);
+            if (!info.supported) {
+                latestEl.textContent = '目前使用 MongoDB，不支援備份';
+                countEl.textContent = '-';
+                ['create-backup-btn', 'restore-backup-btn'].forEach(id => {
+                    document.getElementById(id).disabled = true;
+                });
+                return;
+            }
+            latestEl.textContent = info.latestAuto ? new Date(info.latestAuto).toLocaleString() : '尚未備份（啟動後約 15 秒會自動備份）';
+            countEl.textContent = `${info.autoCount} 份`;
+        } catch (error) {
+            latestEl.textContent = '載入失敗';
+            countEl.textContent = '載入失敗';
+        }
+    }
+
+    async createBackup() {
+        const statusEl = document.getElementById('create-backup-status');
+        const btn = document.getElementById('create-backup-btn');
+        btn.disabled = true;
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在備份...';
+        try {
+            const result = await ipcRenderer.invoke('create-backup');
+            if (result.canceled) {
+                statusEl.className = 'cleanup-status';
+                statusEl.textContent = '';
+            } else if (result.success) {
+                statusEl.className = 'cleanup-status success';
+                statusEl.textContent = `備份完成：${result.path}`;
+            } else {
+                statusEl.className = 'cleanup-status error';
+                statusEl.textContent = '備份失敗: ' + result.error;
+            }
+        } catch (error) {
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '備份失敗: ' + error.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async restoreBackup() {
+        const statusEl = document.getElementById('restore-backup-status');
+        const btn = document.getElementById('restore-backup-btn');
+        btn.disabled = true;
+        statusEl.className = 'cleanup-status';
+        statusEl.textContent = '';
+        try {
+            const chosen = await ipcRenderer.invoke('choose-restore-backup');
+            if (chosen.canceled) return;
+            if (!chosen.success) throw new Error(chosen.error);
+
+            const b = chosen.backup;
+            const when = b.createdAt ? new Date(b.createdAt).toLocaleString() : '未知';
+            const ok = confirm(
+                `確定要用這份備份取代目前的資料嗎？\n\n` +
+                `備份時間：${when}\n影片：${b.videos} 部\n標籤：${b.tags} 個\n\n` +
+                `還原前會先自動備份目前的資料，完成後應用程式會重新啟動。`
+            );
+            if (!ok) return;
+
+            statusEl.className = 'cleanup-status working';
+            statusEl.textContent = '正在還原，完成後會自動重新啟動...';
+            const result = await ipcRenderer.invoke('restore-backup', b.path);
+            if (!result.success) throw new Error(result.error);
+        } catch (error) {
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '還原失敗: ' + error.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // 補齊影片長度：對長度為 0 的影片讀取檔頭
+    async backfillDurations() {
+        const statusEl = document.getElementById('backfill-durations-status');
+        const btn = document.getElementById('backfill-durations-btn');
+
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在找出缺少長度的影片...';
+        btn.disabled = true;
+
+        try {
+            const result = await ipcRenderer.invoke('backfill-durations');
+
+            if (result.success) {
+                statusEl.className = 'cleanup-status success';
+                statusEl.textContent = result.total === 0
+                    ? '所有影片都已有長度'
+                    : `完成：補齊 ${result.updated} 部` + (result.failed > 0 ? `，${result.failed} 部無法讀取（檔案不存在或格式無法解析）` : '');
+            } else {
+                statusEl.className = 'cleanup-status error';
+                statusEl.textContent = '補齊失敗: ' + result.error;
+            }
+        } catch (error) {
+            console.error('補齊影片長度失敗:', error);
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '補齊失敗: ' + error.message;
+        } finally {
+            btn.disabled = false;
         }
     }
 

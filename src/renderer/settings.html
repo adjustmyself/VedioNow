@@ -37,6 +37,10 @@
                         <span class="menu-icon">🧹</span>
                         資料維護
                     </button>
+                    <button class="menu-item" data-section="backup">
+                        <span class="menu-icon">💾</span>
+                        備份與還原
+                    </button>
                 </div>
             </div>
 
@@ -231,6 +235,48 @@
                     </div>
                 </div>
 
+                <!-- 備份與還原區域 -->
+                <div id="backup-section" class="settings-section">
+                    <div class="section-header">
+                        <h2>備份與還原</h2>
+                        <p class="section-description">備份內容：資料庫（影片、標籤、評分、合集、開啟紀錄）、設定與標籤圖片。縮圖可以重新產生，不會備份。僅支援 SQLite。</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>自動備份</h3>
+                        <p class="field-description">每天第一次啟動時自動備份一次，保留最近 7 份。</p>
+                        <div class="thumbnail-stats">
+                            <div class="stat-row">
+                                <span class="stat-label">最近一次:</span>
+                                <span id="backup-latest-auto" class="stat-value">載入中...</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-label">已保留:</span>
+                                <span id="backup-auto-count" class="stat-value">載入中...</span>
+                            </div>
+                        </div>
+                        <button id="open-backup-dir-btn" class="btn btn-secondary btn-small">開啟自動備份資料夾</button>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>手動備份</h3>
+                        <p class="field-description">把目前的資料備份到你選擇的資料夾（例如外接硬碟或 NAS），會在裡面建立一個 VideoNow-backup-日期時間 資料夾。</p>
+                        <div class="cleanup-actions">
+                            <button id="create-backup-btn" class="btn btn-primary">立即備份…</button>
+                            <div id="create-backup-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>從備份還原</h3>
+                        <p class="field-description">選擇一個 VideoNow-backup-… 資料夾還原。還原前會先自動備份目前的資料（存在 backups/pre-restore），還原後應用程式會重新啟動。資料庫連線設定不會被備份裡的設定覆蓋。</p>
+                        <div class="cleanup-actions">
+                            <button id="restore-backup-btn" class="btn btn-danger">選擇備份並還原…</button>
+                            <div id="restore-backup-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 資料維護區域 -->
                 <div id="maintenance-section" class="settings-section">
                     <div class="section-header">
@@ -245,6 +291,16 @@
                         <div class="cleanup-actions">
                             <button id="cleanup-orphan-relations-btn" class="btn btn-danger">清理孤兒標籤關聯</button>
                             <div id="cleanup-relations-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>補齊影片長度</h3>
+                        <p class="field-description">掃描時不會讀取影片內容，影片長度是在產生縮圖時順便取得。已經有縮圖的舊資料可以用這個按鈕補齊，之後就能依長度排序。每部影片只讀取檔頭，但網路磁碟上片數多時仍需要一段時間。</p>
+
+                        <div class="cleanup-actions">
+                            <button id="backfill-durations-btn" class="btn btn-secondary">補齊影片長度</button>
+                            <div id="backfill-durations-status" class="cleanup-status"></div>
                         </div>
                     </div>
                 </div>

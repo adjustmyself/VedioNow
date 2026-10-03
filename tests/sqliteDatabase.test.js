@@ -485,6 +485,45 @@ describe('SQLiteDatabase', () => {
       expect(byRecent.videos[0].fingerprint).toBe('a');
       expect(byRecent.videos[2].last_played_at).toBeNull();
     });
+
+    test('依影片長度排序', async () => {
+      await db.setVideoDuration('C:\\v\\b.mp4', 600);
+      await db.setVideoDuration('C:\\v\\c.mp4', 90.5);
+      const result = await db.getVideos({ sortBy: 'duration', sortOrder: 'desc' });
+      expect(result.videos.map(v => v.fingerprint)).toEqual(['a', 'c', 'b']);
+    });
+  });
+
+  describe('影片長度', () => {
+    const filepath = '\\\\nas\\drive1\\folder\\movie.mp4';
+
+    test('setVideoDuration 寫入長度，不在資料庫的路徑回傳 false', async () => {
+      await addVideo();
+      expect(await db.setVideoDuration(filepath, 123.4)).toBe(true);
+      expect(await db.setVideoDuration('C:\\nope.mp4', 1)).toBe(false);
+      const [video] = (await db.getVideos({})).videos;
+      expect(video.duration).toBeCloseTo(123.4);
+      expect((await db.getAllVideoRefs())[0].duration).toBeCloseTo(123.4);
+    });
+
+    test('重新掃描（長度為 null）時內容沒變就保留長度、內容變了歸零', async () => {
+      await addVideo();
+      await db.setVideoDuration(filepath, 300);
+
+      await addVideo({ duration: null, filesize: 2000 });
+      expect((await db.getVideos({})).videos[0].duration).toBe(300);
+
+      await addVideo({ duration: null, fingerprint: 'fp-changed' });
+      expect((await db.getVideos({})).videos[0].duration).toBe(0);
+    });
+
+    test('檔案搬移後長度保留', async () => {
+      await addVideo();
+      await db.setVideoDuration(filepath, 300);
+      db._fileExists = () => false;
+      await addVideo({ filepath: 'D:\\moved\\movie.mp4', duration: null });
+      expect((await db.getVideos({})).videos[0].duration).toBe(300);
+    });
   });
 
   describe('開啟紀錄', () => {
