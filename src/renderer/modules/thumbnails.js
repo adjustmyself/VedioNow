@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：影片卡片縮圖：快取查詢、延遲載入、瀏覽器解碼 / 後端 FFmpeg 產生、手動重產
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml, toFileUrl } = require('../shared/util');
+import { escapeHtml, toFileUrl } from '../shared/util.js';
 
 // 瀏覽器無法解碼、需交給後端 FFmpeg 的格式
 const UNSUPPORTED_FORMATS = new Set(['avi', 'wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts']);
@@ -509,4 +509,4 @@ class ThumbnailMethods {
   }
 }
 
-module.exports = ThumbnailMethods;
+export default ThumbnailMethods;

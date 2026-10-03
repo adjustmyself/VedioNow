@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：影片合集：合併同資料夾影片、合集清單
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml } = require('../shared/util');
+import { escapeHtml } from '../shared/util.js';
 
 class CollectionMethods {
   async showCollectionModal() {
@@ -223,4 +223,4 @@ class CollectionMethods {
   }
 }
 
-module.exports = CollectionMethods;
+export default CollectionMethods;

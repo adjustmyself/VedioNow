@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：側邊標籤篩選列：群組分頁、多面向計數、評分篩選、標籤說明 tooltip
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml } = require('../shared/util');
+import { escapeHtml } from '../shared/util.js';
 
 class TagFilterBarMethods {
   // 自訂標籤 hover 提示框：顯示標籤說明文字與說明圖片
@@ -386,4 +386,4 @@ class TagFilterBarMethods {
   }
 }
 
-module.exports = TagFilterBarMethods;
+export default TagFilterBarMethods;

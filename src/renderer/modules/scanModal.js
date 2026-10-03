@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：掃描資料夾彈窗與最近掃描路徑
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml } = require('../shared/util');
+import { escapeHtml } from '../shared/util.js';
 
 class ScanModalMethods {
   async showScanModal() {
@@ -227,4 +227,4 @@ class ScanModalMethods {
   }
 }
 
-module.exports = ScanModalMethods;
+export default ScanModalMethods;

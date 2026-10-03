@@ -122,4 +122,4 @@ class PaginationMethods {
   }
 }
 
-module.exports = PaginationMethods;
+export default PaginationMethods;

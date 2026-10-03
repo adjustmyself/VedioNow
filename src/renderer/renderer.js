@@ -1,5 +1,14 @@
 
-const { escapeHtml, toTagImageUrl, debounce } = require('./shared/util');
+import { escapeHtml, toTagImageUrl, debounce } from './shared/util.js';
+import ThumbnailMethods from './modules/thumbnails.js';
+import TagFilterBarMethods from './modules/tagFilterBar.js';
+import VideoModalMethods from './modules/videoModal.js';
+import ScanModalMethods from './modules/scanModal.js';
+import PaginationMethods from './modules/pagination.js';
+import CollectionMethods from './modules/collections.js';
+import BatchSelectionMethods from './modules/batchSelection.js';
+import SavedSearchMethods from './modules/savedSearches.js';
+import HoverPreviewMethods from './modules/hoverPreview.js';
 
 // 影片卡片最多顯示幾個標籤，其餘收成「+N」，避免標籤多的卡片撐高整排
 const CARD_TAG_LIMIT = 6;
@@ -765,15 +774,15 @@ class VideoManager {
 
 // 各功能區塊的方法放在 modules/，併入 VideoManager
 for (const Methods of [
-  require('./modules/thumbnails'),
-  require('./modules/tagFilterBar'),
-  require('./modules/videoModal'),
-  require('./modules/scanModal'),
-  require('./modules/pagination'),
-  require('./modules/collections'),
-  require('./modules/batchSelection'),
-  require('./modules/savedSearches'),
-  require('./modules/hoverPreview')
+  ThumbnailMethods,
+  TagFilterBarMethods,
+  VideoModalMethods,
+  ScanModalMethods,
+  PaginationMethods,
+  CollectionMethods,
+  BatchSelectionMethods,
+  SavedSearchMethods,
+  HoverPreviewMethods
 ]) {
   for (const name of Object.getOwnPropertyNames(Methods.prototype)) {
     if (name === 'constructor') continue;
@@ -784,11 +793,12 @@ for (const Methods of [
   }
 }
 
-// 全域變數，讓分頁控制器可以訪問
+// ES module 的變數不是全域的；掛到 window 方便在 DevTools 除錯
 let videoManager;
 
 document.addEventListener('DOMContentLoaded', () => {
   videoManager = new VideoManager();
+  window.videoManager = videoManager;
 
   // 頁面卸載時清理資源
   window.addEventListener('beforeunload', () => {

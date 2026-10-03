@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：影片詳情彈窗：標籤增刪、評分與描述、刪除、開檔、字幕
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml } = require('../shared/util');
+import { escapeHtml } from '../shared/util.js';
 
 class VideoModalMethods {
   async showVideoModal(videoId) {
@@ -664,4 +664,4 @@ class VideoModalMethods {
   }
 }
 
-module.exports = VideoModalMethods;
+export default VideoModalMethods;

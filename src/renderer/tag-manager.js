@@ -1,4 +1,4 @@
-const { escapeHtml, toTagImageUrl } = require('./shared/util');
+import { escapeHtml, toTagImageUrl } from './shared/util.js';
 
 class TagManager {
   constructor() {

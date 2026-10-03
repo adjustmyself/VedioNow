@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：儲存的搜尋（側邊欄）：把目前的搜尋字、標籤、篩選與排序存成一筆，點一下套用
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml } = require('../shared/util');
+import { escapeHtml } from '../shared/util.js';
 
 const SORT_LABELS = {
   file_created_at: '檔案建立時間',
@@ -212,4 +212,4 @@ class SavedSearchMethods {
   }
 }
 
-module.exports = SavedSearchMethods;
+export default SavedSearchMethods;

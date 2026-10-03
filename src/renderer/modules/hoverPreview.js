@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：滑過預覽：滑鼠停在網格卡片的縮圖上一下子，就顯示多格預覽，左右移動切換畫面
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { toFileUrl } = require('../shared/util');
+import { toFileUrl } from '../shared/util.js';
 
 // 須與 thumbnailGenerator.js 的 PREVIEW_FRAMES 一致
 const PREVIEW_FRAMES = 10;
@@ -111,4 +111,4 @@ class HoverPreviewMethods {
   }
 }
 
-module.exports = HoverPreviewMethods;
+export default HoverPreviewMethods;

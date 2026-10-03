@@ -1,6 +1,6 @@
 // VideoManager 的方法群組：批次多選（Ctrl / Shift 點選卡片）與底部批次操作列：加 / 移除標籤、評分、刪除記錄
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { escapeHtml } = require('../shared/util');
+import { escapeHtml } from '../shared/util.js';
 
 const tagNameOf = (tag) => (typeof tag === 'string' ? tag : tag && tag.name);
 
@@ -367,4 +367,4 @@ class BatchSelectionMethods {
   }
 }
 
-module.exports = BatchSelectionMethods;
+export default BatchSelectionMethods;

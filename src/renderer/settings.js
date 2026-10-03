@@ -1,4 +1,4 @@
-const { escapeHtml } = require('./shared/util');
+import { escapeHtml } from './shared/util.js';
 
 class SettingsManager {
     constructor() {
