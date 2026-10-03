@@ -343,31 +343,21 @@ class ThumbnailGenerator {
     return duration ?? parseDurationSeconds(stderr);
   }
 
-  // 使用 Canvas 從 video 元素生成縮圖
-  async generateWithCanvas(videoElement, thumbnailPath) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+  // 畫面端用 <video> + canvas 擷取的 JPEG（瀏覽器能播的格式不必跑 FFmpeg），由主行程寫檔。
+  // 已有縮圖時沿用既有的，不覆蓋
+  async saveThumbnailBuffer(videoPath, fingerprint, buffer) {
+    const existing = await this.thumbnailExists(videoPath, fingerprint);
+    if (existing) return existing;
 
-    // 依影片原始比例縮放，目標寬度 640px（高 DPI / 加高縮圖也夠清楚）
-    const TARGET_WIDTH = 640;
-    const srcW = videoElement.videoWidth || 1280;
-    const srcH = videoElement.videoHeight || 720;
-    canvas.width = TARGET_WIDTH;
-    canvas.height = Math.round(TARGET_WIDTH * (srcH / srcW));
-
-    // 較佳的縮放品質
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-    if (!blob) throw new Error('Failed to create blob');
-
-    const buffer = Buffer.from(await blob.arrayBuffer());
-    await fs.ensureDir(path.dirname(thumbnailPath));
+    const thumbnailPath = this.getThumbnailPath(videoPath, fingerprint);
+    await fs.ensureDir(this.thumbnailsDir);
     const tmpPath = `${thumbnailPath}.tmp.jpg`;
-    await fs.writeFile(tmpPath, buffer);
-    await fs.move(tmpPath, thumbnailPath, { overwrite: true });
+    try {
+      await fs.writeFile(tmpPath, buffer);
+      await fs.move(tmpPath, thumbnailPath, { overwrite: true });
+    } finally {
+      await fs.remove(tmpPath).catch(() => {});
+    }
     return thumbnailPath;
   }
 
@@ -458,28 +448,6 @@ class ThumbnailGenerator {
       fs.stat(path.join(dir, file)).then(st => st.size).catch(() => 0)
     ));
     return { total: jpgFiles.length, size: sizes.reduce((sum, size) => sum + size, 0) };
-  }
-
-  // 為前端提供的生成縮圖方法 (在渲染進程中調用)
-  async generateThumbnailInRenderer(videoElement, videoPath, fingerprint) {
-    const thumbnailPath = this.getThumbnailPath(videoPath, fingerprint);
-
-    // 檢查縮圖是否已存在
-    const existingThumbnail = await this.thumbnailExists(videoPath, fingerprint);
-    if (existingThumbnail) {
-      return existingThumbnail;
-    }
-
-    // 確保縮圖目錄存在
-    await fs.ensureDir(this.thumbnailsDir);
-
-    // 使用 Canvas 生成縮圖
-    try {
-      return await this.generateWithCanvas(videoElement, thumbnailPath);
-    } catch (error) {
-      console.error('生成縮圖失敗:', error);
-      return null;
-    }
   }
 }
 

@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：側邊標籤篩選列：群組分頁、多面向計數、評分篩選、標籤說明 tooltip
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 class TagFilterBarMethods {
@@ -264,7 +263,7 @@ class TagFilterBarMethods {
     }
     const reqId = ++this._tagCountsReqId;
     try {
-      const counts = await ipcRenderer.invoke(
+      const counts = await window.api.invoke(
         'get-filtered-tag-counts',
         this.elements.searchInput.value,
         Array.from(this.activeTags),

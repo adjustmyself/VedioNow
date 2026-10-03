@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：影片詳情彈窗：標籤增刪、評分與描述、刪除、開檔、字幕
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer, clipboard } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 class VideoModalMethods {
@@ -47,7 +46,7 @@ class VideoModalMethods {
 
   // 列出內容相同、存在於其他路徑的檔案
   async loadDuplicateFiles(video) {
-    const result = await ipcRenderer.invoke('get-duplicate-videos', video.fingerprint, video.id);
+    const result = await window.api.invoke('get-duplicate-videos', video.fingerprint, video.id);
     // 載入期間已切換到別部影片就不要覆蓋
     if (this.selectedVideo !== video) return;
 
@@ -81,7 +80,7 @@ class VideoModalMethods {
   // 複製路徑到剪貼簿，按鈕短暫顯示「已複製」
   copyPathToClipboard(text, button) {
     if (!text) return;
-    clipboard.writeText(text);
+    window.api.invoke('copy-to-clipboard', text);
     if (!button) return;
     clearTimeout(button._copiedTimer);
     button.textContent = '已複製';
@@ -202,7 +201,7 @@ class VideoModalMethods {
     if (this.tagSelectorEventBound) return;
     tagSelector.addEventListener('click', (e) => {
       if (e.target.closest('[data-action="open-tag-manager"]')) {
-        ipcRenderer.invoke('open-tag-manager');
+        window.api.invoke('open-tag-manager');
         return;
       }
       const tagItem = e.target.closest('.tag-item-selector');
@@ -424,13 +423,13 @@ class VideoModalMethods {
 
       if (needsCreate) {
         // 不指定群組 → 歸入「未分類」，之後可到標籤管理調整
-        const created = await ipcRenderer.invoke('create-tag', { name: actualTagName });
+        const created = await window.api.invoke('create-tag', { name: actualTagName });
         if (!created || !created.success) {
           throw new Error(created?.error || '建立標籤失敗');
         }
       }
 
-      const result = await ipcRenderer.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
+      const result = await window.api.invoke('add-video-tag', this.selectedVideo.fingerprint, actualTagName);
       if (!result || !result.success) {
         throw new Error(result?.error || '新增標籤失敗');
       }
@@ -461,7 +460,7 @@ class VideoModalMethods {
         throw new Error('影片缺少 fingerprint，無法移除標籤');
       }
 
-      const result = await ipcRenderer.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
+      const result = await window.api.invoke('remove-video-tag', this.selectedVideo.fingerprint, tagName);
       if (!result || !result.success) {
         throw new Error(result?.error || '移除標籤失敗');
       }
@@ -519,13 +518,13 @@ class VideoModalMethods {
     try {
       // 使用基於指紋的新方法來儲存評分和描述
       if (this.selectedVideo.fingerprint) {
-        await ipcRenderer.invoke('set-video-metadata', this.selectedVideo.fingerprint, {
+        await window.api.invoke('set-video-metadata', this.selectedVideo.fingerprint, {
           description,
           rating
         });
       } else {
         // 回退到舊方法（向後兼容）
-        await ipcRenderer.invoke('update-video', this.selectedVideo.id, {
+        await window.api.invoke('update-video', this.selectedVideo.id, {
           description,
           rating
         });
@@ -556,7 +555,7 @@ class VideoModalMethods {
     }
 
     try {
-      await ipcRenderer.invoke('delete-video', this.selectedVideo.id);
+      await window.api.invoke('delete-video', this.selectedVideo.id);
       this.hideVideoModal();
       // 保持搜尋條件重新載入
       await this.refreshCurrentView();
@@ -570,7 +569,7 @@ class VideoModalMethods {
 
     try {
       // 使用 Electron 原生對話框進行確認
-      const confirmation = await ipcRenderer.invoke('show-delete-confirmation', filename);
+      const confirmation = await window.api.invoke('show-delete-confirmation', filename);
 
       if (!confirmation.confirmed) {
         if (!confirmation.checkboxChecked) {
@@ -579,7 +578,7 @@ class VideoModalMethods {
         return;
       }
 
-      const result = await ipcRenderer.invoke('delete-video-with-file', this.selectedVideo.id);
+      const result = await window.api.invoke('delete-video-with-file', this.selectedVideo.id);
 
       if (result.success) {
         const { recordDeleted, fileDeleted, folderDeleted, folderDeleteError, error } = result.result;
@@ -621,7 +620,7 @@ class VideoModalMethods {
   async openVideoFile() {
     const video = this.selectedVideo;
     if (!video) return;
-    const result = await ipcRenderer.invoke('open-path', video.filepath);
+    const result = await window.api.invoke('open-path', video.filepath);
     if (result && result.success && result.playStats) {
       video.play_count = result.playStats.play_count;
       video.last_played_at = result.playStats.last_played_at;
@@ -646,7 +645,7 @@ class VideoModalMethods {
         btn.textContent = '⏳ 上傳中...';
       }
 
-      const result = await ipcRenderer.invoke('upload-subtitle', this.selectedVideo.filepath);
+      const result = await window.api.invoke('upload-subtitle', this.selectedVideo.filepath);
 
       if (result.success) {
         alert(`字幕上傳成功！\n${result.targetPath}`);

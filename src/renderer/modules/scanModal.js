@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：掃描資料夾彈窗與最近掃描路徑
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 class ScanModalMethods {
@@ -17,7 +16,7 @@ class ScanModalMethods {
 
   async selectFolder() {
     try {
-      const folderPath = await ipcRenderer.invoke('select-folder');
+      const folderPath = await window.api.invoke('select-folder');
       if (folderPath) {
         this.elements.folderPath.value = folderPath;
       }
@@ -48,7 +47,7 @@ class ScanModalMethods {
     this.resetScanProgress();
 
     try {
-      const result = await ipcRenderer.invoke('scan-videos', folderPath, options);
+      const result = await window.api.invoke('scan-videos', folderPath, options);
       if (result.success) {
         const stats = result.result;
         let message = `掃描完成！找到: ${stats.found}, 新增: ${stats.added}, 更新: ${stats.updated}, 未變更: ${stats.unchanged || 0}`;
@@ -113,7 +112,7 @@ class ScanModalMethods {
 
   async loadRecentScanPaths() {
     try {
-      const result = await ipcRenderer.invoke('get-recent-scan-paths');
+      const result = await window.api.invoke('get-recent-scan-paths');
       if (result.success && result.paths && result.paths.length > 0) {
         this.renderRecentScanPaths(result.paths);
         document.getElementById('recent-paths-group').classList.add('has-paths');
@@ -166,7 +165,7 @@ class ScanModalMethods {
     const group = document.getElementById('watched-folders-group');
     const list = document.getElementById('watched-folders-list');
     try {
-      const result = await ipcRenderer.invoke('get-watched-folders');
+      const result = await window.api.invoke('get-watched-folders');
       const folders = result.success ? result.folders : [];
       group.classList.toggle('has-paths', folders.length > 0);
       list.innerHTML = folders.map(folder => {
@@ -184,7 +183,7 @@ class ScanModalMethods {
       list.querySelectorAll('.recent-path-remove').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm(`停止監看這個資料夾？\n${btn.dataset.path}\n\n已掃描的影片記錄會保留。`)) return;
-          await ipcRenderer.invoke('remove-watched-folder', btn.dataset.path);
+          await window.api.invoke('remove-watched-folder', btn.dataset.path);
           await this.loadWatchedFolders();
         });
       });
@@ -218,7 +217,7 @@ class ScanModalMethods {
 
   async removeRecentScanPath(folderPath) {
     try {
-      const result = await ipcRenderer.invoke('remove-recent-scan-path', folderPath);
+      const result = await window.api.invoke('remove-recent-scan-path', folderPath);
       if (result.success) {
         await this.loadRecentScanPaths();
       }

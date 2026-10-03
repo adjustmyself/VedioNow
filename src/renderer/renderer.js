@@ -1,4 +1,3 @@
-const { ipcRenderer } = require('electron');
 
 const { escapeHtml, toTagImageUrl, debounce } = require('./shared/util');
 
@@ -56,14 +55,14 @@ class VideoManager {
     } finally {
       // 通知主行程首批資料已就緒：關掉啟動畫面、顯示主視窗
       // （失敗時也要送，否則使用者會卡在啟動畫面）
-      ipcRenderer.send('renderer-ready');
+      window.api.send('renderer-ready');
     }
   }
 
   // 從設定檔讀取應用程式設定（目前：單頁顯示數量）
   async loadAppConfig() {
     try {
-      const cfg = await ipcRenderer.invoke('get-config');
+      const cfg = await window.api.invoke('get-config');
       const size = parseInt(cfg?.app?.pageSize, 10);
       if (!isNaN(size) && size > 0) {
         this.pageSize = size;
@@ -196,12 +195,12 @@ class VideoManager {
     this.elements.cancelCollection?.addEventListener('click', () => this.hideCollectionModal());
 
     // 監聽掃描進度
-    ipcRenderer.on('scan-progress', (event, progressData) => {
+    window.api.on('scan-progress', (progressData) => {
       this.updateScanProgress(progressData);
     });
 
     // 設定變更：單頁顯示數量即時生效（不需重啟）
-    ipcRenderer.on('page-size-changed', (event, size) => {
+    window.api.on('page-size-changed', (size) => {
       const n = parseInt(size, 10);
       if (isNaN(n) || n <= 0 || n === this.pageSize) return;
       this.pageSize = n;
@@ -210,23 +209,23 @@ class VideoManager {
     });
 
     // 資料庫類型變更：主程序已重建 DB，主視窗需重新載入資料
-    ipcRenderer.on('database-changed', () => {
+    window.api.on('database-changed', () => {
       this.loadData();
     });
 
     // 背景同步監看資料夾的進度
-    ipcRenderer.on('background-scan-status', (event, status) => {
+    window.api.on('background-scan-status', (status) => {
       this.updateBackgroundScanStatus(status);
     });
 
     // 影片資料在背景更新（例如設定頁補齊影片長度）：重新載入目前這一頁
-    ipcRenderer.on('videos-changed', () => {
+    window.api.on('videos-changed', () => {
       this.refreshCurrentView();
     });
 
     // 標籤／群組在標籤管理視窗有異動：立即同步標籤快取與畫面，
     // 讓新標籤不必重開主視窗就能選取
-    ipcRenderer.on('tags-changed', async () => {
+    window.api.on('tags-changed', async () => {
       await this.refreshTagsUI();
     });
 
@@ -325,7 +324,7 @@ class VideoManager {
   _queryCurrentPage() {
     const searchTerm = this.elements.searchInput.value.trim();
     const activeTagsArray = Array.from(this.activeTags);
-    return ipcRenderer.invoke('search-videos', searchTerm, activeTagsArray, this._buildPageFilters());
+    return window.api.invoke('search-videos', searchTerm, activeTagsArray, this._buildPageFilters());
   }
 
   async loadVideos() {
@@ -355,7 +354,7 @@ class VideoManager {
   }
 
   async loadTags() {
-    this.tagsByGroup = await ipcRenderer.invoke('get-tags-by-group');
+    this.tagsByGroup = await window.api.invoke('get-tags-by-group');
     // 展平標籤用於統計
     this.allTags = [];
     // 標籤名稱 -> 顏色 / 說明 / 說明圖片，供只有名稱字串的標籤（影片卡片、詳情）查詢
@@ -366,7 +365,7 @@ class VideoManager {
     this.tagOrder = new Map();
     // 圖片資料庫只存檔名，需組出 userData 下的 file:// URL；資料夾不會變，只查一次
     if (this._tagImagesDir === undefined) {
-      this._tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
+      this._tagImagesDir = await window.api.invoke('get-tag-images-dir');
     }
     const toImageUrl = (value) => toTagImageUrl(value, this._tagImagesDir);
     this.tagsByGroup.forEach(group => {
@@ -407,7 +406,7 @@ class VideoManager {
 
   async loadDrivePaths() {
     try {
-      const drivePaths = await ipcRenderer.invoke('get-drive-paths');
+      const drivePaths = await window.api.invoke('get-drive-paths');
 
       // 清空現有選項（保留"全部硬碟"）
       this.elements.driveFilterSelect.innerHTML = '<option value="">全部硬碟</option>';
@@ -427,7 +426,7 @@ class VideoManager {
   // 側邊欄「只看有重複的影片」旁顯示有重複的影片數
   async loadDuplicateSummary() {
     try {
-      const summary = await ipcRenderer.invoke('get-duplicate-summary');
+      const summary = await window.api.invoke('get-duplicate-summary');
       this.elements.duplicateFilterCount.textContent = summary && summary.videos > 0 ? `(${summary.videos})` : '(0)';
     } catch (error) {
       console.error('載入重複檔案統計錯誤:', error);
@@ -468,7 +467,7 @@ class VideoManager {
       const trimmedTerm = (searchTerm || '').trim();
       const activeTagsArray = Array.from(this.activeTags);
 
-      const result = await ipcRenderer.invoke('search-videos', trimmedTerm, activeTagsArray, this._buildPageFilters());
+      const result = await window.api.invoke('search-videos', trimmedTerm, activeTagsArray, this._buildPageFilters());
 
       if (reqId !== this._searchReqId) return;
 
@@ -708,7 +707,7 @@ class VideoManager {
   async openTagManager() {
     try {
       // 標籤資料改由 tags-changed 事件即時同步，不需在此輪詢重載
-      await ipcRenderer.invoke('open-tag-manager');
+      await window.api.invoke('open-tag-manager');
     } catch (error) {
       console.error('開啟標籤管理器錯誤:', error);
     }
@@ -718,7 +717,7 @@ class VideoManager {
     try {
       // 只開啟設定視窗；資料是否需要重載交由 database-changed 事件精準觸發，
       // 避免每次點開設定都無條件重刷畫面
-      await ipcRenderer.invoke('open-settings');
+      await window.api.invoke('open-settings');
     } catch (error) {
       console.error('開啟設定頁面錯誤:', error);
     }

@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：滑過預覽：滑鼠停在網格卡片的縮圖上一下子，就顯示多格預覽，左右移動切換畫面
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { toFileUrl } = require('../shared/util');
 
 // 須與 thumbnailGenerator.js 的 PREVIEW_FRAMES 一致
@@ -54,7 +53,7 @@ class HoverPreviewMethods {
         const video = this.currentVideos.find(v => v.filepath === filepath);
         let result;
         try {
-          result = await ipcRenderer.invoke('get-preview', filepath, thumb.dataset.fingerprint || null, video?.duration || 0);
+          result = await window.api.invoke('get-preview', filepath, thumb.dataset.fingerprint || null, video?.duration || 0);
         } catch (error) {
           result = { success: false, error: error.message };
         }

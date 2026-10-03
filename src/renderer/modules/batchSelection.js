@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：批次多選（Ctrl / Shift 點選卡片）與底部批次操作列：加 / 移除標籤、評分、刪除記錄
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 const tagNameOf = (tag) => (typeof tag === 'string' ? tag : tag && tag.name);
@@ -147,7 +146,7 @@ class BatchSelectionMethods {
     delete filters.limit;
     delete filters.offset;
     this._setBatchStatus('正在選取全部符合條件的影片…');
-    const result = await ipcRenderer.invoke('get-matching-video-refs', searchTerm, Array.from(this.activeTags), filters);
+    const result = await window.api.invoke('get-matching-video-refs', searchTerm, Array.from(this.activeTags), filters);
     if (!result.success) {
       this._setBatchStatus(`選取失敗：${result.error}`);
       return;
@@ -322,10 +321,10 @@ class BatchSelectionMethods {
       for (const [name, isNew] of this._batchPicked) {
         if (isNew) {
           // 不指定群組 → 歸入「未分類」，與詳情頁手動輸入新標籤相同
-          const created = await ipcRenderer.invoke('create-tag', { name });
+          const created = await window.api.invoke('create-tag', { name });
           if (!created || !created.success) throw new Error(created?.error || `建立標籤「${name}」失敗`);
         }
-        const result = await ipcRenderer.invoke(mode === 'add' ? 'batch-add-tag' : 'batch-remove-tag', fingerprints, name);
+        const result = await window.api.invoke(mode === 'add' ? 'batch-add-tag' : 'batch-remove-tag', fingerprints, name);
         if (!result.success) throw new Error(result.error);
         changed += result.changed;
       }
@@ -345,7 +344,7 @@ class BatchSelectionMethods {
     if (fingerprints.length === 0) return;
     const label = rating === 0 ? '清除評分' : `評為 ${rating} 星`;
     if (!confirm(`確定要把 ${fingerprints.length} 部影片${label}嗎？原本的評分會被覆蓋。`)) return;
-    const result = await ipcRenderer.invoke('batch-set-rating', fingerprints, rating);
+    const result = await window.api.invoke('batch-set-rating', fingerprints, rating);
     if (!result.success) {
       alert(`批次評分失敗：${result.error}`);
       return;
@@ -357,7 +356,7 @@ class BatchSelectionMethods {
     const ids = [...this.selection.keys()];
     if (ids.length === 0) return;
     if (!confirm(`確定要刪除 ${ids.length} 部影片的資料庫記錄嗎？\n\n不會刪除實際檔案；之後重新掃描會再加回來，標籤也會保留。`)) return;
-    const result = await ipcRenderer.invoke('batch-delete-records', ids);
+    const result = await window.api.invoke('batch-delete-records', ids);
     if (!result.success) {
       alert(`批次刪除失敗：${result.error}`);
       return;

@@ -1,18 +1,26 @@
 // VideoManager 的方法群組：影片卡片縮圖：快取查詢、延遲載入、瀏覽器解碼 / 後端 FFmpeg 產生、手動重產
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { escapeHtml, toFileUrl } = require('../shared/util');
 
 // 瀏覽器無法解碼、需交給後端 FFmpeg 的格式
 const UNSUPPORTED_FORMATS = new Set(['avi', 'wmv', 'flv', 'rmvb', 'rm', 'asf', 'ts', 'mts', 'm2ts']);
 
-let rendererThumbnailGenerator = null;
-function getRendererThumbnailGenerator() {
-  if (!rendererThumbnailGenerator) {
-    const ThumbnailGenerator = require('../../thumbnailGenerator');
-    rendererThumbnailGenerator = new ThumbnailGenerator();
-  }
-  return rendererThumbnailGenerator;
+// 瀏覽器能播的格式：直接從 <video> 擷取畫面存成縮圖（不必跑 FFmpeg）。
+// 依影片原始比例縮放成寬 640px 的 JPEG，交給主行程寫檔
+const CANVAS_THUMBNAIL_WIDTH = 640;
+async function captureVideoFrameJpeg(videoElement) {
+  const canvas = document.createElement('canvas');
+  const srcW = videoElement.videoWidth || 1280;
+  const srcH = videoElement.videoHeight || 720;
+  canvas.width = CANVAS_THUMBNAIL_WIDTH;
+  canvas.height = Math.round(CANVAS_THUMBNAIL_WIDTH * (srcH / srcW));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+  if (!blob) throw new Error('無法從影片擷取畫面');
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 // 縮圖容器上的影片指紋（縮圖檔以指紋命名；沒有指紋的影片回傳 null，後端改用路徑命名）
@@ -81,7 +89,7 @@ class ThumbnailMethods {
 
     // 一次性批次查詢
     if (pathsToCheck.length > 0) {
-      ipcRenderer.invoke('check-thumbnails-batch', pathsToCheck).then(res => {
+      window.api.invoke('check-thumbnails-batch', pathsToCheck).then(res => {
         if (res && res.success && res.results) {
           for (const [p, thumb] of Object.entries(res.results)) {
             this.thumbnailCache.set(p, thumb || null);
@@ -113,7 +121,7 @@ class ThumbnailMethods {
     if (!video || video.duration > 0) return;
 
     video.duration = seconds;
-    ipcRenderer.invoke('set-video-duration', videoPath, seconds).catch(err =>
+    window.api.invoke('set-video-duration', videoPath, seconds).catch(err =>
       console.warn('寫入影片長度失敗:', err)
     );
     if (container.classList.contains('video-thumbnail') && !container.querySelector('.thumbnail-duration')) {
@@ -150,7 +158,7 @@ class ThumbnailMethods {
         return;
       }
 
-      const result = await ipcRenderer.invoke('check-thumbnail', videoPath, fingerprintOf(container));
+      const result = await window.api.invoke('check-thumbnail', videoPath, fingerprintOf(container));
       if (result.success && result.exists) {
         this.thumbnailCache.set(videoPath, result.path);
         this.showCachedThumbnail(container, result.path);
@@ -180,7 +188,7 @@ class ThumbnailMethods {
   async generateThumbnailWithBackend(container, videoPath, { quiet = false } = {}) {
     try {
       // 嘗試使用後端 FFmpeg 生成縮圖
-      const result = await ipcRenderer.invoke('get-thumbnail', videoPath, fingerprintOf(container));
+      const result = await window.api.invoke('get-thumbnail', videoPath, fingerprintOf(container));
       if (result.success && result.thumbnail) {
         this.thumbnailCache.set(videoPath, result.thumbnail);
         this.showCachedThumbnail(container, result.thumbnail);
@@ -322,8 +330,10 @@ class ThumbnailMethods {
 
       // 存成縮圖快取，之後重繪直接用圖片，不必再從（可能是網路磁碟的）影片讀一次
       try {
-        const thumbnailPath = await getRendererThumbnailGenerator().generateThumbnailInRenderer(video, videoPath, fingerprintOf(container));
-        if (thumbnailPath) this.thumbnailCache.set(videoPath, thumbnailPath);
+        const jpeg = await captureVideoFrameJpeg(video);
+        const result = await window.api.invoke('save-renderer-thumbnail', videoPath, fingerprintOf(container), jpeg);
+        if (result.success) this.thumbnailCache.set(videoPath, result.thumbnail);
+        else console.warn('儲存縮圖失敗:', result.error);
       } catch (error) {
         console.warn('生成縮圖快取失敗:', error);
       }
@@ -366,7 +376,7 @@ class ThumbnailMethods {
       generateBtn.disabled = true;
 
       // 呼叫後端使用 FFmpeg 生成縮圖（指定擷取秒數）
-      const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath, timeOffset, this.selectedVideo.fingerprint || null);
+      const result = await window.api.invoke('generate-thumbnail-force', videoPath, timeOffset, this.selectedVideo.fingerprint || null);
 
       if (result.success && result.thumbnail) {
         this.thumbnailCache.set(videoPath, result.thumbnail);

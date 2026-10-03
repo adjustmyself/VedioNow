@@ -139,31 +139,6 @@
         <div class="status" id="status">正在啟動…</div>
     </div>
 
-    <script>
-        const { ipcRenderer } = require('electron');
-
-        const splashEl = document.getElementById('splash');
-        const barEl = document.getElementById('progress-bar');
-        const statusEl = document.getElementById('status');
-        let currentPercent = 6;
-
-        ipcRenderer.on('splash-status', (event, state) => {
-            if (!state) return;
-            if (typeof state.text === 'string') {
-                statusEl.textContent = state.text;
-            }
-            const percent = Number(state.percent);
-            // 進度只進不退，避免訊息順序造成倒退感
-            if (!isNaN(percent) && percent > currentPercent) {
-                currentPercent = Math.min(percent, 100);
-                barEl.style.width = currentPercent + '%';
-            }
-        });
-
-        ipcRenderer.on('splash-finish', () => {
-            barEl.style.width = '100%';
-            splashEl.classList.add('is-leaving');
-        });
-    </script>
+    <script src="splash.js"></script>
 </body>
 </html>

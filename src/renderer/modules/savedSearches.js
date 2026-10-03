@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：儲存的搜尋（側邊欄）：把目前的搜尋字、標籤、篩選與排序存成一筆，點一下套用
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 const SORT_LABELS = {
@@ -56,7 +55,7 @@ class SavedSearchMethods {
     });
 
     try {
-      const result = await ipcRenderer.invoke('get-saved-searches');
+      const result = await window.api.invoke('get-saved-searches');
       this.savedSearches = result.success ? result.searches : [];
     } catch (error) {
       console.error('載入儲存的搜尋失敗:', error);
@@ -148,7 +147,7 @@ class SavedSearchMethods {
     const existing = this.savedSearches.find(s => s.name.toLowerCase() === name.toLowerCase());
     if (existing && !confirm(`已經有名為「${existing.name}」的搜尋，要用目前的條件取代嗎？`)) return;
 
-    const result = await ipcRenderer.invoke('save-search', { name, ...this._currentSearchState() });
+    const result = await window.api.invoke('save-search', { name, ...this._currentSearchState() });
     if (!result.success) {
       alert(`儲存失敗：${result.error}`);
       return;
@@ -160,7 +159,7 @@ class SavedSearchMethods {
   async deleteSavedSearch(id) {
     const target = this.savedSearches.find(s => s.id === id);
     if (!target || !confirm(`刪除儲存的搜尋「${target.name}」？`)) return;
-    const result = await ipcRenderer.invoke('delete-saved-search', id);
+    const result = await window.api.invoke('delete-saved-search', id);
     if (!result.success) {
       alert(`刪除失敗：${result.error}`);
       return;

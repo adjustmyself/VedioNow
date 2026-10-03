@@ -1,4 +1,3 @@
-const { ipcRenderer } = require('electron');
 const { escapeHtml, toTagImageUrl } = require('./shared/util');
 
 class TagManager {
@@ -181,11 +180,11 @@ class TagManager {
   }
 
   async loadGroups() {
-    this.groups = await ipcRenderer.invoke('get-all-tag-groups');
+    this.groups = await window.api.invoke('get-all-tag-groups');
   }
 
   async loadTagsByGroup() {
-    this.tagsByGroup = await ipcRenderer.invoke('get-tags-by-group');
+    this.tagsByGroup = await window.api.invoke('get-tags-by-group');
   }
 
   renderGroups() {
@@ -368,7 +367,7 @@ class TagManager {
     this.applyLocalTagOrder(groupId, orderedIds);
 
     try {
-      const result = await ipcRenderer.invoke('reorder-tags', groupId, orderedIds);
+      const result = await window.api.invoke('reorder-tags', groupId, orderedIds);
       if (result && result.success === false) {
         throw new Error(result.error);
       }
@@ -447,9 +446,9 @@ class TagManager {
 
     try {
       if (this.editingGroup) {
-        await ipcRenderer.invoke('update-tag-group', this.editingGroup.id, groupData);
+        await window.api.invoke('update-tag-group', this.editingGroup.id, groupData);
       } else {
-        await ipcRenderer.invoke('create-tag-group', groupData);
+        await window.api.invoke('create-tag-group', groupData);
       }
 
       this.hideGroupModal();
@@ -473,7 +472,7 @@ class TagManager {
       this.elements.confirmMessage.textContent =
         `確定要刪除群組「${group.name}」嗎？群組內的標籤將移至未分類。`;
       this.deleteCallback = async () => {
-        await ipcRenderer.invoke('delete-tag-group', groupId);
+        await window.api.invoke('delete-tag-group', groupId);
         await this.loadData();
       };
       this.elements.confirmModal.classList.remove('hidden');
@@ -509,7 +508,7 @@ class TagManager {
   // 透過主行程開啟檔案對話框選圖並複製到 userData/tag-images，回傳的檔名存進標籤
   async pickTagImage() {
     try {
-      const result = await ipcRenderer.invoke('pick-tag-image');
+      const result = await window.api.invoke('pick-tag-image');
       if (result && result.success) {
         this.setTagImage(result.filename);
       } else if (result && result.error) {
@@ -524,7 +523,7 @@ class TagManager {
   // 取得標籤圖片資料夾絕對路徑（快取）
   async getTagImagesDir() {
     if (this._tagImagesDir === undefined) {
-      this._tagImagesDir = await ipcRenderer.invoke('get-tag-images-dir');
+      this._tagImagesDir = await window.api.invoke('get-tag-images-dir');
     }
     return this._tagImagesDir;
   }
@@ -570,9 +569,9 @@ class TagManager {
     try {
       let result;
       if (this.editingTag) {
-        result = await ipcRenderer.invoke('update-tag', this.editingTag.id, tagData);
+        result = await window.api.invoke('update-tag', this.editingTag.id, tagData);
       } else {
-        result = await ipcRenderer.invoke('create-tag', tagData);
+        result = await window.api.invoke('create-tag', tagData);
       }
 
       if (result && result.success === false) {
@@ -616,7 +615,7 @@ class TagManager {
       this.elements.confirmMessage.textContent =
         `確定要刪除標籤「${tag.name}」嗎？這會從所有影片中移除此標籤。`;
       this.deleteCallback = async () => {
-        const result = await ipcRenderer.invoke('delete-tag', tagId);
+        const result = await window.api.invoke('delete-tag', tagId);
 
         if (result && result.success === false) {
           alert(`刪除失敗: ${result.error}`);

@@ -1,4 +1,3 @@
-const { ipcRenderer } = require('electron');
 const { escapeHtml } = require('./shared/util');
 
 class SettingsManager {
@@ -56,7 +55,7 @@ class SettingsManager {
 
         document.getElementById('restart-app').addEventListener('click', () => {
             // restart-app 在 main 是 ipcMain.handle，必須用 invoke（send 不會觸發）
-            ipcRenderer.invoke('restart-app');
+            window.api.invoke('restart-app');
         });
 
         // 縮圖管理相關按鈕
@@ -100,7 +99,7 @@ class SettingsManager {
 
         // 備份與還原
         document.getElementById('open-backup-dir-btn').addEventListener('click', () => {
-            ipcRenderer.invoke('open-backup-dir');
+            window.api.invoke('open-backup-dir');
         });
         document.getElementById('create-backup-btn').addEventListener('click', () => {
             this.createBackup();
@@ -113,7 +112,7 @@ class SettingsManager {
         document.getElementById('backfill-durations-btn').addEventListener('click', () => {
             this.backfillDurations();
         });
-        ipcRenderer.on('duration-backfill-progress', (event, { processed, total }) => {
+        window.api.on('duration-backfill-progress', ({ processed, total }) => {
             const statusEl = document.getElementById('backfill-durations-status');
             statusEl.className = 'cleanup-status working';
             statusEl.textContent = `正在讀取影片長度… ${processed} / ${total}`;
@@ -188,7 +187,7 @@ class SettingsManager {
 
     async loadSettings() {
         try {
-            this.config = await ipcRenderer.invoke('get-config');
+            this.config = await window.api.invoke('get-config');
 
             // 資料庫類型
             document.getElementById('db-type').value = this.config.database?.type || 'sqlite';
@@ -225,7 +224,7 @@ class SettingsManager {
             const settings = this.collectSettings();
             // 只有資料庫類型變更才需要重啟；主題、語言等變更即時生效
             const needsRestart = (this.config?.database?.type || 'sqlite') !== settings.database.type;
-            const success = await ipcRenderer.invoke('save-config', settings);
+            const success = await window.api.invoke('save-config', settings);
 
             if (success) {
                 this.config = settings;
@@ -275,7 +274,7 @@ class SettingsManager {
     async resetSettings() {
         if (confirm('確定要重置所有設定到預設值嗎？')) {
             try {
-                const success = await ipcRenderer.invoke('reset-config');
+                const success = await window.api.invoke('reset-config');
                 if (success) {
                     await this.loadSettings();
                     alert('設定已重置到預設值');
@@ -312,7 +311,7 @@ class SettingsManager {
             };
 
             // 發送測試請求
-            const result = await ipcRenderer.invoke('test-mongodb-connection', mongoConfig);
+            const result = await window.api.invoke('test-mongodb-connection', mongoConfig);
 
             if (result.success) {
                 statusEl.className = 'connection-status success';
@@ -369,7 +368,7 @@ class SettingsManager {
     // 載入縮圖統計資訊
     async loadThumbnailStats() {
         try {
-            const result = await ipcRenderer.invoke('get-thumbnail-stats');
+            const result = await window.api.invoke('get-thumbnail-stats');
 
             if (result.success) {
                 const { stats } = result;
@@ -405,7 +404,7 @@ class SettingsManager {
         cleanupBtn.disabled = true;
 
         try {
-            const result = await ipcRenderer.invoke('cleanup-thumbnails');
+            const result = await window.api.invoke('cleanup-thumbnails');
 
             if (result.success) {
                 statusEl.className = 'cleanup-status success';
@@ -448,7 +447,7 @@ class SettingsManager {
         btn.disabled = true;
 
         try {
-            const result = await ipcRenderer.invoke('migrate-mongodb-to-sqlite');
+            const result = await window.api.invoke('migrate-mongodb-to-sqlite');
 
             if (result.success) {
                 statusEl.className = 'cleanup-status success';
@@ -480,7 +479,7 @@ class SettingsManager {
         btn.disabled = true;
 
         try {
-            const result = await ipcRenderer.invoke('cleanup-orphan-tag-relations');
+            const result = await window.api.invoke('cleanup-orphan-tag-relations');
 
             if (result.success) {
                 statusEl.className = 'cleanup-status success';
@@ -507,14 +506,14 @@ class SettingsManager {
     // ========== 自動標籤規則 ==========
 
     async loadAutoTagRules() {
-        const result = await ipcRenderer.invoke('get-auto-tag-rules');
+        const result = await window.api.invoke('get-auto-tag-rules');
         this.autoTagRules = result.success ? result.rules : [];
         this.autoTagPreview = null;
         this.renderAutoTagRules();
 
         // 標籤輸入框的自動完成
         try {
-            const groups = await ipcRenderer.invoke('get-tags-by-group');
+            const groups = await window.api.invoke('get-tags-by-group');
             const names = [...new Set((groups || []).flatMap(g => (g.tags || []).map(t => t.name)))];
             document.getElementById('auto-tag-tag-options').innerHTML =
                 names.map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
@@ -552,7 +551,7 @@ class SettingsManager {
 
     // 整份清單存回設定檔；成功後以存回的版本（已正規化）為準
     async saveAutoTagRules(rules) {
-        const result = await ipcRenderer.invoke('save-auto-tag-rules', rules);
+        const result = await window.api.invoke('save-auto-tag-rules', rules);
         if (!result.success) {
             alert(`儲存規則失敗：${result.error}`);
             return false;
@@ -592,7 +591,7 @@ class SettingsManager {
         const statusEl = document.getElementById('auto-tag-status');
         statusEl.className = 'cleanup-status working';
         statusEl.textContent = '正在計算...';
-        const result = await ipcRenderer.invoke('preview-auto-tag-rules', this.autoTagRules);
+        const result = await window.api.invoke('preview-auto-tag-rules', this.autoTagRules);
         if (!result.success) {
             statusEl.className = 'cleanup-status error';
             statusEl.textContent = '預覽失敗: ' + result.error;
@@ -618,7 +617,7 @@ class SettingsManager {
         statusEl.className = 'cleanup-status working';
         statusEl.textContent = '正在套用...';
         try {
-            const result = await ipcRenderer.invoke('apply-auto-tag-rules');
+            const result = await window.api.invoke('apply-auto-tag-rules');
             if (!result.success) throw new Error(result.error);
             statusEl.className = 'cleanup-status success';
             statusEl.textContent = `完成：${result.matchedVideos} 部影片符合，新加上 ${result.added} 個標籤`;
@@ -634,7 +633,7 @@ class SettingsManager {
         const latestEl = document.getElementById('backup-latest-auto');
         const countEl = document.getElementById('backup-auto-count');
         try {
-            const info = await ipcRenderer.invoke('get-backup-info');
+            const info = await window.api.invoke('get-backup-info');
             if (!info.success) throw new Error(info.error);
             if (!info.supported) {
                 latestEl.textContent = '目前使用 MongoDB，不支援備份';
@@ -659,7 +658,7 @@ class SettingsManager {
         statusEl.className = 'cleanup-status working';
         statusEl.textContent = '正在備份...';
         try {
-            const result = await ipcRenderer.invoke('create-backup');
+            const result = await window.api.invoke('create-backup');
             if (result.canceled) {
                 statusEl.className = 'cleanup-status';
                 statusEl.textContent = '';
@@ -685,7 +684,7 @@ class SettingsManager {
         statusEl.className = 'cleanup-status';
         statusEl.textContent = '';
         try {
-            const chosen = await ipcRenderer.invoke('choose-restore-backup');
+            const chosen = await window.api.invoke('choose-restore-backup');
             if (chosen.canceled) return;
             if (!chosen.success) throw new Error(chosen.error);
 
@@ -700,7 +699,7 @@ class SettingsManager {
 
             statusEl.className = 'cleanup-status working';
             statusEl.textContent = '正在還原，完成後會自動重新啟動...';
-            const result = await ipcRenderer.invoke('restore-backup', b.path);
+            const result = await window.api.invoke('restore-backup', b.path);
             if (!result.success) throw new Error(result.error);
         } catch (error) {
             statusEl.className = 'cleanup-status error';
@@ -720,7 +719,7 @@ class SettingsManager {
         btn.disabled = true;
 
         try {
-            const result = await ipcRenderer.invoke('backfill-durations');
+            const result = await window.api.invoke('backfill-durations');
 
             if (result.success) {
                 statusEl.className = 'cleanup-status success';

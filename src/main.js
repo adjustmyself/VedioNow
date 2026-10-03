@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const DatabaseFactory = require('./database');
@@ -14,6 +14,9 @@ const { getUserDataDir, LEGACY_DATA_DIR } = require('./appPaths');
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.videonow.app');
 }
+
+// 所有視窗共用的 preload，畫面端經由 window.api 呼叫白名單內的 IPC
+const PRELOAD_PATH = path.join(__dirname, 'preload.js');
 
 let mainWindow;
 let splashWindow;
@@ -97,7 +100,8 @@ function createSplashWindow() {
     title: 'VideoNow',
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      preload: PRELOAD_PATH
     }
   });
 
@@ -173,7 +177,8 @@ function createWindow() {
     backgroundColor: appTheme === 'dark' ? '#16181d' : '#f5f5f5',
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      preload: PRELOAD_PATH
     },
     icon: getWindowIconPath()
   });
@@ -713,12 +718,6 @@ function getTagImagesDir() {
 // 提供給 renderer 組出圖片的 file:// URL（資料庫只存檔名）
 ipcMain.handle('get-tag-images-dir', () => getTagImagesDir());
 
-// renderer 也會用 ThumbnailGenerator 寫縮圖，但 renderer 取不到 app.getPath；
-// 用同步 IPC 回報 userData 路徑（appPaths 只會問一次並快取）
-ipcMain.on('get-user-data-dir-sync', (event) => {
-  event.returnValue = getUserDataDir();
-});
-
 ipcMain.handle('pick-tag-image', async () => {
   try {
     const parentWin = BrowserWindow.getFocusedWindow() || mainWindow;
@@ -908,7 +907,8 @@ function openChildWindow(key, file, options) {
     modal: true,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      preload: PRELOAD_PATH
     }
   });
   childWindows.set(key, win);
@@ -997,6 +997,32 @@ ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset, 
     console.error('強制生成縮圖錯誤:', error);
     return { success: false, error: error.message };
   }
+});
+
+// 畫面端用 <video> + canvas 擷取的縮圖（JPEG），由主行程寫檔
+const MAX_RENDERER_THUMBNAIL_BYTES = 5 * 1024 * 1024;
+ipcMain.handle('save-renderer-thumbnail', async (event, videoPath, fingerprint, data) => {
+  try {
+    const bytes = data instanceof Uint8Array ? data : (data instanceof ArrayBuffer ? new Uint8Array(data) : null);
+    if (typeof videoPath !== 'string' || !bytes || bytes.length === 0 || bytes.length > MAX_RENDERER_THUMBNAIL_BYTES) {
+      return { success: false, error: '參數錯誤' };
+    }
+    // JPEG 檔頭 FF D8 FF
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+      return { success: false, error: '不是 JPEG 資料' };
+    }
+    const thumbnail = await thumbnailGenerator.saveThumbnailBuffer(videoPath, fingerprint || null, Buffer.from(bytes));
+    return { success: true, thumbnail };
+  } catch (error) {
+    console.error('儲存縮圖錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('copy-to-clipboard', (event, text) => {
+  if (typeof text !== 'string') return { success: false };
+  clipboard.writeText(text);
+  return { success: true };
 });
 
 // 滑過預覽：需要時才產生（第一次滑過某部影片時），設定裡關閉時回傳 disabled

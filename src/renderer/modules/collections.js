@@ -1,6 +1,5 @@
 // VideoManager 的方法群組：影片合集：合併同資料夾影片、合集清單
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
-const { ipcRenderer } = require('electron');
 const { escapeHtml } = require('../shared/util');
 
 class CollectionMethods {
@@ -19,7 +18,7 @@ class CollectionMethods {
 
     try {
       // 獲取同資料夾的所有影片
-      const result = await ipcRenderer.invoke('get-folder-videos', folderPath);
+      const result = await window.api.invoke('get-folder-videos', folderPath);
 
       if (!result.success) {
         alert('獲取資料夾影片失敗: ' + result.error);
@@ -113,7 +112,7 @@ class CollectionMethods {
     }
 
     try {
-      const result = await ipcRenderer.invoke('create-collection',
+      const result = await window.api.invoke('create-collection',
         mainFingerprint, childFingerprints, collectionName, folderPath
       );
 
@@ -137,7 +136,7 @@ class CollectionMethods {
 
     // 先獲取合集資訊，顯示子影片數量
     try {
-      const collectionResult = await ipcRenderer.invoke('get-collection', this.selectedVideo.fingerprint);
+      const collectionResult = await window.api.invoke('get-collection', this.selectedVideo.fingerprint);
       let childCount = 0;
       if (collectionResult.success && collectionResult.data) {
         childCount = collectionResult.data.child_videos?.length || 0;
@@ -152,7 +151,7 @@ class CollectionMethods {
         return;
       }
 
-      const result = await ipcRenderer.invoke('remove-collection', this.selectedVideo.fingerprint);
+      const result = await window.api.invoke('remove-collection', this.selectedVideo.fingerprint);
 
       if (result.success) {
         const deletedMsg = result.data?.totalVideosDeleted > 0
@@ -177,7 +176,7 @@ class CollectionMethods {
 
   async loadCollectionInfo(fingerprint) {
     try {
-      const result = await ipcRenderer.invoke('get-collection', fingerprint);
+      const result = await window.api.invoke('get-collection', fingerprint);
 
       if (result.success && result.data) {
         // 顯示合集資訊
@@ -215,7 +214,7 @@ class CollectionMethods {
           e.stopPropagation(); // 防止事件冒泡
           const filepath = playButton.dataset.filepath;
           if (filepath) {
-            ipcRenderer.invoke('open-path', filepath);
+            window.api.invoke('open-path', filepath);
           }
         }
       });
