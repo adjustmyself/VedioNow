@@ -1405,6 +1405,27 @@ ipcMain.handle('get-recent-scan-paths', async () => {
 });
 
 // 移除單一掃描路徑
+// 儲存的搜尋（存在 config.json，與資料庫後端無關）
+ipcMain.handle('get-saved-searches', async () => {
+  return { success: true, searches: await config.getSavedSearches() };
+});
+
+ipcMain.handle('save-search', async (event, search) => {
+  try {
+    return { success: true, searches: await config.saveSearch(search || {}) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('delete-saved-search', async (event, id) => {
+  try {
+    return { success: true, searches: await config.deleteSavedSearch(String(id)) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('get-watched-folders', async () => {
   return { success: true, folders: await config.getWatchedFolders() };
 });

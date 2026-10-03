@@ -252,6 +252,7 @@ class VideoManager {
 
     this.setupTagTooltip();
     this.initBatchSelection();
+    this.initSavedSearches();
   }
 
   async loadData() {
@@ -342,6 +343,7 @@ class VideoManager {
       this.updateStats();
       this.renderVideos();
       this.renderPagination();
+      this.renderSavedSearches();
     } catch (error) {
       console.error('載入頁面錯誤:', error);
     } finally {
@@ -474,6 +476,8 @@ class VideoManager {
       this.updateStats();
       this.renderVideos();
       this.renderPagination();
+
+      this.renderSavedSearches();
 
       // 更新每個標籤在目前篩選條件下的命中計數
       await this.fetchFilteredTagCounts();
@@ -767,7 +771,8 @@ for (const Methods of [
   require('./modules/scanModal'),
   require('./modules/pagination'),
   require('./modules/collections'),
-  require('./modules/batchSelection')
+  require('./modules/batchSelection'),
+  require('./modules/savedSearches')
 ]) {
   for (const name of Object.getOwnPropertyNames(Methods.prototype)) {
     if (name === 'constructor') continue;

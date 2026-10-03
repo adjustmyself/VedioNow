@@ -181,6 +181,81 @@ body {
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
+/* 儲存的搜尋 */
+.saved-searches {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1.5rem;
+}
+
+.saved-search-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.saved-search-list:empty {
+    display: none;
+}
+
+.saved-search-item {
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+
+.saved-search-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.saved-search-remove {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #999;
+    cursor: pointer;
+    opacity: 0;
+}
+
+.saved-search-item:hover .saved-search-remove,
+.saved-search-remove:focus-visible {
+    opacity: 1;
+}
+
+.saved-search-remove:hover {
+    background: #ffe5e5;
+    color: #e74c3c;
+}
+
+.saved-search-add {
+    width: 100%;
+}
+
+.saved-search-add:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.saved-search-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.saved-search-form-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
 .rating-option {
     padding: 0.5rem 0.8rem;
     border-radius: 8px;

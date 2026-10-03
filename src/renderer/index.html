@@ -39,6 +39,19 @@
 
         <div class="main-container">
             <aside class="sidebar">
+                <h3>儲存的搜尋</h3>
+                <div class="saved-searches">
+                    <div id="saved-search-list" class="saved-search-list"></div>
+                    <button id="saved-search-add" type="button" class="btn btn-small saved-search-add" title="把目前的搜尋、標籤、篩選與排序存起來">＋ 儲存目前條件</button>
+                    <div id="saved-search-form" class="saved-search-form hidden">
+                        <input type="text" id="saved-search-name" class="drive-select" maxlength="60" placeholder="名稱">
+                        <div class="saved-search-form-actions">
+                            <button id="saved-search-confirm" type="button" class="btn btn-primary btn-small">儲存</button>
+                            <button id="saved-search-cancel" type="button" class="btn btn-secondary btn-small">取消</button>
+                        </div>
+                    </div>
+                </div>
+
                 <h3>評分篩選</h3>
                 <div id="rating-filter" class="rating-filter">
                     <div class="rating-option active" data-rating="0">

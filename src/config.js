@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const fs = require('fs-extra');
 const { getUserDataDir } = require('./appPaths');
 
@@ -31,7 +32,8 @@ class Config {
       scan: {
         recentPaths: [], // 已記憶的掃描路徑（永久保留，除非手動刪除）
         watchedFolders: [] // 監看中的資料夾 [{ path, recursive }]：每次啟動自動增量掃描並恢復監看
-      }
+      },
+      savedSearches: [] // 儲存的搜尋：篩選條件 + 排序，見 normalizeSavedSearch()
     };
   }
 
@@ -221,6 +223,61 @@ class Config {
       console.error('移除監看資料夾失敗:', error);
       return null;
     }
+  }
+
+  // ========== 儲存的搜尋 ==========
+
+  // 只保留已知欄位並修正型別（資料來自渲染器）
+  static normalizeSavedSearch(search) {
+    const SORT_FIELDS = ['file_created_at', 'created_at', 'filename', 'filesize', 'duration', 'rating', 'play_count', 'last_played_at'];
+    const rating = Number(search.rating);
+    return {
+      id: typeof search.id === 'string' && search.id ? search.id : crypto.randomUUID(),
+      name: String(search.name || '').trim().slice(0, 60),
+      searchTerm: String(search.searchTerm || '').trim(),
+      tags: Array.isArray(search.tags) ? [...new Set(search.tags.filter(t => typeof t === 'string' && t))] : [],
+      rating: Number.isInteger(rating) && rating >= 0 && rating <= 5 ? rating : 0,
+      drivePath: typeof search.drivePath === 'string' ? search.drivePath : '',
+      duplicatesOnly: !!search.duplicatesOnly,
+      unwatchedOnly: !!search.unwatchedOnly,
+      sortBy: SORT_FIELDS.includes(search.sortBy) ? search.sortBy : 'file_created_at',
+      sortOrder: search.sortOrder === 'asc' ? 'asc' : 'desc'
+    };
+  }
+
+  async getSavedSearches() {
+    try {
+      const config = await this.load();
+      return Array.isArray(config.savedSearches) ? config.savedSearches : [];
+    } catch (error) {
+      console.error('獲取儲存的搜尋失敗:', error);
+      return [];
+    }
+  }
+
+  // 儲存搜尋：同名（不分大小寫）就覆蓋原本那筆、保留位置；回傳更新後的清單
+  async saveSearch(search) {
+    const entry = Config.normalizeSavedSearch(search);
+    if (!entry.name) throw new Error('請輸入名稱');
+    const config = await this.load();
+    const list = Array.isArray(config.savedSearches) ? config.savedSearches : [];
+    const index = list.findIndex(s => s.name.toLowerCase() === entry.name.toLowerCase());
+    if (index >= 0) {
+      list[index] = { ...entry, id: list[index].id };
+    } else {
+      list.push(entry);
+    }
+    config.savedSearches = list;
+    if (!await this.save(config)) throw new Error('寫入設定檔失敗');
+    return list;
+  }
+
+  async deleteSavedSearch(id) {
+    const config = await this.load();
+    const list = Array.isArray(config.savedSearches) ? config.savedSearches : [];
+    config.savedSearches = list.filter(s => s.id !== id);
+    if (!await this.save(config)) throw new Error('寫入設定檔失敗');
+    return config.savedSearches;
   }
 
   // 移除單一掃描路徑

@@ -308,7 +308,14 @@ class TagFilterBarMethods {
   setRatingFilter(rating) {
     this.selectedRating = rating;
     this.currentPage = 1; // 重置到第一頁
+    this._updateRatingFilterUI(rating);
 
+    // 重新載入影片
+    this.handleSearch(this.elements.searchInput.value);
+  }
+
+  // 側邊欄評分篩選的外觀（「全部」按鈕與星星）
+  _updateRatingFilterUI(rating) {
     // 更新「全部」按鈕狀態
     const allOption = document.querySelector('.rating-option[data-rating="0"]');
     if (allOption) {
@@ -330,9 +337,6 @@ class TagFilterBarMethods {
         star.textContent = '☆';
       }
     });
-
-    // 重新載入影片
-    this.handleSearch(this.elements.searchInput.value);
   }
 
   toggleTagFilter(tagName) {
@@ -375,15 +379,7 @@ class TagFilterBarMethods {
     this.elements.tagFilterSearchClear?.classList.add('hidden');
 
     // 重置評分篩選 UI
-    const allOption = document.querySelector('.rating-option[data-rating="0"]');
-    if (allOption) {
-      allOption.classList.add('active');
-    }
-    const filterStars = document.querySelectorAll('.filter-star');
-    filterStars.forEach((star) => {
-      star.classList.remove('active');
-      star.textContent = '☆';
-    });
+    this._updateRatingFilterUI(0);
 
     // 重新載入資料
     this.renderTagsFilter();
