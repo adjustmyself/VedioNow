@@ -50,6 +50,16 @@ describe('Config', () => {
     expect(await config.getWatchedFolders()).toEqual([{ path: 'C:\\a', recursive: true }]);
   });
 
+  test('自動標籤規則：整批正規化後儲存，任何一條不合法就整批拒絕', async () => {
+    expect(await config.getAutoTagRules()).toEqual([]);
+    const saved = await config.saveAutoTagRules([{ pattern: ' 1080p ', tags: ['高畫質'] }]);
+    expect(saved).toEqual([expect.objectContaining({ pattern: '1080p', field: 'filename', type: 'keyword', enabled: true })]);
+
+    await expect(config.saveAutoTagRules([...saved, { pattern: '(', type: 'regex', tags: ['x'] }]))
+      .rejects.toThrow('正規表示式有誤');
+    expect(await config.getAutoTagRules()).toEqual(saved);
+  });
+
   describe('儲存的搜尋', () => {
     const base = { searchTerm: ' 海 ', tags: ['動作', '動作', ''], rating: 3, drivePath: '\\nas\d1', unwatchedOnly: 1, sortBy: 'duration', sortOrder: 'asc' };
 

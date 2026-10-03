@@ -31,6 +31,19 @@ class VideoScanner {
     this.fileFingerprint = new FileFingerprint();
     // 資料層重建（切換資料庫、還原）後舊的 scanner 作廢：不再開新的監看、背景同步提早結束
     this.disposed = false;
+    // 新增或變動的影片寫入資料庫後呼叫 (filepaths) => 加上的標籤數，由主行程套用自動標籤規則。
+    // 只處理這些檔案（不含未變更的），手動拿掉的標籤才不會每次掃描又被加回來
+    this.onVideosSaved = null;
+  }
+
+  async _notifyVideosSaved(filepaths) {
+    if (!this.onVideosSaved || filepaths.length === 0 || this.disposed) return 0;
+    try {
+      return (await this.onVideosSaved(filepaths)) || 0;
+    } catch (error) {
+      console.warn('套用自動標籤規則失敗:', error);
+      return 0;
+    }
   }
 
   async scanFolder(folderPath, options = {}) {
@@ -134,6 +147,8 @@ class VideoScanner {
       });
     });
 
+    const autoTagged = await this._notifyVideosSaved(videos.map(v => v.filepath));
+
     // 可選：清理已刪除的檔案記錄
     let cleanupCount = 0;
     if (cleanupMissing) {
@@ -151,7 +166,8 @@ class VideoScanner {
       updated: updatedCount,
       duplicates: duplicateCount,
       unchanged: unchangedCount,
-      cleaned: cleanupCount
+      cleaned: cleanupCount,
+      autoTagged
     };
   }
 
@@ -404,6 +420,7 @@ class VideoScanner {
             const videoInfo = await this._getVideoInfo(filepath, stat);
             await this.database.addVideo(videoInfo);
             console.log(`新增影片: ${filepath}`);
+            await this._notifyVideosSaved([filepath]);
           } catch (error) {
             console.error(`處理新增影片錯誤: ${filepath}`, error);
           }

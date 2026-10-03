@@ -2,6 +2,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs-extra');
 const { getUserDataDir } = require('./appPaths');
+const AutoTagRules = require('./autoTagRules');
 
 class Config {
   constructor() {
@@ -33,7 +34,8 @@ class Config {
         recentPaths: [], // 已記憶的掃描路徑（永久保留，除非手動刪除）
         watchedFolders: [] // 監看中的資料夾 [{ path, recursive }]：每次啟動自動增量掃描並恢復監看
       },
-      savedSearches: [] // 儲存的搜尋：篩選條件 + 排序，見 normalizeSavedSearch()
+      savedSearches: [], // 儲存的搜尋：篩選條件 + 排序，見 normalizeSavedSearch()
+      autoTagRules: [] // 自動標籤規則，見 autoTagRules.js
     };
   }
 
@@ -223,6 +225,32 @@ class Config {
       console.error('移除監看資料夾失敗:', error);
       return null;
     }
+  }
+
+  // ========== 自動標籤規則 ==========
+
+  async getAutoTagRules() {
+    try {
+      const config = await this.load();
+      return Array.isArray(config.autoTagRules) ? config.autoTagRules.map(AutoTagRules.normalizeRule) : [];
+    } catch (error) {
+      console.error('獲取自動標籤規則失敗:', error);
+      return [];
+    }
+  }
+
+  // 整份規則清單一起存（設定頁編輯後送回）；有任何一條不合法就整批拒絕
+  async saveAutoTagRules(rules) {
+    if (!Array.isArray(rules)) throw new Error('規則格式錯誤');
+    const normalized = rules.map(AutoTagRules.normalizeRule);
+    for (const rule of normalized) {
+      const error = AutoTagRules.validateRule(rule);
+      if (error) throw new Error(`規則「${rule.pattern || '(空白)'}」：${error}`);
+    }
+    const config = await this.load();
+    config.autoTagRules = normalized;
+    if (!await this.save(config)) throw new Error('寫入設定檔失敗');
+    return normalized;
   }
 
   // ========== 儲存的搜尋 ==========

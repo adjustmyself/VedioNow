@@ -6,6 +6,7 @@ const VideoScanner = require('./videoScanner');
 const ThumbnailGenerator = require('./thumbnailGenerator');
 const Config = require('./config');
 const BackupManager = require('./backupManager');
+const AutoTagRules = require('./autoTagRules');
 const { getUserDataDir, LEGACY_DATA_DIR } = require('./appPaths');
 
 // Windows：明確設定 AppUserModelID，否則打包後工作列圖示不會套用自訂 icon
@@ -223,7 +224,7 @@ app.whenReady().then(async () => {
     setSplashStatus('連線資料庫…', 45);
     database = await DatabaseFactory.create();
 
-    videoScanner = new VideoScanner(database);
+    videoScanner = createVideoScanner(database);
     thumbnailGenerator = new ThumbnailGenerator();
     // 產縮圖時 FFmpeg 會順便印出影片長度，直接寫回資料庫（掃描本身不讀影片內容）。
     // 用當下的 database 變數：切換資料庫後要寫到新的連線
@@ -310,9 +311,27 @@ async function shutdownDataLayer() {
 async function recreateDatabase() {
   await shutdownDataLayer();
   database = await DatabaseFactory.create();
-  videoScanner = new VideoScanner(database);
+  videoScanner = createVideoScanner(database);
   // 新的 scanner 沒有任何監看，重新同步監看資料夾
   syncWatchedFolders();
+}
+
+// 掃描器：新增或變動的影片寫入後套用自動標籤規則
+function createVideoScanner(db) {
+  const scanner = new VideoScanner(db);
+  scanner.onVideosSaved = (filepaths) => applyAutoTagRulesTo(db, filepaths);
+  return scanner;
+}
+
+// 對指定檔案套用已啟用的自動標籤規則，回傳加上的標籤數
+async function applyAutoTagRulesTo(db, filepaths) {
+  const rules = (await config.getAutoTagRules()).filter(rule => rule.enabled);
+  if (rules.length === 0) return 0;
+  const wanted = new Set(filepaths);
+  const refs = (await db.getAllVideoRefs()).filter(ref => wanted.has(ref.filepath));
+  const { added } = await AutoTagRules.applyRules(db, rules, refs);
+  if (added > 0) broadcastTagsChanged();
+  return added;
 }
 
 // 背景同步監看中的資料夾（啟動時、資料層重建後），進度顯示在主視窗右下角
@@ -1405,6 +1424,48 @@ ipcMain.handle('get-recent-scan-paths', async () => {
 });
 
 // 移除單一掃描路徑
+// 自動標籤規則（存在 config.json）
+ipcMain.handle('get-auto-tag-rules', async () => {
+  return { success: true, rules: await config.getAutoTagRules() };
+});
+
+ipcMain.handle('save-auto-tag-rules', async (event, rules) => {
+  try {
+    return { success: true, rules: await config.saveAutoTagRules(rules) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 預覽：每條規則在目前資料庫中會符合幾部影片（不寫入）
+ipcMain.handle('preview-auto-tag-rules', async (event, rules) => {
+  try {
+    const refs = await database.getAllVideoRefs();
+    return { success: true, total: refs.length, results: AutoTagRules.previewRules(rules, refs) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 對全部影片套用已啟用的規則
+ipcMain.handle('apply-auto-tag-rules', async () => {
+  try {
+    const rules = (await config.getAutoTagRules()).filter(rule => rule.enabled);
+    const refs = await database.getAllVideoRefs();
+    const result = await AutoTagRules.applyRules(database, rules, refs);
+    if (result.added > 0) {
+      broadcastTagsChanged();
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) win.webContents.send('videos-changed');
+      });
+    }
+    return { success: true, ...result };
+  } catch (error) {
+    console.error('套用自動標籤規則錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // 儲存的搜尋（存在 config.json，與資料庫後端無關）
 ipcMain.handle('get-saved-searches', async () => {
   return { success: true, searches: await config.getSavedSearches() };

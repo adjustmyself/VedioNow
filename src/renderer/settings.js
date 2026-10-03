@@ -1,4 +1,5 @@
 const { ipcRenderer } = require('electron');
+const { escapeHtml } = require('./shared/util');
 
 class SettingsManager {
     constructor() {
@@ -70,6 +71,31 @@ class SettingsManager {
         // 資料維護：清理孤兒標籤關聯
         document.getElementById('cleanup-orphan-relations-btn').addEventListener('click', () => {
             this.cleanupOrphanRelations();
+        });
+
+        // 自動標籤規則
+        document.getElementById('auto-tag-add-btn').addEventListener('click', () => this.addAutoTagRule());
+        document.getElementById('auto-tag-pattern').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this.addAutoTagRule();
+        });
+        document.getElementById('auto-tag-tags').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this.addAutoTagRule();
+        });
+        document.getElementById('auto-tag-preview-btn').addEventListener('click', () => this.previewAutoTagRules());
+        document.getElementById('auto-tag-apply-btn').addEventListener('click', () => this.applyAutoTagRules());
+        document.getElementById('auto-tag-rule-list').addEventListener('change', (e) => {
+            const toggle = e.target.closest('.auto-tag-toggle');
+            if (!toggle) return;
+            const rule = this.autoTagRules.find(r => r.id === toggle.dataset.id);
+            if (rule) this.saveAutoTagRules(this.autoTagRules.map(r => (r === rule ? { ...r, enabled: toggle.checked } : r)));
+        });
+        document.getElementById('auto-tag-rule-list').addEventListener('click', (e) => {
+            const del = e.target.closest('.auto-tag-delete');
+            if (!del) return;
+            const rule = this.autoTagRules.find(r => r.id === del.dataset.id);
+            if (rule && confirm(`刪除規則「${rule.pattern}」？\n已經加上的標籤不會被移除。`)) {
+                this.saveAutoTagRules(this.autoTagRules.filter(r => r !== rule));
+            }
         });
 
         // 備份與還原
@@ -144,6 +170,7 @@ class SettingsManager {
 
         this.currentSection = section;
         if (section === 'backup') this.loadBackupInfo();
+        if (section === 'autotag') this.loadAutoTagRules();
     }
 
     switchTab(tab) {
@@ -469,6 +496,132 @@ class SettingsManager {
                 statusEl.className = 'cleanup-status';
                 statusEl.textContent = '';
             }, 8000);
+        }
+    }
+
+    // ========== 自動標籤規則 ==========
+
+    async loadAutoTagRules() {
+        const result = await ipcRenderer.invoke('get-auto-tag-rules');
+        this.autoTagRules = result.success ? result.rules : [];
+        this.autoTagPreview = null;
+        this.renderAutoTagRules();
+
+        // 標籤輸入框的自動完成
+        try {
+            const groups = await ipcRenderer.invoke('get-tags-by-group');
+            const names = [...new Set((groups || []).flatMap(g => (g.tags || []).map(t => t.name)))];
+            document.getElementById('auto-tag-tag-options').innerHTML =
+                names.map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
+        } catch (error) {
+            console.warn('載入標籤清單失敗:', error);
+        }
+    }
+
+    renderAutoTagRules() {
+        const list = document.getElementById('auto-tag-rule-list');
+        if (this.autoTagRules.length === 0) {
+            list.innerHTML = '<p class="field-description">還沒有規則，請在下方新增。</p>';
+            return;
+        }
+        const preview = new Map((this.autoTagPreview || []).map(p => [p.id, p]));
+        list.innerHTML = this.autoTagRules.map(rule => {
+            const field = rule.field === 'path' ? '完整路徑' : '檔名';
+            const how = rule.type === 'regex' ? '符合正規表示式' : '包含';
+            const p = preview.get(rule.id);
+            const count = p ? (p.error ? `<span class="auto-tag-error">${escapeHtml(p.error)}</span>` : `符合 ${p.matched} 部`) : '';
+            return `
+            <div class="auto-tag-rule ${rule.enabled ? '' : 'disabled'}">
+                <input type="checkbox" class="auto-tag-toggle" data-id="${escapeHtml(rule.id)}" ${rule.enabled ? 'checked' : ''} title="啟用 / 停用">
+                <div class="auto-tag-rule-text">
+                    <span>${field}${how}</span>
+                    <code>${escapeHtml(rule.pattern)}</code>
+                    <span class="auto-tag-arrow">→</span>
+                    ${rule.tags.map(tag => `<span class="auto-tag-chip">${escapeHtml(tag)}</span>`).join('')}
+                </div>
+                <span class="auto-tag-count">${count}</span>
+                <button type="button" class="auto-tag-delete btn btn-secondary btn-small" data-id="${escapeHtml(rule.id)}">刪除</button>
+            </div>`;
+        }).join('');
+    }
+
+    // 整份清單存回設定檔；成功後以存回的版本（已正規化）為準
+    async saveAutoTagRules(rules) {
+        const result = await ipcRenderer.invoke('save-auto-tag-rules', rules);
+        if (!result.success) {
+            alert(`儲存規則失敗：${result.error}`);
+            return false;
+        }
+        this.autoTagRules = result.rules;
+        this.autoTagPreview = null;
+        this.renderAutoTagRules();
+        return true;
+    }
+
+    async addAutoTagRule() {
+        const statusEl = document.getElementById('auto-tag-add-status');
+        const patternInput = document.getElementById('auto-tag-pattern');
+        const tagsInput = document.getElementById('auto-tag-tags');
+        const rule = {
+            field: document.getElementById('auto-tag-field').value,
+            type: document.getElementById('auto-tag-type').value,
+            pattern: patternInput.value.trim(),
+            tags: tagsInput.value.split(/[,，]/).map(t => t.trim()).filter(Boolean),
+            enabled: true
+        };
+        if (!rule.pattern || rule.tags.length === 0) {
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = !rule.pattern ? '請輸入要比對的內容' : '請至少輸入一個標籤';
+            return;
+        }
+        if (await this.saveAutoTagRules([...this.autoTagRules, rule])) {
+            patternInput.value = '';
+            tagsInput.value = '';
+            statusEl.className = 'cleanup-status success';
+            statusEl.textContent = '已新增規則';
+            setTimeout(() => { statusEl.className = 'cleanup-status'; statusEl.textContent = ''; }, 3000);
+        }
+    }
+
+    async previewAutoTagRules() {
+        const statusEl = document.getElementById('auto-tag-status');
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在計算...';
+        const result = await ipcRenderer.invoke('preview-auto-tag-rules', this.autoTagRules);
+        if (!result.success) {
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '預覽失敗: ' + result.error;
+            return;
+        }
+        this.autoTagPreview = result.results;
+        this.renderAutoTagRules();
+        statusEl.className = 'cleanup-status success';
+        statusEl.textContent = `共 ${result.total} 部影片`;
+    }
+
+    async applyAutoTagRules() {
+        const enabled = this.autoTagRules.filter(r => r.enabled).length;
+        if (enabled === 0) {
+            alert('沒有啟用中的規則');
+            return;
+        }
+        if (!confirm(`對資料庫中的全部影片套用 ${enabled} 條啟用中的規則？\n只會加上標籤，不會移除任何標籤。`)) return;
+
+        const statusEl = document.getElementById('auto-tag-status');
+        const btn = document.getElementById('auto-tag-apply-btn');
+        btn.disabled = true;
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在套用...';
+        try {
+            const result = await ipcRenderer.invoke('apply-auto-tag-rules');
+            if (!result.success) throw new Error(result.error);
+            statusEl.className = 'cleanup-status success';
+            statusEl.textContent = `完成：${result.matchedVideos} 部影片符合，新加上 ${result.added} 個標籤`;
+        } catch (error) {
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '套用失敗: ' + error.message;
+        } finally {
+            btn.disabled = false;
         }
     }
 

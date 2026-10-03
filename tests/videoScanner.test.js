@@ -144,6 +144,30 @@ describe('VideoScanner', () => {
     expect(progressCallback.mock.calls.length).toBeLessThan(20);
   });
 
+  test('新增或變動的影片寫入後呼叫 onVideosSaved，未變更的不呼叫', async () => {
+    writeFile('a.mp4', 'a');
+    writeFile('b.mp4', 'b');
+    const saved = [];
+    scanner.onVideosSaved = async (filepaths) => { saved.push(...filepaths); return filepaths.length; };
+
+    const first = await scanner.scanFolder(root);
+    expect(saved.map(p => path.basename(p)).sort()).toEqual(['a.mp4', 'b.mp4']);
+    expect(first.autoTagged).toBe(2);
+
+    saved.length = 0;
+    const again = await scanner.scanFolder(root);
+    expect(saved).toEqual([]);
+    expect(again.autoTagged).toBe(0);
+  });
+
+  test('onVideosSaved 出錯不影響掃描結果', async () => {
+    writeFile('a.mp4', 'a');
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    scanner.onVideosSaved = async () => { throw new Error('boom'); };
+    const result = await scanner.scanFolder(root);
+    expect(result).toMatchObject({ added: 1, autoTagged: 0 });
+  });
+
   describe('同步監看資料夾', () => {
     afterEach(() => scanner.stopAllWatching());
 

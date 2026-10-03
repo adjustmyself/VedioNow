@@ -58,6 +58,9 @@ class ScanModalMethods {
         if (options.cleanupMissing && stats.cleaned > 0) {
           message += `, 清理: ${stats.cleaned}`;
         }
+        if (stats.autoTagged > 0) {
+          message += `, 自動標籤: ${stats.autoTagged}`;
+        }
         this.elements.scanStatus.textContent = message;
         if (options.watchChanges) this.loadWatchedFolders();
 

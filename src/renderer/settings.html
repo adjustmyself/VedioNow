@@ -37,6 +37,10 @@
                         <span class="menu-icon">🧹</span>
                         資料維護
                     </button>
+                    <button class="menu-item" data-section="autotag">
+                        <span class="menu-icon">🏷️</span>
+                        自動標籤
+                    </button>
                     <button class="menu-item" data-section="backup">
                         <span class="menu-icon">💾</span>
                         備份與還原
@@ -231,6 +235,57 @@
                             <label for="app-page-size">單頁顯示數量:</label>
                             <input type="number" id="app-page-size" min="1" max="200" step="1">
                             <p class="field-description">每一頁要顯示幾部影片（1～200，預設 9）。儲存後即時生效，不需重啟。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 自動標籤區域 -->
+                <div id="autotag-section" class="settings-section">
+                    <div class="section-header">
+                        <h2>自動標籤</h2>
+                        <p class="section-description">檔名或路徑符合規則時自動加上標籤。新掃描到（或有變動）的影片會自動套用已啟用的規則；已經在資料庫裡的影片可以按「套用到全部影片」。</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>規則</h3>
+                        <div id="auto-tag-rule-list" class="auto-tag-rule-list"></div>
+                        <div class="cleanup-actions">
+                            <button id="auto-tag-preview-btn" class="btn btn-secondary">預覽符合數量</button>
+                            <button id="auto-tag-apply-btn" class="btn btn-primary">套用到全部影片</button>
+                            <div id="auto-tag-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>新增規則</h3>
+                        <div class="auto-tag-form">
+                            <div class="form-group">
+                                <label for="auto-tag-field">比對</label>
+                                <select id="auto-tag-field">
+                                    <option value="filename">檔名</option>
+                                    <option value="path">完整路徑（含資料夾名稱）</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="auto-tag-type">方式</label>
+                                <select id="auto-tag-type">
+                                    <option value="keyword">包含關鍵字（不分大小寫）</option>
+                                    <option value="regex">正規表示式（不分大小寫）</option>
+                                </select>
+                            </div>
+                            <div class="form-group auto-tag-form-wide">
+                                <label for="auto-tag-pattern">內容</label>
+                                <input type="text" id="auto-tag-pattern" placeholder="例：1080p、\動畫\、S\d{2}E\d{2}">
+                            </div>
+                            <div class="form-group auto-tag-form-wide">
+                                <label for="auto-tag-tags">加上標籤（多個用逗號分隔，不存在的標籤會建立在未分類）</label>
+                                <input type="text" id="auto-tag-tags" list="auto-tag-tag-options" placeholder="例：高畫質, 影集">
+                                <datalist id="auto-tag-tag-options"></datalist>
+                            </div>
+                        </div>
+                        <div class="cleanup-actions">
+                            <button id="auto-tag-add-btn" class="btn btn-primary">新增規則</button>
+                            <div id="auto-tag-add-status" class="cleanup-status"></div>
                         </div>
                     </div>
                 </div>
