@@ -604,6 +604,65 @@ class SQLiteDatabase {
         this._stmt('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?').run(fingerprint, tagName);
     }
 
+    // ========== 批次操作（批次多選、自動標籤規則）：不存在的指紋直接略過，回傳實際變動筆數 ==========
+
+    async addTagToVideos(fingerprints, tagName) {
+        const exists = this._stmt('SELECT 1 FROM videos WHERE fingerprint = ?');
+        const insert = this._stmt('INSERT OR IGNORE INTO video_tags (fingerprint, tag_name, created_at) VALUES (?, ?, ?)');
+        const now = this._now();
+        let changed = 0;
+        this.db.transaction(() => {
+            for (const fingerprint of new Set(fingerprints)) {
+                if (!fingerprint || !exists.get(fingerprint)) continue;
+                changed += insert.run(fingerprint, tagName, now).changes;
+            }
+        })();
+        return changed;
+    }
+
+    async removeTagFromVideos(fingerprints, tagName) {
+        const del = this._stmt('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?');
+        let changed = 0;
+        this.db.transaction(() => {
+            for (const fingerprint of new Set(fingerprints)) {
+                if (fingerprint) changed += del.run(fingerprint, tagName).changes;
+            }
+        })();
+        return changed;
+    }
+
+    async setVideosRating(fingerprints, rating) {
+        const update = this._stmt('UPDATE videos SET rating = ?, updated_at = ? WHERE fingerprint = ?');
+        const now = this._now();
+        let changed = 0;
+        this.db.transaction(() => {
+            for (const fingerprint of new Set(fingerprints)) {
+                if (fingerprint) changed += update.run(rating, now, fingerprint).changes;
+            }
+        })();
+        return changed;
+    }
+
+    // 目前篩選條件下的全部影片（不分頁），只帶批次操作需要的欄位
+    async getMatchingVideoRefs(searchTerm, tags = [], filters = {}) {
+        const { whereSql, params } = this._buildFilterClauses(searchTerm, tags, filters);
+        const rows = this._stmt(`
+            SELECT v.id, v.fingerprint, v.filepath, v.filename, (
+                SELECT json_group_array(tag_name) FROM video_tags vt WHERE vt.fingerprint = v.fingerprint
+            ) AS tags_json
+            FROM videos v
+            WHERE ${whereSql}
+            ORDER BY ${this._buildOrderBy(filters)}
+        `).all(...params);
+        return rows.map(row => ({
+            id: String(row.id),
+            fingerprint: row.fingerprint || null,
+            filepath: row.filepath,
+            filename: row.filename,
+            tags: this._mapVideo(row).tags
+        }));
+    }
+
     async deleteVideoMetadata(fingerprint) {
         this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
         this._stmt('UPDATE videos SET rating = 0, description = \'\', updated_at = ? WHERE fingerprint = ?')

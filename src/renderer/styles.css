@@ -2044,6 +2044,168 @@ select {
     color: #888;
 }
 
+/* ========== 批次多選 ========== */
+.card-select-box {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 11; /* 高於滑過時的描述遮罩（10） */
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.35);
+    color: transparent;
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.video-card:hover .card-select-box,
+.video-list-item:hover .card-select-box,
+.selecting .card-select-box,
+.card-select-box:focus-visible {
+    opacity: 1;
+}
+
+.selected .card-select-box {
+    background: #4f6ef7;
+    border-color: #fff;
+    color: #fff;
+}
+
+.video-card.selected,
+.video-list-item.selected {
+    outline: 3px solid #4f6ef7;
+    outline-offset: -3px;
+}
+
+/* 列表檢視：勾選框放在項目最左側、佔固定寬度，各列對齊 */
+.video-list-item .card-select-box {
+    position: static;
+    flex-shrink: 0;
+    margin-right: 0.75rem;
+    border-color: #b8bcc8;
+    background: transparent;
+}
+
+.video-list-item.selected .card-select-box {
+    background: #4f6ef7;
+    border-color: #4f6ef7;
+}
+
+.batch-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+    padding: 0.55rem 2rem;
+    background: #2b3040;
+    color: #fff;
+    font-size: 0.85rem;
+}
+
+.batch-count {
+    font-weight: 600;
+    margin-right: 0.25rem;
+    white-space: nowrap;
+}
+
+.batch-btn,
+.batch-star {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.batch-btn:hover,
+.batch-star:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.batch-btn-subtle {
+    border-color: transparent;
+    background: transparent;
+    color: #c8ccd6;
+}
+
+.batch-btn-danger {
+    border-color: rgba(231, 76, 60, 0.7);
+    color: #ff9b8f;
+}
+
+.batch-rating {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+}
+
+.batch-star {
+    padding: 0.3rem 0.35rem;
+    border-color: transparent;
+    background: transparent;
+    color: #f5c518;
+}
+
+/* 滑到某顆星時，它和左邊的星一起亮起，表示要評的星數 */
+.batch-rating:hover .batch-star {
+    color: #f5c518;
+}
+
+.batch-rating .batch-star:hover ~ .batch-star {
+    color: rgba(255, 255, 255, 0.35);
+}
+
+.batch-sep {
+    width: 1px;
+    height: 18px;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.batch-status {
+    color: #9fe3b0;
+    font-size: 0.8rem;
+}
+
+.batch-status:empty {
+    display: none;
+}
+
+.batch-tag-search {
+    width: 100%;
+    margin-bottom: 1rem;
+}
+
+.batch-tag-list .tag-group-selector {
+    margin-bottom: 0.75rem;
+}
+
+.batch-new-tag {
+    margin-bottom: 0.75rem;
+}
+
+.batch-tag-count {
+    margin-left: 0.35rem;
+    font-size: 0.7rem;
+    opacity: 0.75;
+}
+
+.batch-tag-empty {
+    color: #999;
+    text-align: center;
+    padding: 1rem;
+}
+
 /* 背景同步監看資料夾：右下角的狀態提示 */
 .background-scan-status {
     position: fixed;

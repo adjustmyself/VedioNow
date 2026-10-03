@@ -425,6 +425,50 @@ ipcMain.handle('remove-video-tag', async (event, fingerprint, tagName) => {
   }
 });
 
+// ========== 批次操作（主視窗多選） ==========
+const isStringArray = (value) => Array.isArray(value) && value.every(v => typeof v === 'string' && v);
+
+async function batchHandler(task) {
+  try {
+    return { success: true, changed: await task() };
+  } catch (error) {
+    console.error('批次操作錯誤:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+ipcMain.handle('batch-add-tag', (event, fingerprints, tagName) => batchHandler(() => {
+  if (!isStringArray(fingerprints) || typeof tagName !== 'string' || !tagName.trim()) throw new Error('參數錯誤');
+  return database.addTagToVideos(fingerprints, tagName.trim());
+}));
+
+ipcMain.handle('batch-remove-tag', (event, fingerprints, tagName) => batchHandler(() => {
+  if (!isStringArray(fingerprints) || typeof tagName !== 'string' || !tagName) throw new Error('參數錯誤');
+  return database.removeTagFromVideos(fingerprints, tagName);
+}));
+
+ipcMain.handle('batch-set-rating', (event, fingerprints, rating) => batchHandler(() => {
+  if (!isStringArray(fingerprints) || !Number.isInteger(rating) || rating < 0 || rating > 5) throw new Error('參數錯誤');
+  return database.setVideosRating(fingerprints, rating);
+}));
+
+// 只刪資料庫記錄、不刪檔案（與單筆「刪除記錄」相同：標籤關聯保留，重新掃描回來時標籤還在）
+ipcMain.handle('batch-delete-records', (event, ids) => batchHandler(async () => {
+  if (!isStringArray(ids)) throw new Error('參數錯誤');
+  await database.deleteVideosByIds(ids);
+  return ids.length;
+}));
+
+// 「選取全部符合條件的影片」：不分頁取回目前搜尋 / 篩選結果
+ipcMain.handle('get-matching-video-refs', async (event, searchTerm, tags = [], filters = {}) => {
+  try {
+    return { success: true, refs: await database.getMatchingVideoRefs(searchTerm, tags, filters) };
+  } catch (error) {
+    console.error('取得符合條件影片錯誤:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('set-video-metadata', async (event, fingerprint, metadata) => {
   try {
     await database.setVideoMetadata(fingerprint, metadata);

@@ -251,6 +251,7 @@ class VideoManager {
     });
 
     this.setupTagTooltip();
+    this.initBatchSelection();
   }
 
   async loadData() {
@@ -529,6 +530,7 @@ class VideoManager {
     ).join('');
 
     this.bindVideoEvents();
+    this.applySelectionState();
     // 查詢本頁縮圖快取；尚未產生的由 IntersectionObserver 在卡片進入畫面時才產生
     this.loadAllThumbnails();
   }
@@ -616,6 +618,7 @@ class VideoManager {
           </div>
           ${f.duplicateBadge ? `<div class="thumbnail-duplicate-badge">${f.duplicateBadge}</div>` : ''}
           ${f.duration ? `<div class="thumbnail-duration">${f.duration}</div>` : ''}
+          <button class="card-select-box" type="button" aria-label="選取" aria-pressed="false" title="選取（Ctrl+點選 / Shift+點選範圍）">✓</button>
           ${f.description ? `<div class="thumbnail-description">${f.description}</div>` : ''}
         </div>
         <div class="video-card-content">
@@ -634,6 +637,7 @@ class VideoManager {
     const f = this._buildVideoFields(video);
     return `
       <div class="video-list-item" data-video-id="${f.videoId}">
+        <button class="card-select-box" type="button" aria-label="選取" aria-pressed="false" title="選取（Ctrl+點選 / Shift+點選範圍）">✓</button>
         <div class="video-list-thumbnail" data-filepath="${f.filepath}" data-fingerprint="${f.fingerprint}">
           <div class="thumbnail-fallback-small">
             <span>🎬</span>
@@ -657,6 +661,10 @@ class VideoManager {
     if (this.videoEventsBound) return;
 
     this.elements.videosContainer.addEventListener('click', async (e) => {
+      // 多選：Ctrl / Shift 點選、勾選框，或已在多選狀態下點卡片 → 切換選取，不開詳情
+      const clickedCard = e.target.closest('[data-video-id]');
+      if (clickedCard && this.handleSelectionClick(e, clickedCard)) return;
+
       // 點卡片上的標籤：切換該標籤篩選，不開詳情
       const tagEl = e.target.closest('.video-tags .tag[data-tag]');
       if (tagEl) {
@@ -758,7 +766,8 @@ for (const Methods of [
   require('./modules/videoModal'),
   require('./modules/scanModal'),
   require('./modules/pagination'),
-  require('./modules/collections')
+  require('./modules/collections'),
+  require('./modules/batchSelection')
 ]) {
   for (const name of Object.getOwnPropertyNames(Methods.prototype)) {
     if (name === 'constructor') continue;

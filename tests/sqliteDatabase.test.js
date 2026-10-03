@@ -494,6 +494,53 @@ describe('SQLiteDatabase', () => {
     });
   });
 
+  describe('批次操作', () => {
+    beforeEach(async () => {
+      await addVideo({ fingerprint: 'a', filename: 'a.mp4', filepath: 'C:\\v\\a.mp4', file_created_at: new Date('2026-01-03') });
+      await addVideo({ fingerprint: 'b', filename: 'b.mp4', filepath: 'C:\\v\\b.mp4', file_created_at: new Date('2026-01-02') });
+      await addVideo({ fingerprint: 'c', filename: 'other.mp4', filepath: 'C:\\v\\other.mp4', file_created_at: new Date('2026-01-01') });
+    });
+
+    const tagsOf = async () => Object.fromEntries(
+      (await db.getVideos({})).videos.map(v => [v.fingerprint, [...v.tags].sort()])
+    );
+
+    test('批次加標籤：已有的不重複計算，不存在的指紋略過', async () => {
+      await db.addVideoTag('a', '動作');
+      expect(await db.addTagToVideos(['a', 'b', 'b', 'nope'], '動作')).toBe(1);
+      expect(await tagsOf()).toEqual({ a: ['動作'], b: ['動作'], c: [] });
+    });
+
+    test('批次移除標籤只動到有這個標籤的影片', async () => {
+      await db.addTagToVideos(['a', 'b'], '動作');
+      await db.addVideoTag('a', '喜劇');
+      expect(await db.removeTagFromVideos(['a', 'b', 'c'], '動作')).toBe(2);
+      expect(await tagsOf()).toEqual({ a: ['喜劇'], b: [], c: [] });
+    });
+
+    test('批次評分只改評分，不動描述', async () => {
+      await db.setVideoMetadata('a', { rating: 2, description: '保留我' });
+      expect(await db.setVideosRating(['a', 'b'], 5)).toBe(2);
+      const byFp = Object.fromEntries((await db.getVideos({})).videos.map(v => [v.fingerprint, v]));
+      expect(byFp.a).toMatchObject({ rating: 5, description: '保留我' });
+      expect(byFp.b.rating).toBe(5);
+      expect(byFp.c.rating).toBe(0);
+    });
+
+    test('getMatchingVideoRefs 不分頁、套用搜尋與排序、帶標籤', async () => {
+      await db.addVideoTag('b', '動作');
+      const all = await db.getMatchingVideoRefs('', [], { limit: 1, sortBy: 'file_created_at', sortOrder: 'asc' });
+      expect(all.map(r => r.fingerprint)).toEqual(['c', 'b', 'a']);
+      expect(all.find(r => r.fingerprint === 'b')).toMatchObject({ filename: 'b.mp4', tags: ['動作'] });
+      expect(typeof all[0].id).toBe('string');
+
+      const searched = await db.getMatchingVideoRefs('other', [], {});
+      expect(searched.map(r => r.fingerprint)).toEqual(['c']);
+      const tagged = await db.getMatchingVideoRefs('', ['動作'], {});
+      expect(tagged.map(r => r.fingerprint)).toEqual(['b']);
+    });
+  });
+
   describe('影片長度', () => {
     const filepath = '\\\\nas\\drive1\\folder\\movie.mp4';
 

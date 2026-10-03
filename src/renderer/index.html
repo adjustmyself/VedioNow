@@ -110,6 +110,27 @@
                     </div>
                 </div>
 
+                <!-- 批次多選操作列：放在版面內（工具列下方），不蓋住底部分頁 -->
+                <div id="batch-bar" class="batch-bar hidden" role="toolbar" aria-label="批次操作">
+                    <span id="batch-count" class="batch-count"></span>
+                    <button type="button" class="batch-btn" data-batch="select-page">全選本頁</button>
+                    <button type="button" class="batch-btn" data-batch="select-all"></button>
+                    <span class="batch-sep"></span>
+                    <button type="button" class="batch-btn" data-batch="add-tag">＋ 加標籤</button>
+                    <button type="button" class="batch-btn" data-batch="remove-tag">－ 移除標籤</button>
+                    <span class="batch-rating" aria-label="評分">
+                        <button type="button" class="batch-star" data-batch-rating="1" title="評為 1 星">★</button>
+                        <button type="button" class="batch-star" data-batch-rating="2" title="評為 2 星">★</button>
+                        <button type="button" class="batch-star" data-batch-rating="3" title="評為 3 星">★</button>
+                        <button type="button" class="batch-star" data-batch-rating="4" title="評為 4 星">★</button>
+                        <button type="button" class="batch-star" data-batch-rating="5" title="評為 5 星">★</button>
+                        <button type="button" class="batch-btn batch-btn-subtle" data-batch-rating="0" title="清除評分">清除評分</button>
+                    </span>
+                    <button type="button" class="batch-btn batch-btn-danger" data-batch="delete">刪除記錄</button>
+                    <button type="button" class="batch-btn batch-btn-subtle" data-batch="clear" title="Esc">取消選取</button>
+                    <span id="batch-status" class="batch-status" role="status" aria-live="polite"></span>
+                </div>
+
                 <div id="videos-container" class="videos-grid">
                     <!-- 影片會動態加載到這裡 -->
                 </div>
@@ -367,6 +388,24 @@
             <div class="modal-footer">
                 <button id="start-scan" class="btn btn-primary">開始掃描</button>
                 <button id="cancel-scan" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批次加 / 移除標籤 -->
+    <div id="batch-tag-modal" class="modal hidden">
+        <div class="modal-content batch-tag-content">
+            <div class="modal-header">
+                <h2 id="batch-tag-title"></h2>
+                <button id="batch-tag-close" class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="batch-tag-search" class="form-input batch-tag-search" autocomplete="off">
+                <div id="batch-tag-list" class="batch-tag-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="batch-tag-apply" class="btn btn-primary" disabled>套用</button>
+                <button id="batch-tag-cancel" class="btn btn-secondary">取消</button>
             </div>
         </div>
     </div>

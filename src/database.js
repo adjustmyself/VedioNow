@@ -55,6 +55,24 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 removeVideoTag 方法');
     }
 
+    // 批次操作：不存在的指紋略過，回傳實際變動筆數
+    async addTagToVideos(fingerprints, tagName) {
+        throw new Error('子類別必須實作 addTagToVideos 方法');
+    }
+
+    async removeTagFromVideos(fingerprints, tagName) {
+        throw new Error('子類別必須實作 removeTagFromVideos 方法');
+    }
+
+    async setVideosRating(fingerprints, rating) {
+        throw new Error('子類別必須實作 setVideosRating 方法');
+    }
+
+    // 目前篩選條件下的全部影片（不分頁）：[{ id, fingerprint, filepath, filename, tags }]
+    async getMatchingVideoRefs(searchTerm, tags = [], filters = {}) {
+        throw new Error('子類別必須實作 getMatchingVideoRefs 方法');
+    }
+
     async deleteVideoMetadata(fingerprint) {
         throw new Error('子類別必須實作 deleteVideoMetadata 方法');
     }
@@ -791,6 +809,63 @@ class MongoDatabase extends DatabaseInterface {
         );
         // 沒有標籤了就刪除記錄
         await this.db.collection('video_tag_relations').deleteOne({ fingerprint, tags: { $size: 0 } });
+    }
+
+    // ========== 批次操作（批次多選、自動標籤規則） ==========
+
+    async addTagToVideos(fingerprints, tagName) {
+        const unique = [...new Set(fingerprints.filter(Boolean))];
+        const existing = await this.db.collection('videos').distinct('fingerprint', { fingerprint: { $in: unique } });
+        if (existing.length === 0) return 0;
+        const alreadyTagged = await this.db.collection('video_tag_relations')
+            .countDocuments({ fingerprint: { $in: existing }, tags: tagName });
+        const now = new Date();
+        await this.db.collection('video_tag_relations').bulkWrite(existing.map(fingerprint => ({
+            updateOne: {
+                filter: { fingerprint },
+                update: { $addToSet: { tags: tagName }, $set: { updated_at: now }, $setOnInsert: { created_at: now } },
+                upsert: true
+            }
+        })));
+        return existing.length - alreadyTagged;
+    }
+
+    async removeTagFromVideos(fingerprints, tagName) {
+        const unique = [...new Set(fingerprints.filter(Boolean))];
+        const relations = this.db.collection('video_tag_relations');
+        const result = await relations.updateMany(
+            { fingerprint: { $in: unique }, tags: tagName },
+            { $pull: { tags: tagName }, $set: { updated_at: new Date() } }
+        );
+        await relations.deleteMany({ fingerprint: { $in: unique }, tags: { $size: 0 } });
+        return result.modifiedCount;
+    }
+
+    async setVideosRating(fingerprints, rating) {
+        const unique = [...new Set(fingerprints.filter(Boolean))];
+        const result = await this.db.collection('videos').updateMany(
+            { fingerprint: { $in: unique } },
+            { $set: { rating, updated_at: new Date() } }
+        );
+        return result.matchedCount;
+    }
+
+    async getMatchingVideoRefs(searchTerm, tags = [], filters = {}) {
+        const match = await this._buildMatch(searchTerm, tags, filters);
+        const options = filters.sortBy === 'filename' ? { collation: { locale: 'en', strength: 2 } } : {};
+        const docs = await this.db.collection('videos').aggregate([
+            { $match: match },
+            { $sort: this._buildSort(filters) },
+            ...this._tagJoinStages(),
+            { $project: { fingerprint: 1, filepath: 1, filename: 1, tags: 1 } }
+        ], options).toArray();
+        return docs.map(d => ({
+            id: d._id.toString(),
+            fingerprint: d.fingerprint || null,
+            filepath: d.filepath,
+            filename: d.filename,
+            tags: d.tags || []
+        }));
     }
 
     async _assertVideoExists(fingerprint) {
