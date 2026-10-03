@@ -265,6 +265,9 @@ app.whenReady().then(async () => {
     setSplashStatus('載入影片清單…', 82);
     createWindow();
 
+    // 監看中的資料夾：等首頁載入完再在背景增量掃描並恢復監看
+    setTimeout(syncWatchedFolders, 5000);
+
     // 每日自動備份：延後到首頁載入完之後，不和啟動時的查詢搶資源
     setTimeout(() => {
       getBackupManager().autoBackup(database)
@@ -290,7 +293,7 @@ app.whenReady().then(async () => {
 // 舊 watcher 若不停，會繼續把檔案事件寫進已關閉的資料庫連線
 async function shutdownDataLayer() {
   if (videoScanner) {
-    videoScanner.stopAllWatching();
+    videoScanner.dispose();
     videoScanner = null;
   }
   if (database) {
@@ -308,6 +311,35 @@ async function recreateDatabase() {
   await shutdownDataLayer();
   database = await DatabaseFactory.create();
   videoScanner = new VideoScanner(database);
+  // 新的 scanner 沒有任何監看，重新同步監看資料夾
+  syncWatchedFolders();
+}
+
+// 背景同步監看中的資料夾（啟動時、資料層重建後），進度顯示在主視窗右下角
+let syncingScanner = null;
+async function syncWatchedFolders() {
+  const scanner = videoScanner;
+  if (!scanner || !config || syncingScanner === scanner) return;
+  try {
+    const folders = await config.getWatchedFolders();
+    if (folders.length === 0) return;
+    syncingScanner = scanner;
+    const sendStatus = (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('background-scan-status', status);
+      }
+    };
+    const summary = await scanner.syncWatchedFolders(folders, sendStatus);
+    if (summary.added + summary.updated > 0 && scanner === videoScanner) {
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) win.webContents.send('videos-changed');
+      });
+    }
+  } catch (error) {
+    console.warn('同步監看資料夾失敗:', error);
+  } finally {
+    if (syncingScanner === scanner) syncingScanner = null;
+  }
 }
 
 let isQuitting = false;
@@ -348,9 +380,12 @@ ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
       progressCallback
     });
 
-    // 掃描成功後，將路徑保存到最近掃描記錄
+    // 掃描成功後，將路徑保存到最近掃描記錄；勾選監看的資料夾記下來，之後每次啟動自動同步
     if (result) {
       await config.addRecentScanPath(folderPath);
+      if (options.watchChanges) {
+        await config.addWatchedFolder(folderPath, options.recursive !== false);
+      }
     }
 
     return { success: true, result };
@@ -1327,6 +1362,24 @@ ipcMain.handle('get-recent-scan-paths', async () => {
 });
 
 // 移除單一掃描路徑
+ipcMain.handle('get-watched-folders', async () => {
+  return { success: true, folders: await config.getWatchedFolders() };
+});
+
+// 停止監看：從設定移除並關閉 watcher（影片記錄保留）
+ipcMain.handle('remove-watched-folder', async (event, folderPath) => {
+  try {
+    const removed = await config.removeWatchedFolder(folderPath);
+    if (videoScanner) {
+      videoScanner.stopWatching(folderPath);
+      if (removed) videoScanner.stopWatching(removed.path);
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('remove-recent-scan-path', async (event, folderPath) => {
   try {
     const success = await config.removeRecentScanPath(folderPath);

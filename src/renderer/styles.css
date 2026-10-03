@@ -2026,6 +2026,48 @@ select {
     display: block;
 }
 
+#watched-folders-group {
+    display: none;
+}
+
+#watched-folders-group.has-paths {
+    display: block;
+}
+
+.watched-folder-item {
+    cursor: default;
+}
+
+.watched-folder-mode {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: #888;
+}
+
+/* 背景同步監看資料夾：右下角的狀態提示 */
+.background-scan-status {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 900;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 0.5rem 0.85rem;
+    border-radius: 8px;
+    background: rgba(30, 32, 40, 0.88);
+    color: #fff;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.background-scan-status.hidden {
+    display: none;
+}
+
 /* 標籤 hover 自訂提示框（說明文字＋說明圖片） */
 .tag-tooltip {
     position: fixed;

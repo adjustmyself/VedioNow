@@ -29,7 +29,8 @@ class Config {
         pageSize: 9
       },
       scan: {
-        recentPaths: [] // 已記憶的掃描路徑（永久保留，除非手動刪除）
+        recentPaths: [], // 已記憶的掃描路徑（永久保留，除非手動刪除）
+        watchedFolders: [] // 監看中的資料夾 [{ path, recursive }]：每次啟動自動增量掃描並恢復監看
       }
     };
   }
@@ -172,6 +173,53 @@ class Config {
     } catch (error) {
       console.error('新增最近掃描路徑失敗:', error);
       return false;
+    }
+  }
+
+  // 監看中的資料夾
+  async getWatchedFolders() {
+    try {
+      const config = await this.load();
+      const folders = config.scan?.watchedFolders;
+      return Array.isArray(folders) ? folders.filter(f => f && typeof f.path === 'string') : [];
+    } catch (error) {
+      console.error('獲取監看資料夾失敗:', error);
+      return [];
+    }
+  }
+
+  // 新增或更新監看資料夾（路徑不分大小寫去重，已存在時更新是否包含子資料夾）
+  async addWatchedFolder(folderPath, recursive = true) {
+    try {
+      const config = await this.load();
+      if (!config.scan) config.scan = { recentPaths: [] };
+      const folders = Array.isArray(config.scan.watchedFolders) ? config.scan.watchedFolders : [];
+      const normalizedPath = folderPath.toLowerCase();
+      config.scan.watchedFolders = [
+        ...folders.filter(f => f.path.toLowerCase() !== normalizedPath),
+        { path: folderPath, recursive: !!recursive }
+      ];
+      return await this.save(config);
+    } catch (error) {
+      console.error('新增監看資料夾失敗:', error);
+      return false;
+    }
+  }
+
+  // 移除監看資料夾，回傳被移除的設定（找不到時為 null）
+  async removeWatchedFolder(folderPath) {
+    try {
+      const config = await this.load();
+      const folders = Array.isArray(config.scan?.watchedFolders) ? config.scan.watchedFolders : [];
+      const normalizedPath = folderPath.toLowerCase();
+      const removed = folders.find(f => f.path.toLowerCase() === normalizedPath) || null;
+      if (!removed) return null;
+      config.scan.watchedFolders = folders.filter(f => f !== removed);
+      await this.save(config);
+      return removed;
+    } catch (error) {
+      console.error('移除監看資料夾失敗:', error);
+      return null;
     }
   }
 

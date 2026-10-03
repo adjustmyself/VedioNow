@@ -143,4 +143,44 @@ describe('VideoScanner', () => {
     // 50 個檔案原本會送 100+ 次，節流後應大幅減少
     expect(progressCallback.mock.calls.length).toBeLessThan(20);
   });
+
+  describe('同步監看資料夾', () => {
+    afterEach(() => scanner.stopAllWatching());
+
+    test('逐一增量掃描、恢復監看，連不到的資料夾略過', async () => {
+      writeFile('a/one.mp4', 'one');
+      writeFile('b/two.mp4', 'two');
+      writeFile('b/sub/three.mp4', 'three');
+      const missing = path.join(root, 'offline-nas');
+      const folders = [
+        { path: path.join(root, 'a'), recursive: true },
+        { path: missing, recursive: true },
+        { path: path.join(root, 'b'), recursive: false }
+      ];
+      const statuses = [];
+
+      const summary = await scanner.syncWatchedFolders(folders, s => statuses.push(s));
+
+      expect(summary).toMatchObject({ state: 'done', total: 3, added: 2, updated: 0, skipped: [missing] });
+      expect(statuses.filter(s => s.state === 'running').map(s => s.index)).toEqual([1, 2, 3]);
+      expect(statuses[statuses.length - 1]).toBe(summary);
+      // 非遞迴的資料夾不收子資料夾
+      expect((await db.getAllVideoRefs()).map(v => path.basename(v.filepath)).sort()).toEqual(['one.mp4', 'two.mp4']);
+      expect([...scanner.watchers.keys()].sort()).toEqual([path.join(root, 'a'), path.join(root, 'b')].sort());
+
+      // 再同步一次：檔案沒變就不寫資料庫
+      scanner.stopAllWatching();
+      const again = await scanner.syncWatchedFolders(folders);
+      expect(again).toMatchObject({ added: 0, updated: 0 });
+    });
+
+    test('作廢的 scanner 不再開監看、同步提早結束', async () => {
+      writeFile('a/one.mp4', 'one');
+      scanner.dispose();
+      const summary = await scanner.syncWatchedFolders([{ path: path.join(root, 'a') }]);
+      expect(summary.added).toBe(0);
+      scanner.watchFolder(path.join(root, 'a'));
+      expect(scanner.watchers.size).toBe(0);
+    });
+  });
 });

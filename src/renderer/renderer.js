@@ -214,6 +214,11 @@ class VideoManager {
       this.loadData();
     });
 
+    // 背景同步監看資料夾的進度
+    ipcRenderer.on('background-scan-status', (event, status) => {
+      this.updateBackgroundScanStatus(status);
+    });
+
     // 影片資料在背景更新（例如設定頁補齊影片長度）：重新載入目前這一頁
     ipcRenderer.on('videos-changed', () => {
       this.refreshCurrentView();

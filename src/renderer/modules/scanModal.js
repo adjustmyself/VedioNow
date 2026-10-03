@@ -6,8 +6,8 @@ const { escapeHtml } = require('../shared/util');
 class ScanModalMethods {
   async showScanModal() {
     this.elements.scanModal.classList.remove('hidden');
-    // 載入最近掃描路徑
-    await this.loadRecentScanPaths();
+    // 載入最近掃描路徑與監看中的資料夾
+    await Promise.all([this.loadRecentScanPaths(), this.loadWatchedFolders()]);
   }
 
   hideScanModal() {
@@ -59,6 +59,7 @@ class ScanModalMethods {
           message += `, 清理: ${stats.cleaned}`;
         }
         this.elements.scanStatus.textContent = message;
+        if (options.watchChanges) this.loadWatchedFolders();
 
         setTimeout(() => {
           this.hideScanModal();
@@ -156,6 +157,60 @@ class ScanModalMethods {
         await this.removeRecentScanPath(path);
       });
     });
+  }
+
+  async loadWatchedFolders() {
+    const group = document.getElementById('watched-folders-group');
+    const list = document.getElementById('watched-folders-list');
+    try {
+      const result = await ipcRenderer.invoke('get-watched-folders');
+      const folders = result.success ? result.folders : [];
+      group.classList.toggle('has-paths', folders.length > 0);
+      list.innerHTML = folders.map(folder => {
+        const safePath = escapeHtml(folder.path);
+        return `
+        <div class="recent-path-item watched-folder-item" title="${safePath}">
+          <span class="recent-path-icon">👁</span>
+          <span class="recent-path-text">${safePath}</span>
+          <span class="watched-folder-mode">${folder.recursive ? '含子資料夾' : '僅此層'}</span>
+          <button class="recent-path-remove" data-path="${safePath}" title="停止監看（影片記錄保留）">✕</button>
+        </div>
+      `;
+      }).join('');
+
+      list.querySelectorAll('.recent-path-remove').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm(`停止監看這個資料夾？\n${btn.dataset.path}\n\n已掃描的影片記錄會保留。`)) return;
+          await ipcRenderer.invoke('remove-watched-folder', btn.dataset.path);
+          await this.loadWatchedFolders();
+        });
+      });
+    } catch (error) {
+      console.error('載入監看資料夾失敗:', error);
+    }
+  }
+
+  // 啟動時背景同步監看資料夾的進度（右下角提示，不打開掃描彈窗）
+  updateBackgroundScanStatus(status) {
+    const el = document.getElementById('background-scan-status');
+    if (!el) return;
+    clearTimeout(this._backgroundScanHideTimer);
+
+    if (status.state === 'running') {
+      el.textContent = `正在更新監看資料夾 (${status.index}/${status.total})：${status.folder}`;
+      el.title = status.folder;
+      el.classList.remove('hidden');
+      return;
+    }
+
+    const parts = [];
+    if (status.added > 0) parts.push(`新增 ${status.added} 部`);
+    if (status.updated > 0) parts.push(`更新 ${status.updated} 部`);
+    if (status.skipped.length > 0) parts.push(`${status.skipped.length} 個資料夾無法連線，已略過`);
+    el.textContent = parts.length > 0 ? `監看資料夾已更新：${parts.join('，')}` : '監看資料夾沒有新的影片';
+    el.title = status.skipped.join('\n');
+    el.classList.remove('hidden');
+    this._backgroundScanHideTimer = setTimeout(() => el.classList.add('hidden'), status.skipped.length > 0 ? 10000 : 5000);
   }
 
   async removeRecentScanPath(folderPath) {

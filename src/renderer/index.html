@@ -316,8 +316,14 @@
                     <div class="option-group">
                         <label>
                             <input type="checkbox" id="watch-changes">
-                            監控資料夾變更
+                            監看此資料夾（記住設定，每次啟動自動更新新增與變更的影片）
                         </label>
+                    </div>
+
+                    <!-- 監看中的資料夾 -->
+                    <div class="option-group" id="watched-folders-group">
+                        <label>監看中的資料夾:</label>
+                        <div id="watched-folders-list" class="recent-paths-list"></div>
                     </div>
                     <div class="option-group">
                         <label>
@@ -364,6 +370,9 @@
             </div>
         </div>
     </div>
+
+    <!-- 背景同步監看資料夾的狀態 -->
+    <div id="background-scan-status" class="background-scan-status hidden" role="status" aria-live="polite"></div>
 
     <script src="renderer.js"></script>
 </body>

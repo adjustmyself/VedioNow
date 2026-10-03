@@ -29,6 +29,8 @@ class VideoScanner {
     ];
     this.watchers = new Map();
     this.fileFingerprint = new FileFingerprint();
+    // 資料層重建（切換資料庫、還原）後舊的 scanner 作廢：不再開新的監看、背景同步提早結束
+    this.disposed = false;
   }
 
   async scanFolder(folderPath, options = {}) {
@@ -151,6 +153,35 @@ class VideoScanner {
       unchanged: unchangedCount,
       cleaned: cleanupCount
     };
+  }
+
+  // 啟動時同步監看中的資料夾：逐一增量掃描（未變更的檔案只比對大小與修改時間）並恢復監看。
+  // 連不到的資料夾（例如 NAS 未開機）略過，不影響其他資料夾；
+  // 不清理缺檔記錄：網路磁碟暫時讀不到時 pathExists 也會回傳 false，自動執行容易誤刪
+  async syncWatchedFolders(folders, onStatus = () => {}) {
+    let added = 0;
+    let updated = 0;
+    const skipped = [];
+    for (let i = 0; i < folders.length; i++) {
+      if (this.disposed) break;
+      const { path: folderPath, recursive = true } = folders[i];
+      onStatus({ state: 'running', index: i + 1, total: folders.length, folder: folderPath });
+      try {
+        if (!await fs.pathExists(folderPath)) {
+          skipped.push(folderPath);
+          continue;
+        }
+        const result = await this.scanFolder(folderPath, { recursive, watchChanges: true, cleanupMissing: false, dateFilter: 'all' });
+        added += result.added + (result.duplicates || 0);
+        updated += result.updated;
+      } catch (error) {
+        console.warn(`同步監看資料夾失敗: ${folderPath}`, error.message);
+        skipped.push(folderPath);
+      }
+    }
+    const summary = { state: 'done', total: folders.length, added, updated, skipped };
+    onStatus(summary);
+    return summary;
   }
 
   // 大小與修改時間都相同，視為內容未變（指紋本身不含 mtime，這裡只用來決定要不要重算）
@@ -345,6 +376,7 @@ class VideoScanner {
   }
 
   watchFolder(folderPath, recursive = true) {
+    if (this.disposed) return;
     if (this.watchers.has(folderPath)) {
       console.log(`已經在監控資料夾: ${folderPath}`);
       return;
@@ -403,6 +435,11 @@ class VideoScanner {
       this.watchers.delete(folderPath);
       console.log(`停止監控資料夾: ${folderPath}`);
     }
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.stopAllWatching();
   }
 
   stopAllWatching() {
