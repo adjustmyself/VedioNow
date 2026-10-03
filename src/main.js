@@ -1115,7 +1115,7 @@ ipcMain.handle('save-config', async (event, settings) => {
   try {
     // 必須在儲存前讀取舊設定，存檔後再讀只會讀到新值，永遠偵測不到類型變更
     const previousConfig = await config.load();
-    const success = await config.save(settings);
+    const success = await config.updateSettings(settings);
 
     const databaseTypeChanged = success && previousConfig.database.type !== settings.database.type;
     if (databaseTypeChanged) {

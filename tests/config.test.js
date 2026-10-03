@@ -60,6 +60,23 @@ describe('Config', () => {
     expect(await config.getAutoTagRules()).toEqual(saved);
   });
 
+  test('設定頁儲存只替換 database / app，其他資料保留', async () => {
+    await config.addRecentScanPath('D:\Videos');
+    await config.addWatchedFolder('D:\Videos');
+    await config.saveSearch({ name: '常用' });
+    await config.saveAutoTagRules([{ pattern: '1080p', tags: ['高畫質'] }]);
+
+    await config.updateSettings({ database: { type: 'sqlite' }, app: { theme: 'dark', pageSize: 12 } });
+
+    const saved = await config.load();
+    expect(saved.app).toMatchObject({ theme: 'dark', pageSize: 12, language: 'zh-TW' });
+    expect(saved.database.mongodb).toBeDefined();
+    expect(await config.getRecentScanPaths()).toEqual(['D:\Videos']);
+    expect(await config.getWatchedFolders()).toHaveLength(1);
+    expect(await config.getSavedSearches()).toHaveLength(1);
+    expect(await config.getAutoTagRules()).toHaveLength(1);
+  });
+
   describe('儲存的搜尋', () => {
     const base = { searchTerm: ' 海 ', tags: ['動作', '動作', ''], rating: 3, drivePath: '\\nas\d1', unwatchedOnly: 1, sortBy: 'duration', sortOrder: 'asc' };
 

@@ -70,6 +70,15 @@ class Config {
     }
   }
 
+  // 設定頁儲存：只替換 database 與 app 區段。設定頁只送這兩段，
+  // 直接整份覆蓋會清掉最近掃描路徑、監看資料夾、儲存的搜尋、自動標籤規則等其他資料
+  async updateSettings({ database, app } = {}) {
+    const config = await this.load();
+    if (database) config.database = { ...config.database, ...database };
+    if (app) config.app = { ...config.app, ...app };
+    return await this.save(config);
+  }
+
   async updateDatabaseConfig(databaseConfig) {
     const config = await this.load();
     config.database = { ...config.database, ...databaseConfig };
