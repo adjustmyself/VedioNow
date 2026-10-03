@@ -53,8 +53,8 @@ This is an Electron application with a main/renderer process architecture:
 
 **Renderer Process (`src/renderer/`)**
 - `index.html` - Main application interface
-- `renderer.js` - VideoManager class core (state, loading/search, grid rendering); feature methods live in `modules/*.js` as mixin classes merged into `VideoManager.prototype` (thumbnails, tagFilterBar, videoModal, scanModal, pagination, collections, batchSelection, savedSearches, hoverPreview)
-- `shared/util.js` - helpers shared by windows (`escapeHtml`, `toFileUrl`, `toTagImageUrl`, `debounce`)
+- `renderer.js` - ES module (loaded with `type="module"`); VideoManager class core (state, loading/search, grid rendering); feature methods live in `modules/*.js` as mixin classes merged into `VideoManager.prototype` (thumbnails, tagFilterBar, videoModal, scanModal, pagination, collections, batchSelection, savedSearches, hoverPreview)
+- `shared/util.js` - ES module helpers shared by windows (`escapeHtml`, `toFileUrl`, `toTagImageUrl`, `debounce`); Node-free, tested in `tests/rendererUtil.test.js` via a child process because Jest can't load ESM
 - `styles.css` - Main application styles
 - `tag-manager.html/js/css` - Separate tag management window
 
@@ -97,8 +97,8 @@ dist/                    # Build output directory
 
 ## Development Notes
 
-- The application uses Node.js integration in renderer processes; all dynamic HTML must go through `escapeHtml()` (filenames from disk are untrusted input)
-- Renderer never uses `shell` directly — file opening goes through the `open-path` IPC handler
+- Renderer windows run with `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`: no `require`/Node in page code. Everything goes through `window.api.invoke/send/on` exposed by `src/preload.js`, which allowlists channels — **a new IPC channel must be added to the preload allowlist** or calls are rejected. `window.api.on` listeners receive only the payload (no event object) and the call returns an unsubscribe function. Anything needing Node (file writes, clipboard, shell) is a main-process IPC handler; e.g. canvas thumbnails are sent as JPEG bytes to `save-renderer-thumbnail`
+- All dynamic HTML must still go through `escapeHtml()` (filenames from disk are untrusted input)
 - Chinese language interface and comments throughout codebase
 - Supports Windows, macOS, and Linux builds via electron-builder
 - Uses fs-extra for enhanced file operations
@@ -118,7 +118,7 @@ dist/                    # Build output directory
 - Settings page saves through `Config.updateSettings()`, which replaces only the `database`/`app` sections — never `config.save()` the renderer's partial object, it would wipe scan paths, watched folders, saved searches and auto-tag rules
 - Watched folders persist in `config.scan.watchedFolders` (`[{path, recursive}]`, added when a scan has "監看" checked). ~5s after startup and after every `recreateDatabase()`, `syncWatchedFolders()` runs `VideoScanner.syncWatchedFolders()`: an incremental scan per folder (no missing-file cleanup, unreachable folders skipped) that re-arms chokidar; progress goes to the main window's `background-scan-status` pill. `shutdownDataLayer()` calls `videoScanner.dispose()` so a stale scanner can't re-add watchers
 - Backups (`src/backupManager.js`, SQLite only): a `VideoNow-backup-<YYYYMMDD-HHmmss>/` folder with `videonow.db` (online `db.backup()`), `config.json`, `tag-images/`, `manifest.json`; thumbnails are not backed up. Auto backup runs ~15s after startup at most once per 24h into `<userData>/backups/auto` (keeps 7). Restore first backs up current data to `backups/pre-restore`, closes the DB, replaces files (keeping the current `database` config section) and relaunches
-- Renderer pages have a CSP meta tag: no inline scripts/handlers — bind events in JS; file paths must go through `toFileUrl()`
+- Renderer pages (including splash) have a CSP meta tag: no inline scripts/handlers — bind events in JS; file paths must go through `toFileUrl()`. `theme.js` and `splash.js` stay classic scripts (theme must apply synchronously in `<head>`)
 
 ## Supported Video Formats
 

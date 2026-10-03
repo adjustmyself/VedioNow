@@ -59,8 +59,8 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-// 所有視窗都開著 nodeIntegration，任何被導向外部頁面或彈出新視窗的內容都等同拿到 Node 權限；
-// 一律禁止開新視窗，並只允許載入程式自己的 renderer 頁面
+// 畫面端沒有 Node 權限（contextIsolation + sandbox），只能經由 preload 的 window.api 呼叫白名單內的 IPC；
+// 仍一律禁止開新視窗，並只允許載入程式自己的 renderer 頁面，避免外部頁面拿到 window.api
 const RENDERER_DIR_URL = require('url').pathToFileURL(path.join(__dirname, 'renderer') + path.sep).href;
 app.on('web-contents-created', (event, contents) => {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -99,8 +99,9 @@ function createSplashWindow() {
     icon: getWindowIconPath(),
     title: 'VideoNow',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
       preload: PRELOAD_PATH
     }
   });
@@ -176,8 +177,9 @@ function createWindow() {
     show: false,
     backgroundColor: appTheme === 'dark' ? '#16181d' : '#f5f5f5',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
       preload: PRELOAD_PATH
     },
     icon: getWindowIconPath()
@@ -906,8 +908,9 @@ function openChildWindow(key, file, options) {
     parent: mainWindow,
     modal: true,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
       preload: PRELOAD_PATH
     }
   });
