@@ -113,6 +113,63 @@ describe('ThumbnailGenerator', () => {
     expect(await gen.probeDuration('C:\\missing.mp4')).toBeNull();
   });
 
+  describe('以內容指紋命名', () => {
+    const FP = '0123456789abcdef0123456789abcdef';
+
+    test('有指紋用 fp-<基礎指紋>，複本共用同一張，沒有指紋退回路徑雜湊', () => {
+      const a = gen.getThumbnailPath('C:\\videos\\a.mp4', FP);
+      expect(path.basename(a)).toBe(`fp-${FP}.jpg`);
+      // 搬移後路徑不同、指紋相同 → 同一張
+      expect(gen.getThumbnailPath('D:\\moved\\renamed.mp4', FP)).toBe(a);
+      // 內容相同的複本
+      expect(gen.getThumbnailPath('E:\\copy\\a.mp4', `${FP}:dup:abcdef123456`)).toBe(a);
+      expect(gen.getThumbnailPath('C:\\videos\\a.mp4', null)).toBe(gen.getLegacyThumbnailPath('C:\\videos\\a.mp4'));
+    });
+
+    test('不是 32 位十六進位的指紋再雜湊一次，不能組出目錄外的路徑', () => {
+      const p = gen.getThumbnailPath('C:\\videos\\a.mp4', '..\\..\\evil');
+      expect(path.dirname(p)).toBe(dir);
+      expect(path.basename(p)).toMatch(/^fp-[0-9a-f]{32}\.jpg$/);
+    });
+
+    test('只有舊版路徑命名的縮圖時改名沿用，不重新產生', async () => {
+      const videoPath = 'C:\\videos\\a.mp4';
+      fs.writeFileSync(gen.getLegacyThumbnailPath(videoPath), 'old-jpg');
+
+      const found = await gen.thumbnailExists(videoPath, FP);
+      expect(found).toBe(gen.getThumbnailPath(videoPath, FP));
+      expect(fs.readFileSync(found, 'utf8')).toBe('old-jpg');
+      expect(fs.existsSync(gen.getLegacyThumbnailPath(videoPath))).toBe(false);
+
+      const spy = jest.spyOn(gen, 'generateWithFFmpeg');
+      expect(await gen.generateThumbnail(videoPath, undefined, FP)).toBe(found);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('新舊檔名都在時以新檔為準', async () => {
+      const videoPath = 'C:\\videos\\a.mp4';
+      fs.writeFileSync(gen.getLegacyThumbnailPath(videoPath), 'old');
+      fs.writeFileSync(gen.getThumbnailPath(videoPath, FP), 'new');
+      const found = await gen.thumbnailExists(videoPath, FP);
+      expect(fs.readFileSync(found, 'utf8')).toBe('new');
+    });
+
+    test('清理保留指紋命名與尚未改名的舊縮圖，刪除其他', async () => {
+      const keepFp = gen.getThumbnailPath('C:\\v\\a.mp4', FP);
+      const keepLegacy = gen.getLegacyThumbnailPath('C:\\v\\b.mp4');
+      const orphanFp = gen.getThumbnailPath('C:\\v\\gone.mp4', 'ffffffffffffffffffffffffffffffff');
+      const orphanLegacy = gen.getLegacyThumbnailPath('C:\\v\\gone.mp4');
+      [keepFp, keepLegacy, orphanFp, orphanLegacy].forEach(f => fs.writeFileSync(f, 'jpg'));
+
+      await gen.cleanupThumbnails([
+        { filepath: 'C:\\v\\a.mp4', fingerprint: FP },
+        { filepath: 'C:\\v\\b.mp4', fingerprint: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' }
+      ]);
+
+      expect(fs.readdirSync(dir).sort()).toEqual([path.basename(keepFp), path.basename(keepLegacy)].sort());
+    });
+  });
+
   test('全部失敗時不留下任何檔案', async () => {
     const thumbPath = gen.getThumbnailPath('C:\\videos\\bad.mp4');
     jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: 1, stderr: 'Invalid data' });

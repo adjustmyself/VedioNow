@@ -869,9 +869,10 @@ ipcMain.handle('open-tag-manager', async () => {
 });
 
 // 縮圖相關的 IPC handlers
-ipcMain.handle('get-thumbnail', async (event, videoPath) => {
+// 縮圖以內容指紋命名（沒有指紋才用路徑），所以渲染器查詢時要一併帶上影片的 fingerprint
+ipcMain.handle('get-thumbnail', async (event, videoPath, fingerprint) => {
   try {
-    const thumbnail = await thumbnailGenerator.generateThumbnail(videoPath);
+    const thumbnail = await thumbnailGenerator.generateThumbnail(videoPath, undefined, fingerprint);
     return { success: true, thumbnail };
   } catch (error) {
     console.error('生成縮圖錯誤:', error);
@@ -879,28 +880,28 @@ ipcMain.handle('get-thumbnail', async (event, videoPath) => {
   }
 });
 
-ipcMain.handle('check-thumbnail', async (event, videoPath) => {
+ipcMain.handle('check-thumbnail', async (event, videoPath, fingerprint) => {
   try {
-    const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath);
+    const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath, fingerprint);
     return { success: true, exists: !!existingThumbnail, path: existingThumbnail };
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-// 批次檢查縮圖：渲染一頁時用，避免 N 次 IPC 來回
-ipcMain.handle('check-thumbnails-batch', async (event, videoPaths) => {
+// 批次檢查縮圖：渲染一頁時用，避免 N 次 IPC 來回。items: [{ filepath, fingerprint }]，結果以 filepath 為 key
+ipcMain.handle('check-thumbnails-batch', async (event, items) => {
   try {
-    if (!Array.isArray(videoPaths) || videoPaths.length === 0) {
+    if (!Array.isArray(items) || items.length === 0) {
       return { success: true, results: {} };
     }
     const entries = await Promise.all(
-      videoPaths.map(async (p) => {
+      items.map(async ({ filepath, fingerprint }) => {
         try {
-          const existing = await thumbnailGenerator.thumbnailExists(p);
-          return [p, existing || null];
+          const existing = await thumbnailGenerator.thumbnailExists(filepath, fingerprint);
+          return [filepath, existing || null];
         } catch {
-          return [p, null];
+          return [filepath, null];
         }
       })
     );
@@ -912,17 +913,17 @@ ipcMain.handle('check-thumbnails-batch', async (event, videoPaths) => {
 });
 
 // 強制重新生成縮圖（可指定擷取秒數）
-ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset) => {
+ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset, fingerprint) => {
   try {
     // 刪除現有縮圖（如果存在）
-    const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath);
+    const existingThumbnail = await thumbnailGenerator.thumbnailExists(videoPath, fingerprint);
     if (existingThumbnail) {
       await fs.remove(existingThumbnail);
       console.log('已刪除舊縮圖:', existingThumbnail);
     }
 
     // 使用 FFmpeg 生成新縮圖
-    const result = await thumbnailGenerator.generateThumbnail(videoPath, timeOffset);
+    const result = await thumbnailGenerator.generateThumbnail(videoPath, timeOffset, fingerprint);
 
     if (result) {
       return { success: true, thumbnail: result };
@@ -938,11 +939,9 @@ ipcMain.handle('generate-thumbnail-force', async (event, videoPath, timeOffset) 
 // 縮圖清理
 ipcMain.handle('cleanup-thumbnails', async () => {
   try {
-    // 必須取得「全部」影片路徑（不可用分頁的 getVideos，否則會誤刪有效縮圖）
+    // 必須取得「全部」影片（不可用分頁的 getVideos，否則會誤刪有效縮圖）；指紋與路徑都要，兩種命名的縮圖都算有效
     const refs = await database.getAllVideoRefs();
-    const validVideoPaths = refs.map(ref => ref.filepath);
-
-    await thumbnailGenerator.cleanupThumbnails(validVideoPaths);
+    await thumbnailGenerator.cleanupThumbnails(refs);
     return { success: true, message: '縮圖清理完成' };
   } catch (error) {
     console.error('縮圖清理錯誤:', error);

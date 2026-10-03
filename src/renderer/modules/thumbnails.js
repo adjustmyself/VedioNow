@@ -15,6 +15,11 @@ function getRendererThumbnailGenerator() {
   return rendererThumbnailGenerator;
 }
 
+// 縮圖容器上的影片指紋（縮圖檔以指紋命名；沒有指紋的影片回傳 null，後端改用路徑命名）
+function fingerprintOf(container) {
+  return (container && container.dataset.fingerprint) || null;
+}
+
 class ThumbnailMethods {
   // 元素接近可視範圍時才執行 callback（每次重繪列表會重置）
   _whenVisible(element, callback) {
@@ -58,7 +63,7 @@ class ThumbnailMethods {
 
     const thumbnailContainers = this.elements.videosContainer.querySelectorAll('.video-thumbnail, .video-list-thumbnail');
 
-    // 收集所有需要查詢的路徑（已快取的略過 IPC）
+    // 收集所有需要查詢的影片（已快取的略過 IPC）
     const pathsToCheck = [];
     const containerByPath = new Map();
     thumbnailContainers.forEach((container) => {
@@ -66,8 +71,8 @@ class ThumbnailMethods {
       if (!videoPath) return;
       this.addLoadingPlaceholder(container);
       this.loadingThumbnails.add(videoPath);
-      if (!this.thumbnailCache.has(videoPath)) {
-        pathsToCheck.push(videoPath);
+      if (!this.thumbnailCache.has(videoPath) && !containerByPath.has(videoPath)) {
+        pathsToCheck.push({ filepath: videoPath, fingerprint: fingerprintOf(container) });
       }
       // 同一路徑可能對應多個 container（不太會發生但保險）
       if (!containerByPath.has(videoPath)) containerByPath.set(videoPath, []);
@@ -145,7 +150,7 @@ class ThumbnailMethods {
         return;
       }
 
-      const result = await ipcRenderer.invoke('check-thumbnail', videoPath);
+      const result = await ipcRenderer.invoke('check-thumbnail', videoPath, fingerprintOf(container));
       if (result.success && result.exists) {
         this.thumbnailCache.set(videoPath, result.path);
         this.showCachedThumbnail(container, result.path);
@@ -175,7 +180,7 @@ class ThumbnailMethods {
   async generateThumbnailWithBackend(container, videoPath, { quiet = false } = {}) {
     try {
       // 嘗試使用後端 FFmpeg 生成縮圖
-      const result = await ipcRenderer.invoke('get-thumbnail', videoPath);
+      const result = await ipcRenderer.invoke('get-thumbnail', videoPath, fingerprintOf(container));
       if (result.success && result.thumbnail) {
         this.thumbnailCache.set(videoPath, result.thumbnail);
         this.showCachedThumbnail(container, result.thumbnail);
@@ -317,7 +322,7 @@ class ThumbnailMethods {
 
       // 存成縮圖快取，之後重繪直接用圖片，不必再從（可能是網路磁碟的）影片讀一次
       try {
-        const thumbnailPath = await getRendererThumbnailGenerator().generateThumbnailInRenderer(video, videoPath);
+        const thumbnailPath = await getRendererThumbnailGenerator().generateThumbnailInRenderer(video, videoPath, fingerprintOf(container));
         if (thumbnailPath) this.thumbnailCache.set(videoPath, thumbnailPath);
       } catch (error) {
         console.warn('生成縮圖快取失敗:', error);
@@ -361,7 +366,7 @@ class ThumbnailMethods {
       generateBtn.disabled = true;
 
       // 呼叫後端使用 FFmpeg 生成縮圖（指定擷取秒數）
-      const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath, timeOffset);
+      const result = await ipcRenderer.invoke('generate-thumbnail-force', videoPath, timeOffset, this.selectedVideo.fingerprint || null);
 
       if (result.success && result.thumbnail) {
         this.thumbnailCache.set(videoPath, result.thumbnail);

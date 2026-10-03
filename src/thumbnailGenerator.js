@@ -4,6 +4,7 @@ const fs = require('fs-extra');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const { getUserDataDir } = require('./appPaths');
+const FileFingerprint = require('./fileFingerprint');
 
 // 優先使用打包的 ffmpeg-static，使用者不必自行安裝 FFmpeg；
 // 取不到（極少數平台）時退回 PATH 上的 ffmpeg
@@ -72,17 +73,31 @@ class ThumbnailGenerator {
     this.onDuration = null;
   }
 
-  // 生成檔案路徑的唯一hash值
+  // 舊版縮圖檔名：檔案路徑的 MD5。只用在沒有指紋的影片，以及辨識尚未改名的舊縮圖
   generateFileHash(videoPath) {
-    // 使用MD5生成檔案路徑的hash，作為縮圖的唯一key
     const normalizedPath = path.normalize(videoPath).toLowerCase();
     return crypto.createHash('md5').update(normalizedPath).digest('hex');
   }
 
+  // 縮圖檔名（不含副檔名）：有指紋時用內容指紋，搬移/改名後仍找得到同一張縮圖，
+  // 內容相同的複本（:dup:）也共用一張；沒有指紋時退回路徑雜湊。
+  // 指紋來自渲染器，不是 32 位十六進位就再雜湊一次，避免拿來組出任意路徑
+  thumbnailKey(videoPath, fingerprint) {
+    if (fingerprint) {
+      const base = FileFingerprint.baseFingerprint(fingerprint);
+      const safe = /^[0-9a-f]{32}$/.test(base) ? base : crypto.createHash('md5').update(base).digest('hex');
+      return `fp-${safe}`;
+    }
+    return this.generateFileHash(videoPath);
+  }
+
   // 產生縮圖路徑 (在本地快取目錄中)
-  getThumbnailPath(videoPath) {
-    const fileHash = this.generateFileHash(videoPath);
-    return path.join(this.thumbnailsDir, `${fileHash}.jpg`);
+  getThumbnailPath(videoPath, fingerprint) {
+    return path.join(this.thumbnailsDir, `${this.thumbnailKey(videoPath, fingerprint)}.jpg`);
+  }
+
+  getLegacyThumbnailPath(videoPath) {
+    return path.join(this.thumbnailsDir, `${this.generateFileHash(videoPath)}.jpg`);
   }
 
   // 獲取縮圖目錄路徑
@@ -90,14 +105,30 @@ class ThumbnailGenerator {
     return this.thumbnailsDir;
   }
 
-  // 檢查縮圖是否存在（0 byte 的殘檔視為不存在）
-  async thumbnailExists(videoPath) {
-    const thumbnailPath = this.getThumbnailPath(videoPath);
+  // 檢查縮圖是否存在（0 byte 的殘檔視為不存在）。
+  // 指紋命名的縮圖不存在、但有舊版路徑命名的縮圖時，就地改名沿用，不必重新產生
+  async thumbnailExists(videoPath, fingerprint) {
+    const thumbnailPath = this.getThumbnailPath(videoPath, fingerprint);
+    if (await this._isValidFile(thumbnailPath)) return thumbnailPath;
+    if (!fingerprint) return null;
+
+    const legacyPath = this.getLegacyThumbnailPath(videoPath);
+    if (!await this._isValidFile(legacyPath)) return null;
     try {
-      const stat = await fs.stat(thumbnailPath);
-      return stat.size > 0 ? thumbnailPath : null;
+      await fs.move(legacyPath, thumbnailPath, { overwrite: false });
     } catch {
-      return null;
+      // 同時有另一個請求先改好名，或新檔已存在：以新檔為準，舊檔留給清理
+    }
+    if (await this._isValidFile(thumbnailPath)) return thumbnailPath;
+    return null;
+  }
+
+  async _isValidFile(filePath) {
+    try {
+      const stat = await fs.stat(filePath);
+      return stat.size > 0;
+    } catch {
+      return false;
     }
   }
 
@@ -256,14 +287,14 @@ class ThumbnailGenerator {
   }
 
   // 主要生成縮圖方法（timeOffset：指定擷取秒數，未指定則預設 30 秒）
-  async generateThumbnail(videoPath, timeOffset) {
-    const thumbnailPath = this.getThumbnailPath(videoPath);
+  async generateThumbnail(videoPath, timeOffset, fingerprint) {
+    const thumbnailPath = this.getThumbnailPath(videoPath, fingerprint);
     const pending = this.inflight.get(thumbnailPath);
     if (pending) return pending;
 
     const task = (async () => {
       // 先檢查縮圖是否已存在
-      const existingThumbnail = await this.thumbnailExists(videoPath);
+      const existingThumbnail = await this.thumbnailExists(videoPath, fingerprint);
       if (existingThumbnail) {
         return existingThumbnail;
       }
@@ -281,11 +312,17 @@ class ThumbnailGenerator {
     }
   }
 
-  // 清理過期縮圖 (根據有效的影片路徑列表)
-  async cleanupThumbnails(validVideoPaths = []) {
+  // 清理過期縮圖。videos：資料庫中所有影片 [{ filepath, fingerprint }]（也接受純路徑字串）。
+  // 指紋命名與舊版路徑命名都算有效：尚未被查詢改名的舊縮圖不能刪
+  async cleanupThumbnails(videos = []) {
     try {
-      // 生成所有有效影片的hash值
-      const validHashes = new Set(validVideoPaths.map(videoPath => this.generateFileHash(videoPath)));
+      const validHashes = new Set();
+      for (const video of videos) {
+        const filepath = typeof video === 'string' ? video : video.filepath;
+        const fingerprint = typeof video === 'string' ? null : video.fingerprint;
+        validHashes.add(this.generateFileHash(filepath));
+        if (fingerprint) validHashes.add(this.thumbnailKey(filepath, fingerprint));
+      }
 
       let cleanupCount = 0;
 
@@ -348,11 +385,11 @@ class ThumbnailGenerator {
   }
 
   // 為前端提供的生成縮圖方法 (在渲染進程中調用)
-  async generateThumbnailInRenderer(videoElement, videoPath) {
-    const thumbnailPath = this.getThumbnailPath(videoPath);
+  async generateThumbnailInRenderer(videoElement, videoPath, fingerprint) {
+    const thumbnailPath = this.getThumbnailPath(videoPath, fingerprint);
 
     // 檢查縮圖是否已存在
-    const existingThumbnail = await this.thumbnailExists(videoPath);
+    const existingThumbnail = await this.thumbnailExists(videoPath, fingerprint);
     if (existingThumbnail) {
       return existingThumbnail;
     }

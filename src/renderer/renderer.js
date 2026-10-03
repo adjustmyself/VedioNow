@@ -586,7 +586,9 @@ class VideoManager {
     return {
       tags, filename, filepath, filesize, duration, createdDate, stars, description, duplicateBadge,
       playCount: this._playCountHtml(video),
-      videoId: escapeHtml(video.id)
+      videoId: escapeHtml(video.id),
+      // 縮圖以內容指紋命名，縮圖容器帶著指紋供 thumbnails 模組查詢
+      fingerprint: escapeHtml(video.fingerprint || '')
     };
   }
 
@@ -608,7 +610,7 @@ class VideoManager {
     const f = this._buildVideoFields(video);
     return `
       <div class="video-card" data-video-id="${f.videoId}">
-        <div class="video-thumbnail" data-filepath="${f.filepath}">
+        <div class="video-thumbnail" data-filepath="${f.filepath}" data-fingerprint="${f.fingerprint}">
           <div class="thumbnail-fallback">
             <span>🎬</span>
           </div>
@@ -632,7 +634,7 @@ class VideoManager {
     const f = this._buildVideoFields(video);
     return `
       <div class="video-list-item" data-video-id="${f.videoId}">
-        <div class="video-list-thumbnail" data-filepath="${f.filepath}">
+        <div class="video-list-thumbnail" data-filepath="${f.filepath}" data-fingerprint="${f.fingerprint}">
           <div class="thumbnail-fallback-small">
             <span>🎬</span>
           </div>
