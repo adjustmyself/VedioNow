@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs-extra');
 const { getUserDataDir } = require('./appPaths');
 const AutoTagRules = require('./autoTagRules');
+const { samePath } = require('./storageMover');
 
 class Config {
   constructor() {
@@ -29,7 +30,14 @@ class Config {
         theme: 'light',
         language: 'zh-TW',
         pageSize: 9,
-        hoverPreview: true // 滑鼠停在縮圖上時產生並顯示多格預覽
+        hoverPreview: true, // 滑鼠停在縮圖上時產生並顯示多格預覽
+        backupThumbnails: true // 手動與自動備份都包含縮圖
+      },
+      // 圖片（縮圖、滑過預覽、標籤圖片）與備份的存放位置，空字串為 userData 底下的預設位置。
+      // 由設定頁的「存放位置」變更（會搬移既有檔案），不經過 updateSettings
+      storage: {
+        imagesDir: '',
+        backupDir: ''
       },
       scan: {
         recentPaths: [], // 已記憶的掃描路徑（永久保留，除非手動刪除）
@@ -153,6 +161,35 @@ class Config {
 
   getConfigPath() {
     return this.configPath;
+  }
+
+  // ========== 存放位置 ==========
+
+  static defaultStoragePaths() {
+    return {
+      imagesDir: getUserDataDir(),
+      backupDir: path.join(getUserDataDir(), 'backups')
+    };
+  }
+
+  // 實際使用的位置（未設定時為預設位置）
+  async getStoragePaths() {
+    const config = await this.load();
+    const storage = config.storage || {};
+    const defaults = Config.defaultStoragePaths();
+    return {
+      imagesDir: storage.imagesDir || defaults.imagesDir,
+      backupDir: storage.backupDir || defaults.backupDir
+    };
+  }
+
+  // key 為 imagesDir / backupDir；dir 與預設位置相同時存成空字串
+  async setStoragePath(key, dir) {
+    if (!['imagesDir', 'backupDir'].includes(key)) throw new Error(`未知的存放位置: ${key}`);
+    const isDefault = !dir || samePath(dir, Config.defaultStoragePaths()[key]);
+    const config = await this.load();
+    config.storage = { ...config.storage, [key]: isDefault ? '' : path.resolve(dir) };
+    if (!await this.save(config)) throw new Error('寫入設定檔失敗');
   }
 
   // 獲取最近掃描路徑

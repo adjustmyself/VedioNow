@@ -108,6 +108,21 @@ class SettingsManager {
             this.restoreBackup();
         });
 
+        // 存放位置
+        document.getElementById('open-data-dir-btn').addEventListener('click', () => {
+            window.api.invoke('open-storage-dir', 'data');
+        });
+        document.getElementById('open-images-dir-btn').addEventListener('click', () => {
+            window.api.invoke('open-storage-dir', 'images');
+        });
+        document.getElementById('open-backup-root-btn').addEventListener('click', () => {
+            window.api.invoke('open-storage-dir', 'backup');
+        });
+        document.getElementById('change-images-dir-btn').addEventListener('click', () => this.changeStorageDir('images', false));
+        document.getElementById('reset-images-dir-btn').addEventListener('click', () => this.changeStorageDir('images', true));
+        document.getElementById('change-backup-dir-btn').addEventListener('click', () => this.changeStorageDir('backup', false));
+        document.getElementById('reset-backup-dir-btn').addEventListener('click', () => this.changeStorageDir('backup', true));
+
         // 資料維護：補齊影片長度
         document.getElementById('backfill-durations-btn').addEventListener('click', () => {
             this.backfillDurations();
@@ -169,6 +184,7 @@ class SettingsManager {
 
         this.currentSection = section;
         if (section === 'backup') this.loadBackupInfo();
+        if (section === 'storage') this.loadStorageInfo();
         if (section === 'autotag') this.loadAutoTagRules();
     }
 
@@ -209,9 +225,11 @@ class SettingsManager {
             document.getElementById('app-language').value = app.language || 'zh-TW';
             document.getElementById('app-page-size').value = app.pageSize || 9;
             document.getElementById('app-hover-preview').checked = app.hoverPreview !== false;
+            document.getElementById('app-backup-thumbnails').checked = app.backupThumbnails !== false;
 
-            // 載入縮圖統計
+            // 載入縮圖統計與存放位置
             this.loadThumbnailStats();
+            this.loadStorageInfo();
 
         } catch (error) {
             console.error('載入設定失敗:', error);
@@ -257,7 +275,8 @@ class SettingsManager {
                 theme: document.getElementById('app-theme').value,
                 language: document.getElementById('app-language').value,
                 pageSize: this.collectPageSize(),
-                hoverPreview: document.getElementById('app-hover-preview').checked
+                hoverPreview: document.getElementById('app-hover-preview').checked,
+                backupThumbnails: document.getElementById('app-backup-thumbnails').checked
             }
         };
 
@@ -692,7 +711,8 @@ class SettingsManager {
             const when = b.createdAt ? new Date(b.createdAt).toLocaleString() : '未知';
             const ok = confirm(
                 `確定要用這份備份取代目前的資料嗎？\n\n` +
-                `備份時間：${when}\n影片：${b.videos} 部\n標籤：${b.tags} 個\n\n` +
+                `備份時間：${when}\n影片：${b.videos} 部\n標籤：${b.tags} 個\n` +
+                `縮圖：${b.thumbnails > 0 ? `${b.thumbnails} 張（只補上缺少的）` : '未包含'}\n\n` +
                 `還原前會先自動備份目前的資料，完成後應用程式會重新啟動。`
             );
             if (!ok) return;
@@ -706,6 +726,66 @@ class SettingsManager {
             statusEl.textContent = '還原失敗: ' + error.message;
         } finally {
             btn.disabled = false;
+        }
+    }
+
+    // ========== 存放位置 ==========
+
+    async loadStorageInfo() {
+        try {
+            const info = await window.api.invoke('get-storage-info');
+            const label = (dir, isDefault) => isDefault ? `${dir}（預設）` : dir;
+            document.getElementById('storage-data-dir').textContent = info.dataDir;
+            document.getElementById('storage-images-dir').textContent = label(info.imagesDir, info.imagesDirIsDefault);
+            document.getElementById('storage-backup-dir').textContent = label(info.backupDir, info.backupDirIsDefault);
+            document.getElementById('reset-images-dir-btn').disabled = info.imagesDirIsDefault;
+            document.getElementById('reset-backup-dir-btn').disabled = info.backupDirIsDefault;
+            document.getElementById('thumbnail-location').textContent = info.thumbnailsDir;
+        } catch (error) {
+            console.error('載入存放位置失敗:', error);
+        }
+    }
+
+    // kind：images / backup；toDefault 為 true 時改回預設位置
+    async changeStorageDir(kind, toDefault) {
+        const isImages = kind === 'images';
+        const statusEl = document.getElementById(isImages ? 'storage-images-status' : 'storage-backup-status');
+        const buttons = ['change-images-dir-btn', 'reset-images-dir-btn', 'change-backup-dir-btn', 'reset-backup-dir-btn']
+            .map(id => document.getElementById(id));
+
+        let target = null;
+        if (!toDefault) {
+            const chosen = await window.api.invoke('choose-storage-dir', kind);
+            if (!chosen.success) return;
+            target = chosen.path;
+        }
+
+        const what = isImages ? '縮圖、滑過預覽與標籤圖片' : '自動備份與還原前備份';
+        const where = target || '預設位置';
+        const after = isImages ? '\n\n完成後應用程式會重新啟動。' : '';
+        if (!confirm(`把${what}搬到：\n${where}\n\n檔案多時需要一段時間，期間請勿關閉程式。${after}`)) return;
+
+        buttons.forEach(btn => { btn.disabled = true; });
+        statusEl.className = 'cleanup-status working';
+        statusEl.textContent = '正在搬移...';
+        try {
+            const result = await window.api.invoke('change-storage-dir', kind, target);
+            if (!result.success) throw new Error(result.error);
+            statusEl.className = 'cleanup-status success';
+            statusEl.textContent = result.restarting ? '搬移完成，正在重新啟動...' : `已搬到 ${result.path}`;
+            if (!result.restarting) {
+                await this.loadStorageInfo();
+                this.loadBackupInfo();
+            }
+        } catch (error) {
+            statusEl.className = 'cleanup-status error';
+            statusEl.textContent = '變更失敗: ' + error.message;
+            await this.loadStorageInfo();
+        } finally {
+            // loadStorageInfo 會依是否為預設位置重新設定兩個「改回預設」按鈕
+            ['change-images-dir-btn', 'change-backup-dir-btn'].forEach(id => {
+                document.getElementById(id).disabled = false;
+            });
         }
     }
 

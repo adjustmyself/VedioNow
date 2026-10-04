@@ -557,6 +557,17 @@ body {
     color: #1e293b;
 }
 
+/* 資料夾路徑可能很長：靠右、可斷行、可選取複製 */
+.stat-value.storage-path {
+    font-family: Consolas, 'Courier New', monospace;
+    font-weight: 500;
+    font-size: 0.85rem;
+    text-align: right;
+    word-break: break-all;
+    user-select: text;
+    margin-left: 1rem;
+}
+
 .cleanup-actions {
     display: flex;
     align-items: center;

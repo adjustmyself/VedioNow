@@ -67,14 +67,15 @@ function buildOffsets(timeOffset) {
 }
 
 class ThumbnailGenerator {
-  constructor() {
+  // imagesDir：設定頁「存放位置」的圖片資料夾，預設 userData
+  constructor({ imagesDir = getUserDataDir() } = {}) {
     // 縮圖將儲存在本地快取目錄中，避免網路磁碟權限問題
-    // 放 userData：舊版存在程式目錄，重新 package 後整批縮圖就要重生
-    this.thumbnailsDir = path.join(getUserDataDir(), 'thumbnails');
+    // 預設放 userData：舊版存在程式目錄，重新 package 後整批縮圖就要重生
+    this.thumbnailsDir = path.join(imagesDir, 'thumbnails');
     // 同一支影片的縮圖同時只產一次（重複請求共用同一個 Promise）
     this.inflight = new Map();
     // 滑過預覽的長條圖，命名方式與縮圖相同
-    this.previewsDir = path.join(getUserDataDir(), 'previews');
+    this.previewsDir = path.join(imagesDir, 'previews');
     // 產縮圖時順便得知影片長度就回呼 (videoPath, seconds)，由主行程寫回資料庫
     this.onDuration = null;
   }

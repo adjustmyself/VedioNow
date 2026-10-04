@@ -1,11 +1,12 @@
 const path = require('path');
 const fs = require('fs-extra');
 
-// 備份資料夾內容：資料庫（線上備份，單一檔案、不含 -wal/-shm）、設定檔、標籤圖片。
-// 縮圖只是快取、體積大且可重新產生，不備份。
+// 備份資料夾內容：資料庫（線上備份，單一檔案、不含 -wal/-shm）、設定檔、標籤圖片，
+// 以及設定開啟時的縮圖。滑過預覽只是快取、可重新產生，不備份。
 const DB_FILE = 'videonow.db';
 const CONFIG_FILE = 'config.json';
 const TAG_IMAGES_DIR = 'tag-images';
+const THUMBNAILS_DIR = 'thumbnails';
 const MANIFEST_FILE = 'manifest.json';
 const BACKUP_PREFIX = 'VideoNow-backup-';
 
@@ -20,11 +21,23 @@ function formatTimestamp(date = new Date()) {
     `${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
 }
 
+// 產生到一半的縮圖暫存檔（*.tmp.jpg）不備份
+function isFinishedImage(src) {
+  return !src.endsWith('.tmp.jpg');
+}
+
+async function countFiles(dir) {
+  if (!await fs.pathExists(dir)) return 0;
+  return (await fs.readdir(dir)).length;
+}
+
 class BackupManager {
-  constructor({ userDataDir, appVersion = '' }) {
+  // imagesDir / backupsDir：設定頁「存放位置」的圖片與備份資料夾，預設在 userData 底下
+  constructor({ userDataDir, imagesDir = userDataDir, backupsDir = path.join(userDataDir, 'backups'), appVersion = '' }) {
     this.userDataDir = userDataDir;
+    this.imagesDir = imagesDir;
     this.appVersion = appVersion;
-    this.backupsDir = path.join(userDataDir, 'backups');
+    this.backupsDir = backupsDir;
     this.autoDir = path.join(this.backupsDir, 'auto');
     this.preRestoreDir = path.join(this.backupsDir, 'pre-restore');
   }
@@ -34,7 +47,7 @@ class BackupManager {
   }
 
   // 在 parentDir 底下建立一份完整備份，回傳備份資料夾路徑
-  async createBackup(database, parentDir, { now = new Date(), reason = 'manual' } = {}) {
+  async createBackup(database, parentDir, { now = new Date(), reason = 'manual', includeThumbnails = false } = {}) {
     if (!BackupManager.supports(database)) {
       throw new Error('目前使用的資料庫不支援備份（僅支援 SQLite）');
     }
@@ -58,9 +71,15 @@ class BackupManager {
       if (await fs.pathExists(configPath)) {
         await fs.copy(configPath, path.join(tmpDir, CONFIG_FILE));
       }
-      const tagImages = path.join(this.userDataDir, TAG_IMAGES_DIR);
+      const tagImages = path.join(this.imagesDir, TAG_IMAGES_DIR);
       if (await fs.pathExists(tagImages)) {
         await fs.copy(tagImages, path.join(tmpDir, TAG_IMAGES_DIR));
+      }
+      let thumbnails = null;
+      const thumbnailsSrc = path.join(this.imagesDir, THUMBNAILS_DIR);
+      if (includeThumbnails && await fs.pathExists(thumbnailsSrc)) {
+        await fs.copy(thumbnailsSrc, path.join(tmpDir, THUMBNAILS_DIR), { filter: isFinishedImage });
+        thumbnails = await countFiles(path.join(tmpDir, THUMBNAILS_DIR));
       }
 
       const info = BackupManager.readDatabaseInfo(path.join(tmpDir, DB_FILE));
@@ -70,7 +89,8 @@ class BackupManager {
         createdAt: now.toISOString(),
         reason,
         videos: info.videos,
-        tags: info.tags
+        tags: info.tags,
+        thumbnails
       }, { spaces: 2 });
 
       await fs.move(tmpDir, dir);
@@ -82,12 +102,12 @@ class BackupManager {
   }
 
   // 每天第一次啟動時備份一次，只保留最近幾份；回傳新備份路徑，今天已備份過回傳 null
-  async autoBackup(database, { now = new Date() } = {}) {
+  async autoBackup(database, { now = new Date(), includeThumbnails = false } = {}) {
     if (!BackupManager.supports(database)) return null;
     const [latest] = await this.listBackups(this.autoDir);
     if (latest && now - new Date(latest.createdAt) < AUTO_BACKUP_INTERVAL_MS) return null;
 
-    const dir = await this.createBackup(database, this.autoDir, { now, reason: 'auto' });
+    const dir = await this.createBackup(database, this.autoDir, { now, reason: 'auto', includeThumbnails });
     await this.prune(this.autoDir, AUTO_BACKUP_KEEP);
     return dir;
   }
@@ -157,19 +177,22 @@ class BackupManager {
       appVersion: manifest?.appVersion || null,
       videos: info.videos,
       tags: info.tags,
-      hasTagImages: await fs.pathExists(path.join(dir, TAG_IMAGES_DIR))
+      hasTagImages: await fs.pathExists(path.join(dir, TAG_IMAGES_DIR)),
+      thumbnails: await countFiles(path.join(dir, THUMBNAILS_DIR))
     };
   }
 
-  // 還原前先替目前的資料做一份備份（資料庫必須仍開著）
+  // 還原前先替目前的資料做一份備份（資料庫必須仍開著）。
+  // 不含縮圖：還原縮圖只會補上缺少的、不會刪除或覆蓋現有縮圖，回復時用不到
   async backupBeforeRestore(database) {
     const dir = await this.createBackup(database, this.preRestoreDir, { reason: 'pre-restore' });
     await this.prune(this.preRestoreDir, PRE_RESTORE_KEEP);
     return dir;
   }
 
-  // 用備份覆蓋 userData 的檔案；呼叫前資料庫連線必須已關閉。
-  // 設定檔保留目前的 database 區段：還原資料不該順便把後端切到別的資料庫
+  // 用備份覆蓋 userData 與圖片資料夾的檔案；呼叫前資料庫連線必須已關閉。
+  // 設定檔保留目前的 database 與 storage 區段：還原資料不該順便把後端切到別的資料庫，
+  // 也不該讓存放位置指回備份當時的資料夾（圖片已經還原到目前的位置）
   async restoreFiles(dir) {
     await this.inspectBackup(dir);
 
@@ -181,9 +204,15 @@ class BackupManager {
 
     const tagImagesSrc = path.join(dir, TAG_IMAGES_DIR);
     if (await fs.pathExists(tagImagesSrc)) {
-      const tagImagesDest = path.join(this.userDataDir, TAG_IMAGES_DIR);
+      const tagImagesDest = path.join(this.imagesDir, TAG_IMAGES_DIR);
       await fs.remove(tagImagesDest);
       await fs.copy(tagImagesSrc, tagImagesDest);
+    }
+
+    // 縮圖以內容指紋命名，只補上缺少的：備份之後新產生的縮圖仍然有效，不必刪
+    const thumbnailsSrc = path.join(dir, THUMBNAILS_DIR);
+    if (await fs.pathExists(thumbnailsSrc)) {
+      await fs.copy(thumbnailsSrc, path.join(this.imagesDir, THUMBNAILS_DIR), { overwrite: false, errorOnExist: false });
     }
 
     const configSrc = path.join(dir, CONFIG_FILE);
@@ -192,6 +221,8 @@ class BackupManager {
       const restored = await fs.readJson(configSrc);
       const current = await fs.readJson(configDest).catch(() => null);
       if (current && current.database) restored.database = current.database;
+      if (current && current.storage) restored.storage = current.storage;
+      else delete restored.storage;
       await fs.writeJson(configDest, restored, { spaces: 2 });
     }
   }

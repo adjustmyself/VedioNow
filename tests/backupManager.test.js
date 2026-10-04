@@ -54,6 +54,44 @@ describe('BackupManager', () => {
     expect(info).toMatchObject({ videos: 2, tags: 1, hasTagImages: true });
   });
 
+  test('includeThumbnails 時備份縮圖（不含暫存檔），預設不備份', async () => {
+    fs.outputFileSync(path.join(userDataDir, 'thumbnails', 'fp-a.jpg'), 'a');
+    fs.outputFileSync(path.join(userDataDir, 'thumbnails', 'fp-b.jpg.tmp.jpg'), 'partial');
+
+    const without = await manager.createBackup(db, outDir, { now: new Date(2026, 9, 3, 12, 0, 0) });
+    expect(fs.pathExistsSync(path.join(without, 'thumbnails'))).toBe(false);
+    expect((await manager.inspectBackup(without)).thumbnails).toBe(0);
+
+    const withThumbs = await manager.createBackup(db, outDir, { now: new Date(2026, 9, 3, 13, 0, 0), includeThumbnails: true });
+    expect(fs.readdirSync(path.join(withThumbs, 'thumbnails'))).toEqual(['fp-a.jpg']);
+    expect(fs.readJsonSync(path.join(withThumbs, 'manifest.json')).thumbnails).toBe(1);
+    expect((await manager.inspectBackup(withThumbs)).thumbnails).toBe(1);
+  });
+
+  test('圖片與備份放在自訂位置', async () => {
+    const imagesDir = path.join(outDir, 'images');
+    const backupsDir = path.join(outDir, 'backups');
+    manager = new BackupManager({ userDataDir, imagesDir, backupsDir });
+    fs.outputFileSync(path.join(imagesDir, 'tag-images', 'a.png'), 'png');
+    fs.outputFileSync(path.join(imagesDir, 'thumbnails', 'fp-a.jpg'), 'a');
+
+    const dir = await manager.autoBackup(db, { includeThumbnails: true });
+    expect(path.dirname(dir)).toBe(path.join(backupsDir, 'auto'));
+    expect(fs.readFileSync(path.join(dir, 'tag-images', 'a.png'), 'utf8')).toBe('png');
+    expect(fs.readdirSync(path.join(dir, 'thumbnails'))).toEqual(['fp-a.jpg']);
+
+    // 還原到自訂的圖片位置：標籤圖片取代，縮圖只補缺少的
+    fs.removeSync(path.join(imagesDir, 'tag-images'));
+    fs.removeSync(path.join(imagesDir, 'thumbnails', 'fp-a.jpg'));
+    fs.outputFileSync(path.join(imagesDir, 'thumbnails', 'fp-new.jpg'), 'new');
+    db.close();
+    await manager.restoreFiles(dir);
+    db = null;
+    expect(fs.readdirSync(path.join(imagesDir, 'tag-images'))).toEqual(['a.png']);
+    expect(fs.readdirSync(path.join(imagesDir, 'thumbnails')).sort()).toEqual(['fp-a.jpg', 'fp-new.jpg']);
+    expect(fs.pathExistsSync(path.join(userDataDir, 'tag-images'))).toBe(false);
+  });
+
   test('同一秒重複備份不覆蓋，改加序號', async () => {
     const now = new Date(2026, 9, 3, 12, 0, 0);
     const a = await manager.createBackup(db, outDir, { now });
@@ -100,7 +138,8 @@ describe('BackupManager', () => {
     fs.outputFileSync(path.join(userDataDir, 'tag-images', 'new.png'), 'new');
     fs.writeJsonSync(path.join(userDataDir, 'config.json'), {
       database: { type: 'sqlite', mongodb: { host: 'new-host' } },
-      app: { theme: 'light' }
+      app: { theme: 'light' },
+      storage: { imagesDir: 'D:\\images', backupDir: '' }
     });
 
     db.close();
@@ -113,6 +152,8 @@ describe('BackupManager', () => {
     const config = fs.readJsonSync(path.join(userDataDir, 'config.json'));
     expect(config.app.theme).toBe('dark');
     expect(config.database.mongodb.host).toBe('new-host');
+    // 存放位置維持目前的設定
+    expect(config.storage).toEqual({ imagesDir: 'D:\\images', backupDir: '' });
   });
 
   test('還原前備份存在 pre-restore', async () => {

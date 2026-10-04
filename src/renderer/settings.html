@@ -41,6 +41,10 @@
                         <span class="menu-icon">🏷️</span>
                         自動標籤
                     </button>
+                    <button class="menu-item" data-section="storage">
+                        <span class="menu-icon">📁</span>
+                        存放位置
+                    </button>
                     <button class="menu-item" data-section="backup">
                         <span class="menu-icon">💾</span>
                         備份與還原
@@ -173,10 +177,11 @@
                             </div>
                             <div class="stat-row">
                                 <span class="stat-label">存儲位置:</span>
-                                <span class="stat-value">data/thumbnails/</span>
+                                <span id="thumbnail-location" class="stat-value storage-path">載入中...</span>
                             </div>
                         </div>
                         <button id="refresh-thumbnail-stats" class="btn btn-secondary btn-small">重新整理統計</button>
+                        <p class="field-description">位置可在「存放位置」變更。</p>
                     </div>
 
                     <div class="settings-card">
@@ -189,23 +194,6 @@
                         </div>
                     </div>
 
-                    <div class="settings-card">
-                        <h3>縮圖設定</h3>
-                        <div class="form-group">
-                            <label>縮圖儲存位置:</label>
-                            <div class="naming-info">
-                                <div class="info-item">
-                                    <strong>位置:</strong> 影片所在資料夾的 .thumbnails 子目錄
-                                </div>
-                                <div class="info-item">
-                                    <strong>優點:</strong> 多用戶共享縮圖，減少重複生成
-                                </div>
-                                <div class="info-item">
-                                    <strong>命名:</strong> 使用檔案路徑MD5雜湊值 (例如: a1b2c3d4e5f6...jpg)
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- 應用程式設定區域 -->
@@ -302,11 +290,78 @@
                     </div>
                 </div>
 
+                <!-- 存放位置區域 -->
+                <div id="storage-section" class="settings-section">
+                    <div class="section-header">
+                        <h2>存放位置</h2>
+                        <p class="section-description">程式資料存放在哪裡。圖片與備份可以改放到其他磁碟（例如空間較大的硬碟）。</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>資料資料夾</h3>
+                        <p class="field-description">設定檔與資料庫（SQLite）存放在這裡，位置無法變更。</p>
+                        <div class="thumbnail-stats">
+                            <div class="stat-row">
+                                <span class="stat-label">位置:</span>
+                                <span id="storage-data-dir" class="stat-value storage-path">載入中...</span>
+                            </div>
+                        </div>
+                        <div class="cleanup-actions">
+                            <button id="open-data-dir-btn" class="btn btn-secondary btn-small">開啟資料資料夾</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>圖片</h3>
+                        <p class="field-description">縮圖、滑過預覽與標籤圖片存放在這個資料夾底下的 thumbnails、previews、tag-images。變更位置時會把現有圖片搬過去，完成後應用程式會重新啟動。</p>
+                        <div class="thumbnail-stats">
+                            <div class="stat-row">
+                                <span class="stat-label">位置:</span>
+                                <span id="storage-images-dir" class="stat-value storage-path">載入中...</span>
+                            </div>
+                        </div>
+                        <div class="cleanup-actions">
+                            <button id="open-images-dir-btn" class="btn btn-secondary btn-small">開啟</button>
+                            <button id="change-images-dir-btn" class="btn btn-primary btn-small">變更位置…</button>
+                            <button id="reset-images-dir-btn" class="btn btn-secondary btn-small">改回預設位置</button>
+                            <div id="storage-images-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>備份</h3>
+                        <p class="field-description">自動備份（auto）與還原前的備份（pre-restore）存放在這個資料夾底下。變更位置時會把現有備份一起搬過去。手動備份每次都會詢問位置，不受這裡影響。</p>
+                        <div class="thumbnail-stats">
+                            <div class="stat-row">
+                                <span class="stat-label">位置:</span>
+                                <span id="storage-backup-dir" class="stat-value storage-path">載入中...</span>
+                            </div>
+                        </div>
+                        <div class="cleanup-actions">
+                            <button id="open-backup-root-btn" class="btn btn-secondary btn-small">開啟</button>
+                            <button id="change-backup-dir-btn" class="btn btn-primary btn-small">變更位置…</button>
+                            <button id="reset-backup-dir-btn" class="btn btn-secondary btn-small">改回預設位置</button>
+                            <div id="storage-backup-status" class="cleanup-status"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 備份與還原區域 -->
                 <div id="backup-section" class="settings-section">
                     <div class="section-header">
                         <h2>備份與還原</h2>
-                        <p class="section-description">備份內容：資料庫（影片、標籤、評分、合集、開啟紀錄）、設定與標籤圖片。縮圖可以重新產生，不會備份。僅支援 SQLite。</p>
+                        <p class="section-description">備份內容：資料庫（影片、標籤、評分、合集、開啟紀錄）、設定、標籤圖片與縮圖（可在下方關閉）。滑過預覽會在需要時重新產生，不會備份。僅支援 SQLite。</p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3>備份內容</h3>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="app-backup-thumbnails">
+                                備份包含縮圖
+                            </label>
+                            <p class="field-description">手動與自動備份都適用。自動備份保留 7 份，每份都有一套完整的縮圖，片數多時會佔用較多空間。還原時只會補上缺少的縮圖，不會刪除現有的。變更後請按上方「儲存設定」。</p>
+                        </div>
                     </div>
 
                     <div class="settings-card">
@@ -336,7 +391,7 @@
 
                     <div class="settings-card">
                         <h3>從備份還原</h3>
-                        <p class="field-description">選擇一個 VideoNow-backup-… 資料夾還原。還原前會先自動備份目前的資料（存在 backups/pre-restore），還原後應用程式會重新啟動。資料庫連線設定不會被備份裡的設定覆蓋。</p>
+                        <p class="field-description">選擇一個 VideoNow-backup-… 資料夾還原。還原前會先自動備份目前的資料（存在備份資料夾的 pre-restore），還原後應用程式會重新啟動。資料庫連線設定與存放位置不會被備份裡的設定覆蓋。</p>
                         <div class="cleanup-actions">
                             <button id="restore-backup-btn" class="btn btn-danger">選擇備份並還原…</button>
                             <div id="restore-backup-status" class="cleanup-status"></div>

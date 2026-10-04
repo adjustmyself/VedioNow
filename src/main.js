@@ -7,6 +7,7 @@ const ThumbnailGenerator = require('./thumbnailGenerator');
 const Config = require('./config');
 const BackupManager = require('./backupManager');
 const AutoTagRules = require('./autoTagRules');
+const StorageMover = require('./storageMover');
 const { getUserDataDir, LEGACY_DATA_DIR } = require('./appPaths');
 
 // Windows：明確設定 AppUserModelID，否則打包後工作列圖示不會套用自訂 icon
@@ -24,6 +25,8 @@ let database;
 let videoScanner;
 let thumbnailGenerator;
 let config;
+// 圖片與備份的存放位置（啟動時從設定讀取一次；變更位置後會重新啟動）
+let storagePaths = null;
 // 主視窗保底顯示的計時器（渲染端沒回報就緒時用）
 let mainWindowRevealTimer = null;
 // 啟動畫面最後一次的進度，載入完成後補送
@@ -226,13 +229,14 @@ app.whenReady().then(async () => {
     } catch (e) {
       // 讀不到就用預設淺色
     }
+    storagePaths = await config.getStoragePaths();
 
     // 使用工廠創建資料庫實例
     setSplashStatus('連線資料庫…', 45);
     database = await DatabaseFactory.create();
 
     videoScanner = createVideoScanner(database);
-    thumbnailGenerator = new ThumbnailGenerator();
+    thumbnailGenerator = new ThumbnailGenerator({ imagesDir: getImagesDir() });
     // 產縮圖時 FFmpeg 會順便印出影片長度，直接寫回資料庫（掃描本身不讀影片內容）。
     // 用當下的 database 變數：切換資料庫後要寫到新的連線
     thumbnailGenerator.onDuration = (videoPath, seconds) => database?.setVideoDuration(videoPath, seconds);
@@ -277,10 +281,13 @@ app.whenReady().then(async () => {
     setTimeout(syncWatchedFolders, 5000);
 
     // 每日自動備份：延後到首頁載入完之後，不和啟動時的查詢搶資源
-    setTimeout(() => {
-      getBackupManager().autoBackup(database)
-        .then(dir => { if (dir) console.log(`已建立自動備份: ${dir}`); })
-        .catch(error => console.warn('自動備份失敗:', error));
+    setTimeout(async () => {
+      try {
+        const dir = await getBackupManager().autoBackup(database, { includeThumbnails: await shouldBackupThumbnails() });
+        if (dir) console.log(`已建立自動備份: ${dir}`);
+      } catch (error) {
+        console.warn('自動備份失敗:', error);
+      }
     }, 15000);
 
     app.on('activate', () => {
@@ -714,7 +721,16 @@ async function migrateLegacyAppData() {
 // 舊版曾把圖片複製進程式所在的 ../data 並以絕對路徑入庫，重新打包/搬移程式就會失效。
 const LEGACY_TAG_IMAGES_DIR = path.join(LEGACY_DATA_DIR, 'tag-images');
 function getTagImagesDir() {
-  return path.join(getUserDataDir(), 'tag-images');
+  return path.join(getImagesDir(), 'tag-images');
+}
+
+// 縮圖、滑過預覽、標籤圖片的上層資料夾（設定頁「存放位置」可變更，預設 userData）
+function getImagesDir() {
+  return storagePaths?.imagesDir || getUserDataDir();
+}
+
+function getBackupsDir() {
+  return storagePaths?.backupDir || path.join(getUserDataDir(), 'backups');
 }
 
 // 提供給 renderer 組出圖片的 file:// URL（資料庫只存檔名）
@@ -1188,6 +1204,9 @@ ipcMain.handle('save-config', async (event, settings) => {
 // 重置配置
 ipcMain.handle('reset-config', async () => {
   try {
+    // 存放位置不重置：圖片與備份實際放在那裡，改回預設會讓程式找不到它們
+    const { storage } = await config.load();
+
     // 刪除配置檔案
     if (await fs.pathExists(config.getConfigPath())) {
       await fs.remove(config.getConfigPath());
@@ -1195,6 +1214,9 @@ ipcMain.handle('reset-config', async () => {
 
     // 重新初始化
     await config.init();
+    if (storage && (storage.imagesDir || storage.backupDir)) {
+      await config.save({ ...(await config.load()), storage });
+    }
 
     // 重新創建資料庫實例
     await recreateDatabase();
@@ -1341,9 +1363,18 @@ ipcMain.handle('migrate-mongodb-to-sqlite', async () => {
 let backupManager = null;
 function getBackupManager() {
   if (!backupManager) {
-    backupManager = new BackupManager({ userDataDir: getUserDataDir(), appVersion: app.getVersion() });
+    backupManager = new BackupManager({
+      userDataDir: getUserDataDir(),
+      imagesDir: getImagesDir(),
+      backupsDir: getBackupsDir(),
+      appVersion: app.getVersion()
+    });
   }
   return backupManager;
+}
+
+async function shouldBackupThumbnails() {
+  return (await config.load()).app?.backupThumbnails !== false;
 }
 
 // 備份 / 還原會關閉並替換資料庫，同時只允許一個在執行
@@ -1387,7 +1418,9 @@ ipcMain.handle('create-backup', (event) => withBackupLock(async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
 
-  const dir = await getBackupManager().createBackup(database, result.filePaths[0]);
+  const dir = await getBackupManager().createBackup(database, result.filePaths[0], {
+    includeThumbnails: await shouldBackupThumbnails()
+  });
   return { success: true, path: dir };
 }));
 
@@ -1445,6 +1478,67 @@ ipcMain.handle('restore-backup', (event, backupDir) => withBackupLock(async () =
     app.exit(0);
   }, 300);
   return { success: true, safetyDir };
+}));
+
+// ========== 存放位置 ==========
+ipcMain.handle('get-storage-info', () => {
+  const defaults = Config.defaultStoragePaths();
+  return {
+    dataDir: getUserDataDir(),
+    imagesDir: getImagesDir(),
+    thumbnailsDir: thumbnailGenerator ? thumbnailGenerator.getThumbnailDir() : path.join(getImagesDir(), 'thumbnails'),
+    backupDir: getBackupsDir(),
+    imagesDirIsDefault: StorageMover.samePath(getImagesDir(), defaults.imagesDir),
+    backupDirIsDefault: StorageMover.samePath(getBackupsDir(), defaults.backupDir)
+  };
+});
+
+// kind：data（設定檔與資料庫）/ images / backup
+ipcMain.handle('open-storage-dir', async (event, kind) => {
+  const dirs = { data: getUserDataDir(), images: getImagesDir(), backup: getBackupsDir() };
+  const dir = dirs[kind];
+  if (!dir) return { success: false, error: '未知的資料夾' };
+  await fs.ensureDir(dir);
+  const error = await shell.openPath(dir);
+  return error ? { success: false, error } : { success: true };
+});
+
+ipcMain.handle('choose-storage-dir', async (event, kind) => {
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+    title: kind === 'backup' ? '選擇備份存放位置' : '選擇圖片存放位置',
+    defaultPath: kind === 'backup' ? getBackupsDir() : getImagesDir(),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
+  return { success: true, path: result.filePaths[0] };
+});
+
+// 變更圖片或備份的存放位置並搬移既有檔案；newDir 為空時改回預設位置。
+// 與備份 / 還原共用鎖：搬移期間不能同時讀寫這些資料夾
+ipcMain.handle('change-storage-dir', (event, kind, newDir) => withBackupLock(async () => {
+  const defaults = Config.defaultStoragePaths();
+  if (kind === 'images') {
+    const target = newDir || defaults.imagesDir;
+    await StorageMover.validateTarget(getImagesDir(), target, StorageMover.IMAGE_SUBDIRS);
+    await StorageMover.moveSubdirs(getImagesDir(), target, StorageMover.IMAGE_SUBDIRS,
+      () => config.setStoragePath('imagesDir', target));
+    // 縮圖產生器、標籤圖片路徑與畫面端快取的圖片路徑都在啟動時決定，重新啟動最單純
+    setTimeout(() => {
+      app.relaunch();
+      app.exit(0);
+    }, 300);
+    return { success: true, path: target, restarting: true };
+  }
+  if (kind === 'backup') {
+    const target = newDir || defaults.backupDir;
+    await StorageMover.validateTarget(getBackupsDir(), target, StorageMover.BACKUP_SUBDIRS);
+    await StorageMover.moveSubdirs(getBackupsDir(), target, StorageMover.BACKUP_SUBDIRS,
+      () => config.setStoragePath('backupDir', target));
+    storagePaths = await config.getStoragePaths();
+    backupManager = null;
+    return { success: true, path: target, restarting: false };
+  }
+  return { success: false, error: '未知的存放位置' };
 }));
 
 // 重新啟動應用程式

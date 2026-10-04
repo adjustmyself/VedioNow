@@ -32,7 +32,9 @@ const INVOKE_CHANNELS = new Set([
   'open-settings', 'open-tag-manager', 'save-config', 'reset-config', 'restart-app',
   'test-mongodb-connection', 'migrate-mongodb-to-sqlite',
   // 備份與還原
-  'get-backup-info', 'create-backup', 'open-backup-dir', 'choose-restore-backup', 'restore-backup'
+  'get-backup-info', 'create-backup', 'open-backup-dir', 'choose-restore-backup', 'restore-backup',
+  // 存放位置
+  'get-storage-info', 'open-storage-dir', 'choose-storage-dir', 'change-storage-dir'
 ]);
 
 // 畫面端 → 主行程（ipcMain.on，不需回應）
