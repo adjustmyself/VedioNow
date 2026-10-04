@@ -177,9 +177,10 @@ describe('ThumbnailGenerator', () => {
 
     test('擷取時間點平均分布在 5%～95%', () => {
       const offsets = ThumbnailGenerator.previewOffsets(100);
-      expect(offsets).toHaveLength(10);
+      // 畫面端靠 get-preview 回傳的 PREVIEW_FRAMES 切格，必須與實際格數一致
+      expect(offsets).toHaveLength(ThumbnailGenerator.PREVIEW_FRAMES);
       expect(offsets[0]).toBe(5);
-      expect(offsets[9]).toBe(95);
+      expect(offsets[offsets.length - 1]).toBe(95);
       expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
     });
 

@@ -454,3 +454,5 @@ class ThumbnailGenerator {
 module.exports = ThumbnailGenerator;
 module.exports.buildOffsets = buildOffsets;
 module.exports.parseDurationSeconds = parseDurationSeconds;
+// 畫面端不另外定義格數，由 get-preview 的回傳值帶過去
+module.exports.PREVIEW_FRAMES = PREVIEW_FRAMES;

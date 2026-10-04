@@ -2,17 +2,16 @@
 // 由 renderer.js 以 mixin 方式併入 VideoManager.prototype，方法內的 this 即 VideoManager 實例
 import { toFileUrl } from '../shared/util.js';
 
-// 須與 thumbnailGenerator.js 的 PREVIEW_FRAMES 一致
-const PREVIEW_FRAMES = 10;
 // 滑鼠停留多久才開始（快速掃過卡片時不觸發 FFmpeg）
 const HOVER_DELAY_MS = 350;
 
 class HoverPreviewMethods {
   initHoverPreview() {
-    // filepath -> 預覽圖路徑；產生失敗記為 null，本次執行不再重試
+    // filepath -> { path, frames }（格數由主行程的 PREVIEW_FRAMES 決定）；產生失敗記為 null，本次執行不再重試
     this._previewCache = new Map();
     this._previewThumb = null;
     this._previewOverlay = null;
+    this._previewFrames = 0;
     this._previewTimer = null;
     this._previewMouseX = 0;
 
@@ -47,8 +46,8 @@ class HoverPreviewMethods {
     this._previewTimer = setTimeout(async () => {
       if (this._previewThumb !== thumb || !thumb.isConnected) return;
 
-      let previewPath = this._previewCache.get(filepath);
-      if (!previewPath) {
+      let preview = this._previewCache.get(filepath);
+      if (!preview) {
         thumb.classList.add('preview-loading');
         const video = this.currentVideos.find(v => v.filepath === filepath);
         let result;
@@ -66,26 +65,27 @@ class HoverPreviewMethods {
           }
           return;
         }
-        previewPath = result.path;
-        this._previewCache.set(filepath, previewPath);
+        preview = { path: result.path, frames: result.frames };
+        this._previewCache.set(filepath, preview);
       }
       if (this._previewThumb !== thumb || !thumb.isConnected) return;
-      this._showHoverPreview(thumb, previewPath);
+      this._showHoverPreview(thumb, preview);
     }, HOVER_DELAY_MS);
   }
 
-  _showHoverPreview(thumb, previewPath) {
+  _showHoverPreview(thumb, { path, frames }) {
     const overlay = document.createElement('div');
     overlay.className = 'hover-preview';
     const frame = document.createElement('div');
     frame.className = 'hover-preview-frame';
-    frame.style.backgroundImage = `url("${toFileUrl(previewPath)}")`;
-    frame.style.backgroundSize = `${PREVIEW_FRAMES * 100}% 100%`;
+    frame.style.backgroundImage = `url("${toFileUrl(path)}")`;
+    frame.style.backgroundSize = `${frames * 100}% 100%`;
     const bar = document.createElement('div');
     bar.className = 'hover-preview-bar';
     overlay.append(frame, bar);
     thumb.appendChild(overlay);
     this._previewOverlay = overlay;
+    this._previewFrames = frames;
     this._scrubHoverPreview();
   }
 
@@ -96,9 +96,10 @@ class HoverPreviewMethods {
     if (!thumb || !overlay) return;
     const rect = thumb.getBoundingClientRect();
     const ratio = Math.min(0.9999, Math.max(0, (this._previewMouseX - rect.left) / rect.width));
-    const index = Math.floor(ratio * PREVIEW_FRAMES);
-    overlay.firstChild.style.backgroundPosition = `${(index * 100) / (PREVIEW_FRAMES - 1)}% 0`;
-    overlay.lastChild.style.width = `${((index + 1) / PREVIEW_FRAMES) * 100}%`;
+    const frames = this._previewFrames;
+    const index = Math.floor(ratio * frames);
+    overlay.firstChild.style.backgroundPosition = `${(index * 100) / (frames - 1)}% 0`;
+    overlay.lastChild.style.width = `${((index + 1) / frames) * 100}%`;
   }
 
   _stopHoverPreview() {

@@ -1034,7 +1034,7 @@ ipcMain.handle('get-preview', async (event, videoPath, fingerprint, duration) =>
     const appConfig = (await config.load()).app || {};
     if (appConfig.hoverPreview === false) return { success: false, disabled: true };
     const preview = await thumbnailGenerator.generatePreview(videoPath, fingerprint, Number(duration) || 0);
-    return { success: true, path: preview };
+    return { success: true, path: preview, frames: ThumbnailGenerator.PREVIEW_FRAMES };
   } catch (error) {
     return { success: false, error: error.message };
   }
