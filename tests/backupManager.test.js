@@ -120,6 +120,22 @@ describe('BackupManager', () => {
     expect(backups).toHaveLength(AUTO_BACKUP_KEEP);
     // 新的在前
     expect(new Date(backups[0].createdAt).getTime()).toBe(hours(250).getTime());
+
+    // 調低份數：下一次自動備份後只留最近 3 份
+    await manager.autoBackup(db, { now: hours(275), keep: 3 });
+    const kept = await manager.listBackups(manager.autoDir);
+    expect(kept).toHaveLength(3);
+    expect(new Date(kept[0].createdAt).getTime()).toBe(hours(275).getTime());
+  });
+
+  test('保留份數不合法時用預設值，超出範圍時夾到 1～上限', () => {
+    const { normalizeKeep, AUTO_BACKUP_KEEP_MAX } = BackupManager;
+    expect(normalizeKeep(undefined)).toBe(AUTO_BACKUP_KEEP);
+    expect(normalizeKeep('abc')).toBe(AUTO_BACKUP_KEEP);
+    expect(normalizeKeep(0)).toBe(1);
+    expect(normalizeKeep(-5)).toBe(1);
+    expect(normalizeKeep(12.7)).toBe(12);
+    expect(normalizeKeep(999)).toBe(AUTO_BACKUP_KEEP_MAX);
   });
 
   test('還原覆蓋資料庫與標籤圖片，設定檔保留目前的資料庫連線區段', async () => {

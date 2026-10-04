@@ -31,7 +31,8 @@ class Config {
         language: 'zh-TW',
         pageSize: 9,
         hoverPreview: true, // 滑鼠停在縮圖上時產生並顯示多格預覽
-        backupThumbnails: true // 手動與自動備份都包含縮圖
+        backupThumbnails: true, // 手動與自動備份都包含縮圖
+        autoBackupKeep: 7 // 自動備份保留份數（1～60，見 BackupManager.normalizeKeep）
       },
       // 圖片（縮圖、滑過預覽、標籤圖片）與備份的存放位置，空字串為 userData 底下的預設位置。
       // 由設定頁的「存放位置」變更（會搬移既有檔案），不經過 updateSettings

@@ -226,6 +226,7 @@ class SettingsManager {
             document.getElementById('app-page-size').value = app.pageSize || 9;
             document.getElementById('app-hover-preview').checked = app.hoverPreview !== false;
             document.getElementById('app-backup-thumbnails').checked = app.backupThumbnails !== false;
+            document.getElementById('app-auto-backup-keep').value = app.autoBackupKeep || 7;
 
             // 載入縮圖統計與存放位置
             this.loadThumbnailStats();
@@ -246,6 +247,8 @@ class SettingsManager {
 
             if (success) {
                 this.config = settings;
+                // 「已保留」旁顯示的上限跟著更新
+                if (this.currentSection === 'backup') this.loadBackupInfo();
                 this.showSaveResult(needsRestart);
             } else {
                 this.showError('儲存設定失敗');
@@ -276,7 +279,8 @@ class SettingsManager {
                 language: document.getElementById('app-language').value,
                 pageSize: this.collectPageSize(),
                 hoverPreview: document.getElementById('app-hover-preview').checked,
-                backupThumbnails: document.getElementById('app-backup-thumbnails').checked
+                backupThumbnails: document.getElementById('app-backup-thumbnails').checked,
+                autoBackupKeep: this.collectAutoBackupKeep()
             }
         };
 
@@ -288,6 +292,13 @@ class SettingsManager {
         const raw = parseInt(document.getElementById('app-page-size').value, 10);
         if (isNaN(raw)) return 9;
         return Math.min(200, Math.max(1, raw));
+    }
+
+    // 自動備份保留份數（1～60，非法值回退 7；主行程會再檢查一次）
+    collectAutoBackupKeep() {
+        const raw = parseInt(document.getElementById('app-auto-backup-keep').value, 10);
+        if (isNaN(raw)) return 7;
+        return Math.min(60, Math.max(1, raw));
     }
 
     async resetSettings() {
@@ -663,7 +674,7 @@ class SettingsManager {
                 return;
             }
             latestEl.textContent = info.latestAuto ? new Date(info.latestAuto).toLocaleString() : '尚未備份（啟動後約 15 秒會自動備份）';
-            countEl.textContent = `${info.autoCount} 份`;
+            countEl.textContent = `${info.autoCount} 份（上限 ${info.keep} 份）`;
         } catch (error) {
             latestEl.textContent = '載入失敗';
             countEl.textContent = '載入失敗';

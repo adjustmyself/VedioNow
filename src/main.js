@@ -283,7 +283,7 @@ app.whenReady().then(async () => {
     // 每日自動備份：延後到首頁載入完之後，不和啟動時的查詢搶資源
     setTimeout(async () => {
       try {
-        const dir = await getBackupManager().autoBackup(database, { includeThumbnails: await shouldBackupThumbnails() });
+        const dir = await getBackupManager().autoBackup(database, await getBackupOptions());
         if (dir) console.log(`已建立自動備份: ${dir}`);
       } catch (error) {
         console.warn('自動備份失敗:', error);
@@ -1373,8 +1373,13 @@ function getBackupManager() {
   return backupManager;
 }
 
-async function shouldBackupThumbnails() {
-  return (await config.load()).app?.backupThumbnails !== false;
+// 設定頁「備份與還原」的選項
+async function getBackupOptions() {
+  const appConfig = (await config.load()).app || {};
+  return {
+    includeThumbnails: appConfig.backupThumbnails !== false,
+    keep: BackupManager.normalizeKeep(appConfig.autoBackupKeep ?? BackupManager.AUTO_BACKUP_KEEP)
+  };
 }
 
 // 備份 / 還原會關閉並替換資料庫，同時只允許一個在執行
@@ -1401,7 +1406,8 @@ ipcMain.handle('get-backup-info', async () => {
       supported: BackupManager.supports(database),
       autoDir: manager.autoDir,
       latestAuto: autoBackups[0]?.createdAt || null,
-      autoCount: autoBackups.length
+      autoCount: autoBackups.length,
+      keep: (await getBackupOptions()).keep
     };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1418,9 +1424,8 @@ ipcMain.handle('create-backup', (event) => withBackupLock(async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
 
-  const dir = await getBackupManager().createBackup(database, result.filePaths[0], {
-    includeThumbnails: await shouldBackupThumbnails()
-  });
+  const { includeThumbnails } = await getBackupOptions();
+  const dir = await getBackupManager().createBackup(database, result.filePaths[0], { includeThumbnails });
   return { success: true, path: dir };
 }));
 

@@ -360,13 +360,18 @@
                                 <input type="checkbox" id="app-backup-thumbnails">
                                 備份包含縮圖
                             </label>
-                            <p class="field-description">手動與自動備份都適用。自動備份保留 7 份，每份都有一套完整的縮圖，片數多時會佔用較多空間。還原時只會補上缺少的縮圖，不會刪除現有的。變更後請按上方「儲存設定」。</p>
+                            <p class="field-description">手動與自動備份都適用。每份自動備份都有一套完整的縮圖，片數多時會佔用較多空間。還原時只會補上缺少的縮圖，不會刪除現有的。變更後請按上方「儲存設定」。</p>
                         </div>
                     </div>
 
                     <div class="settings-card">
                         <h3>自動備份</h3>
-                        <p class="field-description">每天第一次啟動時自動備份一次，保留最近 7 份。</p>
+                        <p class="field-description">每天第一次啟動時自動備份一次，超過保留份數時刪除最舊的。</p>
+                        <div class="form-group">
+                            <label for="app-auto-backup-keep">保留份數:</label>
+                            <input type="number" id="app-auto-backup-keep" min="1" max="60" step="1">
+                            <p class="field-description">1～60 份，預設 7。調低時，多出來的舊備份會在下一次自動備份後才刪除。變更後請按上方「儲存設定」。</p>
+                        </div>
                         <div class="thumbnail-stats">
                             <div class="stat-row">
                                 <span class="stat-label">最近一次:</span>

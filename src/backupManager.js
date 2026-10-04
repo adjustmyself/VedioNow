@@ -11,8 +11,17 @@ const MANIFEST_FILE = 'manifest.json';
 const BACKUP_PREFIX = 'VideoNow-backup-';
 
 const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+// 自動備份保留份數：預設值與設定頁可選的範圍（config.app.autoBackupKeep）
 const AUTO_BACKUP_KEEP = 7;
+const AUTO_BACKUP_KEEP_MAX = 60;
 const PRE_RESTORE_KEEP = 5;
+
+// 設定值不合法時用預設值，超出範圍時夾到 1～AUTO_BACKUP_KEEP_MAX
+function normalizeKeep(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return AUTO_BACKUP_KEEP;
+  return Math.min(AUTO_BACKUP_KEEP_MAX, Math.max(1, Math.floor(n)));
+}
 
 // 本地時間 YYYYMMDD-HHmmss，資料夾名稱照字典序排就是時間順序
 function formatTimestamp(date = new Date()) {
@@ -101,14 +110,15 @@ class BackupManager {
     }
   }
 
-  // 每天第一次啟動時備份一次，只保留最近幾份；回傳新備份路徑，今天已備份過回傳 null
-  async autoBackup(database, { now = new Date(), includeThumbnails = false } = {}) {
+  // 每天第一次啟動時備份一次，只保留最近 keep 份；回傳新備份路徑，今天已備份過回傳 null。
+  // 調低份數時，多出來的舊備份在下一次自動備份後才刪除（儲存設定時不刪任何東西）
+  async autoBackup(database, { now = new Date(), includeThumbnails = false, keep = AUTO_BACKUP_KEEP } = {}) {
     if (!BackupManager.supports(database)) return null;
     const [latest] = await this.listBackups(this.autoDir);
     if (latest && now - new Date(latest.createdAt) < AUTO_BACKUP_INTERVAL_MS) return null;
 
     const dir = await this.createBackup(database, this.autoDir, { now, reason: 'auto', includeThumbnails });
-    await this.prune(this.autoDir, AUTO_BACKUP_KEEP);
+    await this.prune(this.autoDir, normalizeKeep(keep));
     return dir;
   }
 
@@ -231,3 +241,5 @@ class BackupManager {
 module.exports = BackupManager;
 module.exports.formatTimestamp = formatTimestamp;
 module.exports.AUTO_BACKUP_KEEP = AUTO_BACKUP_KEEP;
+module.exports.AUTO_BACKUP_KEEP_MAX = AUTO_BACKUP_KEEP_MAX;
+module.exports.normalizeKeep = normalizeKeep;
