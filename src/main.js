@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const DatabaseFactory = require('./database');
@@ -162,6 +162,8 @@ function revealMainWindow() {
     return;
   }
   setSplashStatus('準備就緒', 100);
+  // 預設以最大化開啟；maximize() 對隱藏視窗會直接顯示它，所以只能在這裡呼叫
+  mainWindow.maximize();
   mainWindow.show();
   mainWindow.focus();
   closeSplashWindow();
@@ -173,10 +175,17 @@ function armRevealFallback(delay) {
   mainWindowRevealTimer = setTimeout(revealMainWindow, delay);
 }
 
+const MAIN_WINDOW_NORMAL_SIZE = { width: 1200, height: 800 };
+
 function createWindow() {
+  // 隱藏期間就用整個工作區的大小建立，讓渲染端以最大化後的尺寸排版格狀檢視，
+  // 顯示時再 maximize()，才不會一出現就重新分頁、閃一下
+  const workArea = screen.getPrimaryDisplay().workArea;
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
     show: false,
     backgroundColor: appTheme === 'dark' ? '#16181d' : '#f5f5f5',
     webPreferences: {
@@ -186,6 +195,21 @@ function createWindow() {
       preload: PRELOAD_PATH
     },
     icon: getWindowIconPath()
+  });
+
+  // 一般大小是建立時的工作區大小，第一次「還原」時改回 1200x800 置中，
+  // 否則按還原鈕看起來幾乎沒變化
+  mainWindow.once('unmaximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const area = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+    const width = Math.min(MAIN_WINDOW_NORMAL_SIZE.width, area.width);
+    const height = Math.min(MAIN_WINDOW_NORMAL_SIZE.height, area.height);
+    mainWindow.setBounds({
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: Math.round(area.y + (area.height - height) / 2),
+      width,
+      height
+    });
   });
 
   mainWindow.loadFile('src/renderer/index.html');
