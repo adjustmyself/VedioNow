@@ -125,7 +125,7 @@ class TagFilterBarMethods {
       </span>`;
     };
 
-    // 已選標籤置頂區（彙整所有 group 裡被選中的）
+    // 已選標籤（彙整所有 group 裡被選中的），放在篩選列第一行的按鈕右邊
     let pinnedHtml = '';
     if (this.activeTags.size > 0) {
       const allTagsFlat = this.tagsByGroup.flatMap(g => g.tags || []);
@@ -138,14 +138,7 @@ class TagFilterBarMethods {
         }
       });
       if (selected.length > 0) {
-        pinnedHtml = `
-          <div class="tag-pinned-section">
-            <div class="tag-pinned-header">已選 (${selected.length})</div>
-            <div class="tag-group-tags">
-              ${selected.map(renderTag).join('')}
-            </div>
-          </div>
-        `;
+        pinnedHtml = `<span class="tag-pinned-label">已選 (${selected.length})</span>${selected.map(renderTag).join('')}`;
       }
     }
 
@@ -157,7 +150,7 @@ class TagFilterBarMethods {
         : allTags.length;
       // 搜尋中且整組無命中 → 不顯示該分頁
       if (query && matchCount === 0) return '';
-      const isActive = !query && this.activeGroup === group.name;
+      const isActive = this.tagPanelOpen && !query && this.activeGroup === group.name;
       const groupKey = escapeHtml(group.name);
       const countText = query && matchCount !== allTags.length
         ? `${matchCount}/${allTags.length}`
@@ -171,9 +164,11 @@ class TagFilterBarMethods {
       `;
     }).join('');
 
-    // 內容區：搜尋時顯示跨群組命中；否則顯示目前選取群組的標籤
+    // 下拉面板：搜尋時顯示跨群組命中；否則顯示目前選取群組的標籤；面板收起時不顯示
     let contentHtml = '';
-    if (query) {
+    if (!this.tagPanelOpen) {
+      // 收起
+    } else if (query) {
       const matched = this.tagsByGroup.flatMap(g =>
         (g.tags || []).filter(t => t.name.toLowerCase().includes(query)));
       contentHtml = matched.length
@@ -195,13 +190,15 @@ class TagFilterBarMethods {
       }
     }
 
+    if (this.elements.tagPinned) this.elements.tagPinned.innerHTML = pinnedHtml;
     this.elements.tagsFilter.innerHTML =
-      pinnedHtml +
       `<div class="tag-tabs">${tabsHtml}</div>` +
       `<div class="tag-tab-content">${contentHtml}</div>`;
 
     if (!this.tagFilterEventBound) {
-      this.elements.tagsFilter.addEventListener('click', (e) => {
+      // 群組分頁、下拉面板與第一行的已選標籤都在篩選列內，一起委派
+      const bar = this.elements.tagsFilter.closest('.tag-filter-bar') || this.elements.tagsFilter;
+      bar.addEventListener('click', (e) => {
         const tab = e.target.closest('.tag-tab');
         if (tab && tab.dataset.group) {
           this.setActiveGroup(tab.dataset.group);
@@ -212,14 +209,29 @@ class TagFilterBarMethods {
           this.toggleTagFilter(tag.dataset.tag);
         }
       });
+      // 點篩選列以外的地方或按 Esc 收起下拉面板
+      document.addEventListener('mousedown', (e) => {
+        if (this.tagPanelOpen && !e.target.closest('.tag-filter-bar')) this.closeTagPanel();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.closeTagPanel();
+      });
       this.tagFilterEventBound = true;
     }
   }
 
-  // 切換目前選取的群組分頁；再次點選同一個則收起
+  // 點群組分頁：展開該群組的下拉面板；面板已展開同一個群組時收起
   setActiveGroup(groupName) {
-    this.activeGroup = this.activeGroup === groupName ? null : groupName;
+    const sameGroupOpen = this.tagPanelOpen && !this.tagSearchQuery && this.activeGroup === groupName;
+    this.activeGroup = groupName;
+    this.tagPanelOpen = !sameGroupOpen;
     this.saveActiveGroup();
+    this.renderTagsFilter();
+  }
+
+  closeTagPanel() {
+    if (!this.tagPanelOpen) return;
+    this.tagPanelOpen = false;
     this.renderTagsFilter();
   }
 

@@ -9,6 +9,7 @@ import CollectionMethods from './modules/collections.js';
 import BatchSelectionMethods from './modules/batchSelection.js';
 import SavedSearchMethods from './modules/savedSearches.js';
 import HoverPreviewMethods from './modules/hoverPreview.js';
+import GridLayoutMethods from './modules/gridLayout.js';
 
 // 影片卡片最多顯示幾個標籤，其餘收成「+N」，避免標籤多的卡片撐高整排
 const CARD_TAG_LIMIT = 6;
@@ -21,6 +22,8 @@ class VideoManager {
     this.tagSearchQuery = '';
     // tab 模式：目前選取（展開顯示標籤）的群組名稱；null = 未選取
     this.activeGroup = this.loadActiveGroup();
+    // 群組標籤下拉面板是否展開：面板浮在影片上方、不推擠版面，啟動時收起
+    this.tagPanelOpen = false;
     // 多面向篩選：當前條件下每個標籤的命中計數；null = 無篩選，使用原始 video_count
     this.filteredTagCounts = null;
     this._tagCountsReqId = 0;
@@ -41,7 +44,8 @@ class VideoManager {
     this.thumbnailVersions = new Map();
     // 分頁相關狀態
     this.currentPage = 1;
-    this.pageSize = 9;
+    this.pageSize = 9; // 設定值；實際每頁筆數見 pageSizeForView()（格狀檢視補滿整列）
+    this.gridColumns = 3;
     this.totalVideos = 0;
     this.totalPages = 0;
     // 事件綁定標誌，避免重複綁定
@@ -52,6 +56,7 @@ class VideoManager {
     this.tagFilterEventBound = false;
 
     this.initializeElements();
+    this.initGridLayout();
     this.bindEvents();
     this.init();
   }
@@ -92,6 +97,7 @@ class VideoManager {
       duplicateFilterCount: document.getElementById('duplicate-filter-count'),
       unwatchedFilterToggle: document.getElementById('unwatched-filter-toggle'),
       tagsFilter: document.getElementById('tags-filter'),
+      tagPinned: document.getElementById('tag-pinned'),
       tagFilterSearch: document.getElementById('tag-filter-search'),
       tagFilterSearchClear: document.getElementById('tag-filter-search-clear'),
       resetTagsBtn: document.getElementById('reset-tags-btn'),
@@ -169,6 +175,7 @@ class VideoManager {
     this.elements.tagFilterSearch?.addEventListener('input', (e) => {
       this.tagSearchQuery = e.target.value.trim().toLowerCase();
       this.elements.tagFilterSearchClear?.classList.toggle('hidden', !this.tagSearchQuery);
+      this.tagPanelOpen = true;
       debouncedTagFilter();
     });
     this.elements.tagFilterSearchClear?.addEventListener('click', () => {
@@ -310,9 +317,10 @@ class VideoManager {
   }
 
   _buildPageFilters() {
+    const pageSize = this.pageSizeForView();
     return {
-      limit: this.pageSize,
-      offset: (this.currentPage - 1) * this.pageSize,
+      limit: pageSize,
+      offset: (this.currentPage - 1) * pageSize,
       rating: this.selectedRating,
       drivePath: this.selectedDrivePath,
       duplicatesOnly: this.duplicatesOnly,
@@ -502,11 +510,13 @@ class VideoManager {
   }
 
   setViewMode(mode) {
+    const previousSize = this.pageSizeForView();
     this.viewMode = mode;
     this.elements.gridViewBtn.classList.toggle('active', mode === 'grid');
     this.elements.listViewBtn.classList.toggle('active', mode === 'list');
     this.elements.videosContainer.className = mode === 'grid' ? 'videos-grid' : 'videos-list';
-    this.renderVideos();
+    // 格狀補滿整列後每頁筆數可能和列表不同，不同就重查，否則直接重畫
+    if (!this.repaginate(previousSize)) this.renderVideos();
   }
 
   // 排序在後端處理，才會對全部結果排序而不是只排目前這一頁
@@ -542,6 +552,7 @@ class VideoManager {
       this.viewMode === 'grid' ? this.createVideoCard(video) : this.createVideoListItem(video)
     ).join('');
 
+    this.fitAllCardTags();
     this.bindVideoEvents();
     this.applySelectionState();
     // 查詢本頁縮圖快取；尚未產生的由 IntersectionObserver 在卡片進入畫面時才產生
@@ -570,12 +581,14 @@ class VideoManager {
   }
 
   // 卡片 / 清單項目的整排標籤；開詳情改標籤後由 updateVideoTagsDisplay() 就地更新
-  // 超過 CARD_TAG_LIMIT 個時其餘收成「+N」，hover 看完整名單、點它開詳情
-  _videoTagsHtml(video) {
+  // 超過 limit（最多 CARD_TAG_LIMIT）個時其餘收成「+N」，hover 看完整名單、點它開詳情；
+  // 格狀卡片由 fitCardTags() 依一行放得下的寬度調降 limit
+  _videoTagsHtml(video, limit = CARD_TAG_LIMIT) {
     if (!video.tags || video.tags.length === 0) return '<span class="no-tags">無標籤</span>';
+    const count = Math.min(limit, CARD_TAG_LIMIT);
     const sorted = this._sortTags(video.tags);
-    const shown = sorted.slice(0, CARD_TAG_LIMIT).map(tag => this._videoTagHtml(tag)).join('');
-    const rest = sorted.slice(CARD_TAG_LIMIT).map(tag => (typeof tag === 'string' ? tag : tag.name));
+    const shown = sorted.slice(0, count).map(tag => this._videoTagHtml(tag)).join('');
+    const rest = sorted.slice(count).map(tag => (typeof tag === 'string' ? tag : tag.name));
     if (rest.length === 0) return shown;
     return `${shown}<span class="tag-more" title="${escapeHtml(rest.join('、'))}">+${rest.length}</span>`;
   }
@@ -782,7 +795,8 @@ for (const Methods of [
   CollectionMethods,
   BatchSelectionMethods,
   SavedSearchMethods,
-  HoverPreviewMethods
+  HoverPreviewMethods,
+  GridLayoutMethods
 ]) {
   for (const name of Object.getOwnPropertyNames(Methods.prototype)) {
     if (name === 'constructor') continue;

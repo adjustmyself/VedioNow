@@ -506,7 +506,9 @@ class VideoModalMethods {
     if (!video) return;
 
     const tagsElement = videoCard.querySelector('.video-tags');
-    if (tagsElement) {
+    if (videoCard.classList.contains('video-card')) {
+      this.fitCardTags(videoCard, video);
+    } else if (tagsElement) {
       tagsElement.innerHTML = this._videoTagsHtml(video);
     }
   }

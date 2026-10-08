@@ -21,7 +21,8 @@ body {
 .header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 1rem 2rem;
+    /* 壓低標題列，把高度留給影片格子 */
+    padding: 0.4rem 1.5rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -29,18 +30,23 @@ body {
 }
 
 .header h1 {
-    font-size: 1.8rem;
+    font-size: 1.3rem;
     font-weight: 300;
 }
 
 .header-actions {
     display: flex;
-    gap: 1rem;
+    gap: 0.6rem;
     align-items: center;
 }
 
+.header-actions .btn {
+    padding: 0.3rem 0.85rem;
+    font-size: 0.85rem;
+}
+
 .search-input {
-    padding: 0.5rem 1rem;
+    padding: 0.35rem 1rem;
     border: none;
     border-radius: 20px;
     background: rgba(255,255,255,0.2);
@@ -316,12 +322,15 @@ body {
     margin-bottom: 2rem;
 }
 
-/* 頂部標籤篩選列 */
+/* 頂部標籤篩選列：高度固定（已選標籤在第一行、群組標籤用下拉面板），
+   篩選時影片格子的可用高度不變，列數不會減少 */
 .tag-filter-bar {
     background: white;
     border-bottom: 1px solid #e0e0e0;
-    padding: 0.75rem 1.5rem;
+    padding: 0.6rem 1.5rem;
     flex-shrink: 0;
+    position: relative; /* 下拉面板的定位基準 */
+    z-index: 40;        /* 下拉面板蓋在影片區上面 */
 }
 
 .tag-filter-bar-head {
@@ -397,12 +406,19 @@ body {
     font-size: 0.85rem;
 }
 
-/* 選取群組的標籤內容：橫向鋪滿整行 */
+/* 選取群組的標籤：浮在影片區上方的下拉面板（不推擠版面），點外面或按 Esc 收起 */
 .tag-tab-content {
-    max-height: 200px;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 260px;
     overflow-y: auto;
-    /* 預留空間給 active 標籤的外環 (box-shadow 4px)，避免最上排被捲動容器裁切 */
-    padding: 5px 4px;
+    /* 內距同時預留給 active 標籤的外環 (box-shadow 4px)，避免被捲動容器裁切 */
+    padding: 0.6rem 1.5rem 0.8rem;
+    background: white;
+    border-bottom: 1px solid #e0e0e0;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
 }
 
 .tag-tab-content:empty {
@@ -457,24 +473,36 @@ body {
     display: none;
 }
 
-.tag-pinned-section {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    background: #fff;
-    padding: 0.5rem;
-    margin-bottom: 0.5rem;
-    border: 1px solid #e0e7ff;
-    border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(102, 126, 234, 0.08);
+/* 已選標籤：第一行按鈕右邊排成一行，太多時橫向捲動（不換行，篩選列高度不變）；
+   上下左右留 4px 給 active 標籤的外環 */
+.tag-pinned-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px;
+    scrollbar-width: thin;
 }
 
-.tag-pinned-header {
+.tag-pinned-inline:empty {
+    display: none;
+}
+
+.tag-pinned-inline .tag {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.tag-pinned-label {
+    flex-shrink: 0;
     font-size: 0.75rem;
     color: #667eea;
     font-weight: 600;
-    margin-bottom: 0.4rem;
     letter-spacing: 0.02em;
+    white-space: nowrap;
 }
 
 .tag {
@@ -563,11 +591,12 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative; /* 批次操作列疊在工具列上 */
 }
 
 .toolbar {
     background: white;
-    padding: 1rem 2rem;
+    padding: 0.6rem 2rem;
     border-bottom: 1px solid #e0e0e0;
     display: flex;
     justify-content: space-between;
@@ -581,13 +610,21 @@ body {
 }
 
 .videos-grid {
+    /* 卡片高度固定 = 16:9 縮圖 + 這個文字區高度，modules/gridLayout.js 讀這兩個變數
+       算出畫面放得下幾列，格狀檢視就不會出現捲軸 */
+    --card-content-height: 108px;
+    /* 分頁列有一排按鈕時的高度；第一次量的時候還沒有按鈕，以此為下限 */
+    --pagination-min-height: 60px;
     flex: 1;
-    padding: 2rem;
+    padding: 1.25rem 2rem;
     overflow-y: auto;
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    /* 欄數由 modules/gridLayout.js 依內容區寬度設定（1080p 4 欄、2K 4 欄、4K 5 欄） */
+    grid-template-columns: repeat(var(--grid-cols, 3), minmax(0, 1fr));
+    /* 列高一定要照卡片內容：預設 auto 時容器高度固定（flex:1）、卡片放不下，
+       列高只會從卡片 min-height 長到剩餘空間為止，下一排就蓋住上一排底部的標籤 */
+    grid-auto-rows: max-content;
     gap: 1.5rem;
-    row-gap: calc(1.5rem + 6px);
     min-height: 0;
     align-content: start;
     align-items: start;
@@ -611,7 +648,8 @@ body {
     cursor: pointer;
     display: flex;
     flex-direction: column;
-    min-height: 280px;
+    /* 讓縮圖高度能用 cqw 跟著卡片寬度走 */
+    container-type: inline-size;
 }
 
 .video-card:hover {
@@ -623,8 +661,9 @@ body {
     width: 100%;
     /* 用固定高度而非 aspect-ratio：縮圖內容皆為 position:absolute，
        aspect-ratio 在 flex 欄狀卡片中的假想高度會干擾卡片總高計算，
-       使卡片長不夠高、底部標籤列被 overflow:hidden 裁掉。 */
-    height: 200px;
+       使卡片長不夠高、底部標籤列被 overflow:hidden 裁掉。
+       高度取卡片寬的 16:9（cqw = 卡片寬的 1%），欄數隨解析度變動時比例不變 */
+    height: 56.25cqw;
     flex-shrink: 0;
     background: linear-gradient(45deg, #667eea, #764ba2);
     display: flex;
@@ -775,8 +814,9 @@ body {
 .video-card-content {
     padding: 0.5rem;
     background: white;
-    min-height: 100px;
-    flex: 1;
+    height: var(--card-content-height, 108px);
+    flex: none;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
@@ -829,6 +869,18 @@ body {
     gap: 0.3rem;
     margin-top: auto;
     padding-top: 0.3rem;
+}
+
+/* 格狀卡片的標籤只排一行，放不下的由 fitCardTags() 收進「+N」；
+   左右下留 3px 給篩選中標籤的外框，不會被 overflow 裁掉 */
+.video-card .video-tags {
+    flex-wrap: nowrap;
+    overflow: hidden;
+    padding: 0.3rem 3px 3px;
+}
+
+.video-card .video-tags > * {
+    flex-shrink: 0;
 }
 
 .video-tags .tag {
@@ -1657,8 +1709,7 @@ select {
     justify-content: center;
     align-items: center;
     gap: 0.5rem;
-    padding: 2rem 1rem;
-    margin-top: 2rem;
+    padding: 0.6rem 1rem;
     border-top: 1px solid #e5e5e5;
     flex-wrap: wrap;
 }
@@ -1749,10 +1800,8 @@ select {
 
 @media (max-width: 1200px) {
     .videos-grid {
-        grid-template-columns: repeat(2, 1fr);
         gap: 1rem;
-        row-gap: calc(1rem + 16px);
-        padding: 1.5rem;
+        padding: 1rem 1.5rem;
     }
 }
 
@@ -1769,14 +1818,8 @@ select {
     }
 
     .videos-grid {
-        grid-template-columns: repeat(1, 1fr);
         gap: 1rem;
-        row-gap: calc(1rem + 6px);
         padding: 1rem;
-    }
-
-    .video-card {
-        min-height: 240px;
     }
 
     .header-actions {
@@ -1802,25 +1845,12 @@ select {
 
 @media (max-width: 480px) {
     .videos-grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 240px));
         gap: 0.75rem;
         padding: 0.75rem;
     }
 
-    .video-card {
-        min-height: 220px;
-    }
-
-    .video-card-content {
-        padding: 0.6rem;
-    }
-
     .header {
-        padding: 0.75rem 1rem;
-    }
-
-    .header h1 {
-        font-size: 1.4rem;
+        padding: 0.4rem 1rem;
     }
 }
 
@@ -2222,12 +2252,19 @@ select {
     border-color: #4f6ef7;
 }
 
+/* 疊在工具列上（不佔高度）：多選時格狀檢視的可用高度不變，不會冒出捲軸或換頁。
+   --toolbar-height 由 modules/gridLayout.js 量測後設定 */
 .batch-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    min-height: var(--toolbar-height, auto);
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem;
-    flex-shrink: 0;
     padding: 0.55rem 2rem;
     background: #2b3040;
     color: #fff;
@@ -2519,9 +2556,14 @@ select {
     color: #8b909b;
 }
 
-[data-theme="dark"] .tag-pinned-section {
+[data-theme="dark"] .tag-tab-content {
     background: #23262e;
-    border-color: #2f3d63;
+    border-bottom-color: #353944;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .tag-pinned-label {
+    color: #8ea2f0;
 }
 
 /* 其餘次要文字 */

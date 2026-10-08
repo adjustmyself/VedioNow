@@ -76,8 +76,9 @@ class PaginationMethods {
     // 自訂頁碼跳轉
     paginationHTML += `<span class="pagination-jump">前往 <input type="number" class="pagination-jump-input" min="1" max="${this.totalPages}" value="${this.currentPage}" aria-label="前往頁碼"> / ${this.totalPages} 頁 <button class="pagination-jump-btn">跳轉</button></span>`;
 
-    const startItem = (this.currentPage - 1) * this.pageSize + 1;
-    const endItem = Math.min(this.currentPage * this.pageSize, this.totalVideos);
+    const pageSize = this.pageSizeForView();
+    const startItem = (this.currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(this.currentPage * pageSize, this.totalVideos);
     paginationHTML += `<div class="pagination-info">顯示第 ${startItem}-${endItem} 筆，共 ${this.totalVideos} 筆影片</div>`;
 
     paginationContainer.innerHTML = paginationHTML;
