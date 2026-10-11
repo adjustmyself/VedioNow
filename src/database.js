@@ -109,6 +109,10 @@ class DatabaseInterface {
         throw new Error('子類別必須實作 reorderTags 方法');
     }
 
+    async reorderTagGroups(orderedGroupIds) {
+        throw new Error('子類別必須實作 reorderTagGroups 方法');
+    }
+
     async getAllDrivePaths() {
         throw new Error('子類別必須實作 getAllDrivePaths 方法');
     }
@@ -1039,12 +1043,39 @@ class MongoDatabase extends DatabaseInterface {
             name,
             color: color || '#6366f1',
             description: description || '',
-            sort_order: sort_order || 0,
+            sort_order: sort_order != null ? sort_order : await this._nextGroupSortOrder(),
             created_at: new Date()
         };
 
         const result = await this.db.collection('tag_groups').insertOne(group);
         return result.insertedId.toString();
+    }
+
+    // 新群組排到使用者群組末端（與 SQLite 版一致：不算預設排最後的系統群組）
+    async _nextGroupSortOrder() {
+        const last = await this.db.collection('tag_groups')
+            .find({ sort_order: { $lt: SYSTEM_GROUP.sort_order } })
+            .sort({ sort_order: -1 }).limit(1).next();
+        return last && typeof last.sort_order === 'number' ? last.sort_order + 1 : 0;
+    }
+
+    // 群組重新排序：全部群組的完整排列，整批重新編號 0..n-1（與 SQLite 實作一致）
+    async reorderTagGroups(orderedGroupIds) {
+        const current = await this.db.collection('tag_groups').find({}, { projection: { _id: 1 } }).toArray();
+        const valid = new Set(current.map(g => g._id.toString()));
+        const ids = (orderedGroupIds || []).map(String).filter(id => valid.has(id));
+        if (new Set(ids).size !== valid.size || ids.length !== valid.size) {
+            throw new Error('排序清單與現有群組不一致');
+        }
+        if (ids.length === 0) return true;
+
+        await this.db.collection('tag_groups').bulkWrite(ids.map((id, index) => ({
+            updateOne: {
+                filter: { _id: new ObjectId(id) },
+                update: { $set: { sort_order: index, updated_at: new Date() } }
+            }
+        })));
+        return true;
     }
 
     async getAllTagGroups() {

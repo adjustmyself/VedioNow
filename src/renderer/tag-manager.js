@@ -12,6 +12,8 @@ class TagManager {
     this.draggingItem = null;
     this.draggingGrid = null;
     this.dragStartOrder = null;
+    this.draggingGroupItem = null;
+    this.groupDragStartOrder = null;
 
     this.initializeElements();
     this.bindEvents();
@@ -22,6 +24,7 @@ class TagManager {
     this.elements = {
       // 主要容器
       groupsList: document.getElementById('groups-list'),
+      groupsHint: document.getElementById('groups-hint'),
       tagsByGroup: document.getElementById('tags-by-group'),
 
       // 標籤搜尋
@@ -103,8 +106,9 @@ class TagManager {
       this.elements.tagSearchInput.focus();
     });
 
-    // 標籤拖曳排序
+    // 標籤與群組拖曳排序
     this.bindTagDragEvents();
+    this.bindGroupDragEvents();
 
     // 顏色預設選擇
     this.bindColorPresets();
@@ -188,6 +192,9 @@ class TagManager {
   }
 
   renderGroups() {
+    const canReorder = this.groups.length > 1;
+    this.elements.groupsHint.classList.toggle('hidden', !canReorder);
+
     if (this.groups.length === 0) {
       this.elements.groupsList.innerHTML = `
         <div class="empty-state">
@@ -199,7 +206,7 @@ class TagManager {
     }
 
     this.elements.groupsList.innerHTML = this.groups.map(group => `
-      <div class="group-item ${this.selectedGroup?.id === group.id ? 'active' : ''}" data-group-id="${escapeHtml(group.id)}">
+      <div class="group-item ${this.selectedGroup?.id === group.id ? 'active' : ''}" data-group-id="${escapeHtml(group.id)}" draggable="${canReorder}">
         <div class="group-header">
           <div class="group-name">${escapeHtml(group.name)}</div>
           <div class="group-color" style="background-color: ${escapeHtml(group.color)};"></div>
@@ -390,6 +397,82 @@ class TagManager {
       if (!orderedIds.includes(tag.id)) reordered.push(tag);
     }
     group.tags = reordered;
+  }
+
+  // 左側群組清單拖曳排序（直向清單，用目標的垂直中線判斷插入點）
+  bindGroupDragEvents() {
+    const container = this.elements.groupsList;
+
+    container.addEventListener('dragstart', (e) => {
+      const item = e.target.closest('.group-item');
+      if (!item || item.getAttribute('draggable') !== 'true') return;
+
+      this.draggingGroupItem = item;
+      this.groupDragStartOrder = this.readGroupOrder();
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.dataset.groupId || '');
+      setTimeout(() => item.classList.add('dragging'), 0);
+    });
+
+    container.addEventListener('dragover', (e) => {
+      if (!this.draggingGroupItem) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+
+      const target = e.target.closest('.group-item');
+      if (!target || target === this.draggingGroupItem) return;
+
+      const rect = target.getBoundingClientRect();
+      const insertAfter = e.clientY > rect.top + rect.height / 2;
+      container.insertBefore(this.draggingGroupItem, insertAfter ? target.nextSibling : target);
+    });
+
+    container.addEventListener('drop', (e) => {
+      if (this.draggingGroupItem) e.preventDefault();
+    });
+
+    container.addEventListener('dragend', () => {
+      if (!this.draggingGroupItem) return;
+
+      const previousOrder = this.groupDragStartOrder || [];
+      this.draggingGroupItem.classList.remove('dragging');
+      this.draggingGroupItem = null;
+      this.groupDragStartOrder = null;
+
+      const newOrder = this.readGroupOrder();
+      if (newOrder.join('|') === previousOrder.join('|')) return;
+      this.saveGroupOrder(newOrder);
+    });
+  }
+
+  readGroupOrder() {
+    return Array.from(this.elements.groupsList.querySelectorAll('.group-item')).map(el => el.dataset.groupId);
+  }
+
+  async saveGroupOrder(orderedIds) {
+    this.applyLocalGroupOrder(orderedIds);
+
+    try {
+      const result = await window.api.invoke('reorder-tag-groups', orderedIds);
+      if (result && result.success === false) {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error('儲存群組順序失敗:', error);
+      alert('儲存排序失敗，已還原原本的順序');
+      await this.loadData();
+    }
+  }
+
+  // 同步 this.groups 與 this.tagsByGroup 的順序；「未分類」不是真的群組，固定留在最後
+  applyLocalGroupOrder(orderedIds) {
+    const rank = new Map(orderedIds.map((id, index) => [id, index]));
+    const rankOf = (group) => rank.has(group.id) ? rank.get(group.id) : orderedIds.length;
+    const byRank = (a, b) => rankOf(a) - rankOf(b);
+    this.groups.sort(byRank);
+    this.tagsByGroup.sort(byRank);
+    this.updateTagGroupSelect();
+    this.renderTagsByGroup();
   }
 
   updateTagGroupSelect() {

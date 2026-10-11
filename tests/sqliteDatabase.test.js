@@ -274,6 +274,31 @@ describe('SQLiteDatabase', () => {
       expect(await names()).toEqual(['C', 'A', 'B', 'D']);
     });
 
+    test('新群組排在使用者群組末端（系統群組之前），reorderTagGroups 可重排', async () => {
+      const groupNames = async () => (await db.getAllTagGroups()).map(g => g.name);
+      const b = await db.createTagGroup({ name: 'B' });
+      await db.ensureCollectionTag();
+      const a = await db.createTagGroup({ name: 'A' });
+      expect(await groupNames()).toEqual(['B', 'A', '系統']);
+
+      const system = (await db.getAllTagGroups()).find(g => g.name === '系統').id;
+      await db.reorderTagGroups([system, a, b]);
+      expect(await groupNames()).toEqual(['系統', 'A', 'B']);
+      expect((await db.getTagsByGroup()).map(g => g.name)).toEqual(['系統', 'A', 'B']);
+
+      await db.createTagGroup({ name: 'C' });
+      expect(await groupNames()).toEqual(['系統', 'A', 'B', 'C']);
+    });
+
+    test('reorderTagGroups 拒絕不完整的排序清單', async () => {
+      const a = await db.createTagGroup({ name: 'A' });
+      const b = await db.createTagGroup({ name: 'B' });
+
+      await expect(db.reorderTagGroups([a])).rejects.toThrow();
+      await expect(db.reorderTagGroups([a, a])).rejects.toThrow();
+      await expect(db.reorderTagGroups([a, b, a])).rejects.toThrow();
+    });
+
     test('reorderTags 拒絕不完整的排序清單', async () => {
       const groupId = await db.createTagGroup({ name: '類型' });
       const a = await db.createTag({ name: 'A', group_id: groupId });

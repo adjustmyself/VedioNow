@@ -56,8 +56,20 @@ body {
 .groups-section h2 {
     font-size: 1.125rem;
     font-weight: 600;
-    margin-bottom: 1rem;
     color: #475569;
+}
+
+.groups-section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.groups-hint {
+    font-size: 0.75rem;
+    color: #94a3b8;
 }
 
 .groups-list {
@@ -86,6 +98,21 @@ body {
     background: #eff6ff;
     border-color: #3b82f6;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.group-item[draggable="true"] {
+    cursor: grab;
+}
+
+.group-item[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+.group-item.dragging {
+    opacity: 0.4;
+    border-style: dashed;
+    /* 拖曳中停用 hover 的位移，否則插入點會抖動 */
+    transform: none;
 }
 
 .group-header {
@@ -663,7 +690,8 @@ body {
     border-color: #3f4452;
 }
 
-[data-theme="dark"] .tag-group-hint { color: #7c8496; }
+[data-theme="dark"] .tag-group-hint,
+[data-theme="dark"] .groups-hint { color: #7c8496; }
 
 [data-theme="dark"] .group-item:hover,
 [data-theme="dark"] .tag-item:hover {

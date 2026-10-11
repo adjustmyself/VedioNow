@@ -751,11 +751,35 @@ class SQLiteDatabase {
 
     async createTagGroup(groupData) {
         const { name, color, description, sort_order } = groupData;
+        const order = sort_order != null ? sort_order : this._nextGroupSortOrder();
         const result = this._stmt(`
             INSERT INTO tag_groups (name, color, description, sort_order, created_at)
             VALUES (?, ?, ?, ?, ?)
-        `).run(name, color || '#6366f1', description || '', sort_order || 0, this._now());
+        `).run(name, color || '#6366f1', description || '', order, this._now());
         return String(result.lastInsertRowid);
+    }
+
+    // 新群組排到使用者群組末端。系統群組預設 9999 排最後，不算進來，否則新群組會排到它後面
+    _nextGroupSortOrder() {
+        const row = this._stmt('SELECT MAX(sort_order) AS max_order FROM tag_groups WHERE sort_order < ?')
+            .get(SYSTEM_GROUP.sort_order);
+        return (row && row.max_order != null ? row.max_order : -1) + 1;
+    }
+
+    // 群組重新排序：與 reorderTags 相同，必須是全部群組的完整排列，整批重新編號 0..n-1
+    async reorderTagGroups(orderedGroupIds) {
+        const run = this.db.transaction(() => {
+            const valid = new Set(this._stmt('SELECT id FROM tag_groups').all().map(r => r.id));
+            const ids = (orderedGroupIds || []).map(Number).filter(id => valid.has(id));
+            if (new Set(ids).size !== valid.size || ids.length !== valid.size) {
+                throw new Error('排序清單與現有群組不一致');
+            }
+            const stmt = this._stmt('UPDATE tag_groups SET sort_order = ?, updated_at = ? WHERE id = ?');
+            const now = this._now();
+            ids.forEach((id, index) => stmt.run(index, now, id));
+            return true;
+        });
+        return run();
     }
 
     async getAllTagGroups() {

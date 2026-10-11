@@ -20,7 +20,7 @@ const INVOKE_CHANNELS = new Set([
   'create-collection', 'remove-collection', 'get-collection', 'get-folder-videos',
   // 標籤
   'get-tags-by-group', 'get-all-tag-groups', 'create-tag', 'update-tag', 'delete-tag', 'reorder-tags',
-  'create-tag-group', 'update-tag-group', 'delete-tag-group', 'get-tag-images-dir', 'pick-tag-image',
+  'create-tag-group', 'update-tag-group', 'delete-tag-group', 'reorder-tag-groups', 'get-tag-images-dir', 'pick-tag-image',
   'cleanup-orphan-tag-relations',
   // 掃描與監看
   'select-folder', 'scan-videos', 'get-recent-scan-paths', 'remove-recent-scan-path', 'get-watched-folders',

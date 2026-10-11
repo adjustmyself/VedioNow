@@ -658,6 +658,17 @@ ipcMain.handle('update-tag-group', async (event, groupId, updates) => {
   }
 });
 
+ipcMain.handle('reorder-tag-groups', async (event, orderedGroupIds) => {
+  try {
+    await database.reorderTagGroups(orderedGroupIds);
+    broadcastTagsChanged();
+    return { success: true };
+  } catch (error) {
+    console.error('IPC: 標籤群組排序失敗:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('delete-tag-group', async (event, groupId) => {
   try {
     await database.deleteTagGroup(groupId);
