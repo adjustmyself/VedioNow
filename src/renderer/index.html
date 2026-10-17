@@ -249,12 +249,8 @@
                     </div>
 
                     <!-- 影片合集區域 -->
-                    <div class="info-group" id="collection-section">
+                    <div class="info-group hidden" id="collection-section">
                         <label>影片合集:</label>
-                        <div class="collection-controls">
-                            <button id="create-collection-btn" class="btn btn-primary">📁 合併同資料夾影片</button>
-                            <button id="remove-collection-btn" class="btn btn-danger hidden">🔓 取消合併</button>
-                        </div>
                         <div id="collection-list" class="collection-list hidden">
                             <h4>📺 合集清單</h4>
                             <div id="collection-episodes" class="collection-episodes">
@@ -265,12 +261,15 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="save-changes" class="btn btn-primary">儲存</button>
-                <button id="generate-thumbnail" class="btn btn-secondary">🖼️ 縮圖</button>
-                <button id="delete-video" class="btn btn-danger">刪除記錄</button>
-                <button id="delete-video-file" class="btn btn-danger-alt">🗑️ 刪除檔案</button>
-                <button id="upload-subtitle" class="btn btn-secondary">📝 上傳字幕</button>
-                <button id="open-file" class="btn btn-secondary">開啟</button>
+                <!-- 依功能分色：主要動作 → 影片工具 → 合集 → 刪除 -->
+                <button id="save-changes" class="btn btn-primary">💾 儲存</button>
+                <button id="open-file" class="btn btn-open">▶️ 開啟</button>
+                <button id="generate-thumbnail" class="btn btn-media">🖼️ 縮圖</button>
+                <button id="upload-subtitle" class="btn btn-media">📝 上傳字幕</button>
+                <button id="create-collection-btn" class="btn btn-collection hidden">📁 合併</button>
+                <button id="remove-collection-btn" class="btn btn-outline-warn hidden">🔓 取消合併</button>
+                <button id="delete-video" class="btn btn-outline-danger">🗃️ 刪除記錄</button>
+                <button id="delete-video-file" class="btn btn-danger">🗑️ 刪除檔案</button>
             </div>
         </div>
     </div>

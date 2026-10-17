@@ -1210,6 +1210,77 @@ select {
     box-shadow: 0 20px 60px rgba(0,0,0,0.3);
 }
 
+/* 影片詳情：按鈕較多，加寬讓按鈕列盡量排成一行 */
+#video-modal .modal-content {
+    max-width: 960px;
+}
+
+/* 影片詳情按鈕列：置中、每顆同寬 */
+#video-modal .modal-footer {
+    justify-content: center;
+}
+
+#video-modal .modal-footer .btn {
+    width: 7rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+
+#video-modal .modal-footer .btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+/* 按鈕功能色：開啟＝綠、影片工具＝藍、合集＝琥珀、刪除＝紅（只刪記錄用外框，刪檔案用實心） */
+.btn-open {
+    background: #16a34a;
+    color: white;
+}
+
+.btn-open:hover {
+    background: #15803d;
+}
+
+.btn-media {
+    background: #2563eb;
+    color: white;
+}
+
+.btn-media:hover {
+    background: #1d4ed8;
+}
+
+.btn-collection {
+    background: #d97706;
+    color: white;
+}
+
+.btn-collection:hover {
+    background: #b45309;
+}
+
+.btn-outline-warn {
+    background: transparent;
+    color: #c2410c;
+    box-shadow: inset 0 0 0 1px #ea580c;
+}
+
+.btn-outline-warn:hover {
+    background: #ea580c;
+    color: white;
+}
+
+.btn-outline-danger {
+    background: transparent;
+    color: #dc2626;
+    box-shadow: inset 0 0 0 1px #dc2626;
+}
+
+.btn-outline-danger:hover {
+    background: #dc2626;
+    color: white;
+}
+
 /* 掃描模態框調整為更高 */
 #scan-modal .modal-content {
     max-height: 95%;
@@ -1855,13 +1926,6 @@ select {
 }
 
 /* ========== 影片合集相關樣式 ========== */
-
-/* 合集控制按鈕 */
-.collection-controls {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
 
 /* 合集清單 */
 .collection-list {
@@ -2640,4 +2704,10 @@ select {
 /* 關閉鈕、選單項 hover */
 [data-theme="dark"] .btn-close { color: #b6bac2; }
 [data-theme="dark"] .btn-close:hover { background: #363b46; color: #fff; }
+
+/* 外框按鈕：深色底上文字與框線調亮 */
+[data-theme="dark"] .btn-outline-warn { color: #fb923c; box-shadow: inset 0 0 0 1px #fb923c; }
+[data-theme="dark"] .btn-outline-danger { color: #f87171; box-shadow: inset 0 0 0 1px #f87171; }
+[data-theme="dark"] .btn-outline-warn:hover { background: #ea580c; color: #fff; box-shadow: none; }
+[data-theme="dark"] .btn-outline-danger:hover { background: #dc2626; color: #fff; box-shadow: none; }
 [data-theme="dark"] .thumb-seconds-item:hover { background: #363b46; }

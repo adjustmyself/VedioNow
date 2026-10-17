@@ -369,6 +369,7 @@ class ThumbnailMethods {
 
     const videoPath = this.selectedVideo.filepath;
     const generateBtn = document.getElementById('generate-thumbnail');
+    const originalText = generateBtn.textContent;
 
     try {
       // 更新按鈕狀態
@@ -401,7 +402,7 @@ class ThumbnailMethods {
       alert(`縮圖生成失敗：${error.message}\n\n請確認：\n1. 系統已安裝 FFmpeg\n2. 影片檔案可正常存取\n3. 影片格式受支援`);
     } finally {
       // 恢復按鈕狀態
-      generateBtn.textContent = '🖼️ 產生縮圖';
+      generateBtn.textContent = originalText;
       generateBtn.disabled = false;
     }
   }

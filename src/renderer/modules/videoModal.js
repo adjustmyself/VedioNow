@@ -23,9 +23,8 @@ class VideoModalMethods {
     this.setModalRating(this.selectedVideo.rating || 0);
     this.bindModalEvents();
 
-    // 先隱藏合集區，避免顯示上一部影片的殘留資料
-    this.elements.collectionList.classList.add('hidden');
-    this.elements.removeCollectionBtn.classList.add('hidden');
+    // 先隱藏合集區與合併按鈕，避免顯示上一部影片的殘留資料（載入合集資訊後再決定顯示哪個）
+    this.setCollectionState(null);
 
     // 先隱藏重複檔案區，避免顯示上一部影片的殘留資料
     document.getElementById('modal-duplicates-group').classList.add('hidden');

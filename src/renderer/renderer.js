@@ -135,6 +135,7 @@ class VideoManager {
       // 合集相關元素
       createCollectionBtn: document.getElementById('create-collection-btn'),
       removeCollectionBtn: document.getElementById('remove-collection-btn'),
+      collectionSection: document.getElementById('collection-section'),
       collectionSelectModal: document.getElementById('collection-select-modal'),
       collectionSelectClose: document.getElementById('collection-select-close'),
       confirmCollection: document.getElementById('confirm-collection'),

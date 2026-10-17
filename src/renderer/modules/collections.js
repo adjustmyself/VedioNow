@@ -119,6 +119,13 @@ class CollectionMethods {
       if (result.success) {
         alert('合集建立成功！');
         this.hideCollectionModal();
+        if (this.selectedVideo && this.selectedVideo.fingerprint === mainFingerprint) {
+          // 目前影片成為合集主影片：改顯示合集清單與「取消合併」
+          await this.loadCollectionInfo(mainFingerprint);
+        } else {
+          // 目前影片成為別部主影片的子影片，已不在列表中
+          this.hideVideoModal();
+        }
         await this.refreshCurrentView();
       } else {
         alert('建立合集失敗: ' + result.error);
@@ -174,14 +181,24 @@ class CollectionMethods {
     this.elements.collectionNameNew.value = '';
   }
 
+  // 合集區與按鈕列的合併／取消合併按鈕：null = 載入中（全部隱藏），true = 已是合集，false = 尚未合併
+  setCollectionState(isCollection) {
+    const { collectionSection, collectionList, createCollectionBtn, removeCollectionBtn } = this.elements;
+    collectionSection.classList.toggle('hidden', isCollection !== true);
+    collectionList.classList.toggle('hidden', isCollection !== true);
+    removeCollectionBtn.classList.toggle('hidden', isCollection !== true);
+    createCollectionBtn.classList.toggle('hidden', isCollection !== false);
+  }
+
   async loadCollectionInfo(fingerprint) {
+    const video = this.selectedVideo;
     try {
       const result = await window.api.invoke('get-collection', fingerprint);
+      // 載入期間已切換到別部影片就不要覆蓋
+      if (this.selectedVideo !== video) return;
 
       if (result.success && result.data) {
-        // 顯示合集資訊
-        this.elements.collectionList.classList.remove('hidden');
-        this.elements.removeCollectionBtn.classList.remove('hidden');
+        this.setCollectionState(true);
 
         // 顯示子影片清單
         const collection = result.data;
@@ -197,11 +214,11 @@ class CollectionMethods {
         this.bindEpisodePlayEvents();
       } else {
         // 不是合集主影片
-        this.elements.collectionList.classList.add('hidden');
-        this.elements.removeCollectionBtn.classList.add('hidden');
+        this.setCollectionState(false);
       }
     } catch (error) {
       console.error('載入合集資訊失敗:', error);
+      if (this.selectedVideo === video) this.setCollectionState(false);
     }
   }
 
