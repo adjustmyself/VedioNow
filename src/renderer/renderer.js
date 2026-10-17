@@ -42,6 +42,8 @@ class VideoManager {
     this.thumbnailCache = new Map();
     // 縮圖版本號：filepath -> 時間戳，重產縮圖後用來破壞渲染器圖片快取（檔名不變）
     this.thumbnailVersions = new Map();
+    // 縮圖產生失敗紀錄：filepath -> { fingerprint, reason }，指紋相同時直接顯示異常圖、不重跑
+    this.thumbnailFailures = new Map();
     // 分頁相關狀態
     this.currentPage = 1;
     this.pageSize = 9; // 設定值；實際每頁筆數見 pageSizeForView()（格狀檢視補滿整列）

@@ -2065,25 +2065,85 @@ select {
     background: #f8f9fa;
 }
 
+/* 縮圖產生失敗（未下載完 / 損毀）的異常圖：斜紋警示底 + 圖示 + 重新嘗試 */
+.thumbnail-fallback.error,
+.thumbnail-fallback-small.error {
+    background:
+        repeating-linear-gradient(-45deg, rgba(255, 183, 77, 0.08) 0 10px, transparent 10px 20px),
+        linear-gradient(135deg, #4a3a3a, #2f2a33);
+    color: #ffcc80;
+    overflow: hidden;
+}
+
+[data-theme="dark"] .thumbnail-fallback.error,
+[data-theme="dark"] .thumbnail-fallback-small.error {
+    background:
+        repeating-linear-gradient(-45deg, rgba(255, 183, 77, 0.06) 0 10px, transparent 10px 20px),
+        linear-gradient(135deg, #3a2e30, #23212a);
+}
+
+.thumbnail-error-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 0 0.5rem;
+    text-align: center;
+    line-height: 1.3;
+}
+
+.thumbnail-error-icon {
+    width: 2rem;
+    height: 2rem;
+    margin-bottom: 2px;
+}
+
+.thumbnail-error-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.thumbnail-error-hint {
+    font-size: 0.65rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
 /* 縮圖重試按鈕樣式 */
 .retry-btn {
     transition: all 0.2s ease;
     border-radius: 4px;
-    padding: 2px 6px;
-    margin-top: 2px;
+    padding: 2px 8px;
+    margin-top: 4px;
     cursor: pointer;
-    color: #667eea;
+    font: inherit;
+    font-size: 0.7rem;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
-/* 無法產生縮圖時的佔位背景 */
-.thumbnail-fallback.unavailable,
-.thumbnail-fallback-small.unavailable {
-    background: linear-gradient(45deg, #757575, #9e9e9e);
+/* 卡片太窄放不下時省略說明文字（滑過仍有 title 提示） */
+@container (max-width: 220px) {
+    .thumbnail-error-hint {
+        display: none;
+    }
 }
 
-[data-theme="dark"] .thumbnail-fallback.unavailable,
-[data-theme="dark"] .thumbnail-fallback-small.unavailable {
-    background: linear-gradient(45deg, #3a3e48, #50555f);
+/* 清單檢視的小縮圖只留圖示與重試鈕 */
+.thumbnail-fallback-small .thumbnail-error-icon {
+    width: 1.4rem;
+    height: 1.4rem;
+}
+
+.thumbnail-fallback-small .thumbnail-error-title,
+.thumbnail-fallback-small .thumbnail-error-hint {
+    display: none;
+}
+
+.thumbnail-fallback-small .retry-btn {
+    margin-top: 0;
+    padding: 0 4px;
+    font-size: 0.6rem;
 }
 
 /* 影片詳情：尚無標籤時的提示 */
@@ -2106,7 +2166,7 @@ select {
 }
 
 .retry-btn:hover {
-    background-color: rgba(102, 126, 234, 0.1);
+    background-color: rgba(255, 255, 255, 0.25);
     transform: translateY(-1px);
 }
 

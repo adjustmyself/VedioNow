@@ -40,6 +40,8 @@ class HoverPreviewMethods {
 
     // 有描述的影片維持滑過顯示描述
     if (thumb.querySelector('.thumbnail-description')) return;
+    // 縮圖產生失敗的影片多半也產不出預覽，且預覽層會蓋住「重新嘗試」按鈕
+    if (thumb.querySelector('.thumbnail-fallback.error')) return;
     const filepath = thumb.dataset.filepath;
     if (!filepath || this._previewCache.get(filepath) === null) return;
 

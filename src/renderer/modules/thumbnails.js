@@ -28,6 +28,20 @@ function fingerprintOf(container) {
   return (container && container.dataset.fingerprint) || null;
 }
 
+// 無法產生縮圖時顯示的異常圖示（影片框 + 驚嘆號）
+const THUMBNAIL_ERROR_ICON = `
+  <svg class="thumbnail-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3" y="5" width="18" height="14" rx="2"/>
+    <path d="M7 5v14M17 5v14" opacity="0.45"/>
+    <path d="M12 9v4M12 16h.01"/>
+  </svg>`;
+
+const THUMBNAIL_ERROR_TITLES = {
+  timeout: '載入逾時',
+  failed: '無法產生縮圖'
+};
+
 class ThumbnailMethods {
   // 元素接近可視範圍時才執行 callback（每次重繪列表會重置）
   _whenVisible(element, callback) {
@@ -137,7 +151,7 @@ class ThumbnailMethods {
     const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
     if (fallbackElement) {
       fallbackElement.classList.add('loading');
-      fallbackElement.classList.remove('unavailable');
+      fallbackElement.classList.remove('error');
       fallbackElement.innerHTML = '<div style="font-size: 0.8rem;">⏳ 等待載入</div>';
       fallbackElement.style.display = 'flex';
     }
@@ -148,8 +162,12 @@ class ThumbnailMethods {
       // 先看前端快取：已知有縮圖路徑直接用、已知沒有就直接走 fallback，省一次 IPC
       if (this.thumbnailCache.has(videoPath)) {
         const cached = this.thumbnailCache.get(videoPath);
+        const failure = this.thumbnailFailures.get(videoPath);
         if (cached) {
           this.showCachedThumbnail(container, cached);
+        } else if (failure && failure.fingerprint === fingerprintOf(container)) {
+          // 這次執行期間已失敗過（例如還沒下載完）：直接顯示異常圖，按「重新嘗試」或檔案內容改變才再試
+          this.showThumbnailError(container, videoPath, failure.reason);
         } else if (this.isVideoFormatSupported(videoPath)) {
           this.setupVideoThumbnail(container, videoPath);
         } else {
@@ -173,7 +191,7 @@ class ThumbnailMethods {
       }
     } catch (error) {
       console.error('載入縮圖失敗:', error);
-      this.showDefaultThumbnail(container, videoPath);
+      this.showThumbnailError(container, videoPath);
     } finally {
       this.loadingThumbnails.delete(videoPath);
     }
@@ -197,26 +215,51 @@ class ThumbnailMethods {
       throw new Error(result.error || '後端縮圖生成失敗');
     } catch (error) {
       console.warn('後端縮圖生成失敗:', error);
-      if (!quiet) this.showDefaultThumbnail(container, videoPath);
+      if (!quiet) this.showThumbnailError(container, videoPath);
       return false;
     }
   }
 
-  showDefaultThumbnail(container, videoPath) {
+  // 縮圖產生失敗（常見於還沒下載完、或已損毀的檔案）：顯示異常圖與「重新嘗試」。
+  // 失敗會依路徑 + 指紋記下，換頁重繪時不再重跑；檔案下載完成後指紋改變就會自動重試
+  showThumbnailError(container, videoPath, reason = 'failed') {
+    this.thumbnailFailures.set(videoPath, { fingerprint: fingerprintOf(container), reason });
+
     const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
-    if (fallbackElement) {
-      fallbackElement.classList.remove('loading');
-      const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
-      fallbackElement.innerHTML = `
-        <div style="text-align: center;">
-          <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🎬</div>
-          <div style="font-size: 0.7rem; opacity: 0.8;">${escapeHtml(extension)}</div>
-          <div style="font-size: 0.6rem; opacity: 0.6;">無法預覽</div>
-        </div>
-      `;
-      fallbackElement.style.display = 'flex';
-      fallbackElement.classList.add('unavailable');
-    }
+    if (!fallbackElement) return;
+
+    const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
+    const title = THUMBNAIL_ERROR_TITLES[reason] || THUMBNAIL_ERROR_TITLES.failed;
+    const hint = '檔案可能尚未下載完成或已損毀';
+    fallbackElement.classList.remove('loading');
+    fallbackElement.classList.add('error');
+    fallbackElement.title = `${title}（${extension}）：${hint}`;
+    fallbackElement.innerHTML = `
+      <div class="thumbnail-error-content">
+        ${THUMBNAIL_ERROR_ICON}
+        <div class="thumbnail-error-title">${escapeHtml(title)}</div>
+        <div class="thumbnail-error-hint">${escapeHtml(hint)}</div>
+        <button type="button" class="retry-btn" title="重新嘗試產生縮圖">↻ 重新嘗試</button>
+      </div>
+    `;
+    fallbackElement.style.display = 'flex';
+
+    const retryBtn = fallbackElement.querySelector('.retry-btn');
+    retryBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // 不要觸發卡片的點選 / 選取
+      e.preventDefault();
+      this.retryThumbnail(container, videoPath);
+    });
+    retryBtn.addEventListener('dblclick', (e) => e.stopPropagation());
+  }
+
+  retryThumbnail(container, videoPath) {
+    this.thumbnailFailures.delete(videoPath);
+    this.thumbnailCache.delete(videoPath);
+    const fallbackElement = container.querySelector('.thumbnail-fallback, .thumbnail-fallback-small');
+    if (fallbackElement) fallbackElement.removeAttribute('title');
+    this.addLoadingPlaceholder(container);
+    this.loadThumbnail(container, videoPath);
   }
 
   showCachedThumbnail(container, thumbnailPath) {
@@ -245,9 +288,11 @@ class ThumbnailMethods {
     img.decoding = 'async';
     img.src = toFileUrl(thumbnailPath, version);
 
+    this.thumbnailFailures.delete(container.dataset.filepath);
     img.addEventListener('load', () => {
       if (fallbackElement) {
-        fallbackElement.classList.remove('loading');
+        fallbackElement.classList.remove('loading', 'error');
+        fallbackElement.removeAttribute('title');
         fallbackElement.style.display = 'none';
       }
     });
@@ -285,42 +330,49 @@ class ThumbnailMethods {
     video.style.opacity = '0';
     video.style.transition = 'opacity 0.3s';
 
-    const showRetry = (html) => {
-      if (!fallback) return;
-      fallback.classList.remove('loading');
-      fallback.innerHTML = html;
-      fallback.style.display = 'flex';
-      const retryBtn = fallback.querySelector('.retry-btn');
-      if (retryBtn) {
-        retryBtn.onclick = (e) => {
-          e.stopPropagation(); // 阻止事件冒泡到父元素
-          e.preventDefault();
-          this.setupVideoThumbnail(container, videoPath);
-        };
-      }
-    };
-
     // 顯示載入提示
     if (fallback) {
       fallback.innerHTML = '<div style="font-size: 0.8rem;">📹 載入中...</div>';
+      fallback.classList.remove('error');
       fallback.classList.add('loading');
       fallback.style.display = 'flex';
     }
 
+    // 逾時或載入錯誤（未下載完的檔案常見）：停掉 <video>、改用後端 FFmpeg，仍失敗才顯示異常圖。
+    // settled 確保逾時後才到的 seeked / error 事件不會再動到畫面
+    let settled = false;
+    const fail = async (reason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      video.removeAttribute('src');
+      video.load();
+      video.remove();
+      const ok = await this.generateThumbnailWithBackend(container, videoPath, { quiet: true });
+      if (!ok) this.showThumbnailError(container, videoPath, reason);
+    };
+
     // 設定載入超時 (15秒，給大檔案和網路磁碟更多時間)
     const timeoutId = setTimeout(() => {
-      console.warn(`影片載入超時: ${videoPath}`);
-      showRetry('<div style="font-size: 0.7rem;">⏱️ 載入超時<br><span class="retry-btn">點擊重試</span></div>');
+      console.warn(`影片載入超時，改用後端產生縮圖: ${videoPath}`);
+      fail('timeout');
     }, 15000);
 
     video.addEventListener('loadeddata', () => {
-      clearTimeout(timeoutId);
+      if (settled) return;
       this._recordVideoDuration(container, videoPath, video.duration);
-      // 跳過開頭避免黑幀
-      video.currentTime = Math.max(10, video.duration * 0.1);
+      // 跳過開頭避免黑幀；未下載完的檔案長度可能是 NaN / Infinity，設給 currentTime 會丟例外
+      const target = Math.max(10, video.duration * 0.1);
+      if (!Number.isFinite(target)) {
+        fail('failed');
+        return;
+      }
+      video.currentTime = target;
     }, { once: true });
 
     video.addEventListener('seeked', async () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeoutId);
       video.style.opacity = '1';
       if (fallback) {
@@ -339,21 +391,10 @@ class ThumbnailMethods {
       }
     }, { once: true });
 
-    video.addEventListener('error', async () => {
-      clearTimeout(timeoutId);
+    video.addEventListener('error', () => {
+      if (settled) return;
       console.warn(`影片載入錯誤，改用後端產生縮圖: ${videoPath}`);
-      video.remove();
-      const ok = await this.generateThumbnailWithBackend(container, videoPath, { quiet: true });
-      if (!ok) {
-        const extension = videoPath.toLowerCase().split('.').pop().toUpperCase();
-        showRetry(`
-          <div style="text-align: center; font-size: 0.7rem;">
-            <div>🎬 ${escapeHtml(extension)}</div>
-            <div style="margin: 2px 0;">載入失敗</div>
-            <div class="retry-btn">點擊重試</div>
-          </div>
-        `);
-      }
+      fail('failed');
     }, { once: true });
 
     // 直接設 video.src：用 <source> 子元素時載入失敗的 error 事件不會送到 video 上
