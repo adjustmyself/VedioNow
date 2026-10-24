@@ -9,6 +9,7 @@ const BackupManager = require('./backupManager');
 const AutoTagRules = require('./autoTagRules');
 const StorageMover = require('./storageMover');
 const { getUserDataDir, LEGACY_DATA_DIR } = require('./appPaths');
+const { parseTagCommand, runTagCommand } = require('./cliTagCommand');
 
 // Windows：明確設定 AppUserModelID，否則打包後工作列圖示不會套用自訂 icon
 // （需與 package.json build.appId 一致）
@@ -34,14 +35,25 @@ let splashStatus = { text: '正在啟動…', percent: 6 };
 // 目前主題，決定主視窗初始背景色（避免深色模式開窗閃白）
 let appTheme = 'light';
 
+// 命令列加標籤指令（--add-tag=...，見 cliTagCommand.js）。打包版 argv[0] 是執行檔，開發版還多一個 app 路徑
+const startupTagCommand = parseTagCommand(process.argv.slice(app.isPackaged ? 1 : 2));
+
 // 單一實例鎖：同時只允許一個 VideoNow 執行中。
 // 重複開啟時第二個實例會立刻結束，並把既有視窗叫到前景。
 // （多開會有兩個行程同時寫同一個 SQLite / 監控同一個資料夾，容易造成資料互相覆蓋）
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// 加標籤指令經由 additionalData 交給既有實例（second-instance 的 argv 會被 Chromium 重排或加料）
+const gotSingleInstanceLock = app.requestSingleInstanceLock(
+  startupTagCommand ? { tagCommand: startupTagCommand } : undefined
+);
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (event, argv, workingDirectory, additionalData) => {
+    // 外部程式送來的加標籤指令：背景處理，不搶走使用者目前的視窗焦點
+    if (additionalData && additionalData.tagCommand) {
+      queueTagCommand(additionalData.tagCommand);
+      return;
+    }
     // 還在啟動階段：把啟動畫面叫到前景，讓使用者知道程式正在開
     // （此時主視窗可能還沒建立，或建立了但資料還沒載完仍隱藏中）
     if (splashWindow && !splashWindow.isDestroyed()) {
@@ -301,6 +313,10 @@ app.whenReady().then(async () => {
     setSplashStatus('載入影片清單…', 82);
     createWindow();
 
+    // 資料層就緒：執行啟動參數與排隊中的加標籤指令
+    resolveDataLayerReady();
+    if (startupTagCommand) queueTagCommand(startupTagCommand);
+
     // 監看中的資料夾：等首頁載入完再在背景增量掃描並恢復監看
     setTimeout(syncWatchedFolders, 5000);
 
@@ -370,6 +386,31 @@ async function applyAutoTagRulesTo(db, filepaths) {
   const { added } = await AutoTagRules.applyRules(db, rules, refs);
   if (added > 0) broadcastTagsChanged();
   return added;
+}
+
+// 命令列加標籤：初始化完成前收到的指令先排隊，之後依序執行（一次一個，避免同時寫入）
+let resolveDataLayerReady;
+const dataLayerReady = new Promise(resolve => { resolveDataLayerReady = resolve; });
+let tagCommandChain = Promise.resolve();
+
+function queueTagCommand(command) {
+  const valid = command && typeof command.tagName === 'string' && command.tagName &&
+    Array.isArray(command.files) && command.files.every(f => typeof f === 'string');
+  if (!valid || command.files.length === 0) return;
+  tagCommandChain = tagCommandChain
+    .then(() => dataLayerReady)
+    .then(async () => {
+      if (!database || !videoScanner) return;
+      const scanner = videoScanner;
+      const result = await runTagCommand(database, command, files => scanner.importFiles(files));
+      console.log(`命令列加標籤「${command.tagName}」：新增 ${result.added}、原本已有 ${result.alreadyTagged}、新加入資料庫 ${result.imported}`);
+      if (result.notFound.length > 0) console.warn('找不到或無法加入的影片:', result.notFound);
+      broadcastTagsChanged();
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) win.webContents.send('videos-changed');
+      });
+    })
+    .catch(error => console.error('命令列加標籤失敗:', error));
 }
 
 // 背景同步監看中的資料夾（啟動時、資料層重建後），進度顯示在主視窗右下角

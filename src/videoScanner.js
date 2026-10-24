@@ -200,6 +200,24 @@ class VideoScanner {
     return summary;
   }
 
+  // 把指定的影片檔加入資料庫（命令列加標籤用）；不是影片或讀不到的檔案略過
+  async importFiles(filepaths) {
+    const videos = [];
+    for (const filepath of filepaths) {
+      if (!this._isVideoFile(filepath)) continue;
+      try {
+        const stat = await fs.stat(filepath);
+        if (stat.isFile()) videos.push(await this._getVideoInfo(filepath, stat));
+      } catch (error) {
+        console.warn(`讀取影片失敗: ${filepath}`, error.message);
+      }
+    }
+    if (videos.length === 0) return { added: 0, updated: 0, duplicates: 0 };
+    const result = await this._saveVideos(videos, () => {});
+    await this._notifyVideosSaved(videos.map(video => video.filepath));
+    return result;
+  }
+
   // 大小與修改時間都相同，視為內容未變（指紋本身不含 mtime，這裡只用來決定要不要重算）
   _isUnchanged(ref, stat) {
     return Boolean(
