@@ -938,6 +938,8 @@ ipcMain.handle('create-collection', async (event, mainFingerprint, childFingerpr
 ipcMain.handle('remove-collection', async (event, mainFingerprint) => {
   try {
     const result = await database.removeVideoCollection(mainFingerprint);
+    // 主影片移除「合集」標籤、子影片回到列表，讓篩選列與計數同步
+    broadcastTagsChanged();
     return { success: true, data: result };
   } catch (error) {
     console.error('Error removing collection:', error);

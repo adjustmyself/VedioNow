@@ -685,14 +685,21 @@ describe('SQLiteDatabase', () => {
       expect(collection.child_videos.map(v => v.fingerprint)).toEqual(['fp-c1', 'fp-c2']);
     });
 
-    test('刪除合集：連同子影片記錄一併刪除', async () => {
+    test('取消合併：子影片回到列表、主影片移除「合集」標籤，其他標籤保留', async () => {
       await db.createVideoCollection('fp-main', ['fp-c1', 'fp-c2'], '我的系列', '\\\\nas\\d\\series');
+      await db.addVideoTag('fp-main', '動作');
+      await db.addVideoTag('fp-c1', '劇情');
       const result = await db.removeVideoCollection('fp-main');
-      expect(result.totalVideosDeleted).toBe(3);
+      expect(result.restoredCount).toBe(2);
 
       const videos = await db.getVideos({});
-      expect(videos.total).toBe(0);
+      expect(videos.videos.map(v => v.fingerprint).sort()).toEqual(['fp-c1', 'fp-c2', 'fp-main']);
+      const byFp = Object.fromEntries(videos.videos.map(v => [v.fingerprint, v]));
+      expect(byFp['fp-main'].tags).toEqual(['動作']);
+      expect(byFp['fp-c1'].tags).toEqual(['劇情']);
       expect(await db.getVideoCollection('fp-main')).toBeNull();
+      const { n } = db.db.prepare('SELECT COUNT(*) AS n FROM video_collections').get();
+      expect(n).toBe(0);
     });
 
     test('搜尋子影片檔名可找到合集主影片', async () => {

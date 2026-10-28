@@ -1524,6 +1524,7 @@ class MongoDatabase extends DatabaseInterface {
         }
     }
 
+    // 取消合併：只刪合集記錄，子影片恢復為一般影片回到列表，主影片移除「合集」標籤；影片記錄與其他標籤都保留
     async removeVideoCollection(mainVideoFingerprint) {
         try {
             // 先獲取所有子影片的 fingerprint
@@ -1540,34 +1541,23 @@ class MongoDatabase extends DatabaseInterface {
                 ]
             });
 
-            // 刪除所有子影片的資料庫記錄和標籤關聯
-            if (childFingerprints.length > 0) {
-                await this.db.collection('videos').deleteMany(
-                    { fingerprint: { $in: childFingerprints } }
-                );
-
-                await this.db.collection('video_tag_relations').deleteMany(
-                    { fingerprint: { $in: childFingerprints } }
-                );
-
-                console.log(`已刪除 ${childFingerprints.length} 個子影片的資料庫記錄`);
-            }
-
-            // 刪除主影片的資料庫記錄和標籤關聯
-            await this.db.collection('videos').deleteOne(
-                { fingerprint: mainVideoFingerprint }
+            // 主影片與子影片都恢復為一般影片（出現在列表）
+            await this.db.collection('videos').updateMany(
+                { fingerprint: { $in: [mainVideoFingerprint, ...childFingerprints] } },
+                { $set: { is_master: true, updated_at: new Date() } }
             );
 
-            await this.db.collection('video_tag_relations').deleteMany(
-                { fingerprint: mainVideoFingerprint }
+            // 移除主影片的「合集」標籤（影片可能已不存在，直接操作關聯）
+            await this.db.collection('video_tag_relations').updateOne(
+                { fingerprint: mainVideoFingerprint },
+                { $pull: { tags: COLLECTION_TAG }, $set: { updated_at: new Date() } }
             );
-
-            console.log(`已刪除主影片和 ${childFingerprints.length} 個子影片的資料庫記錄`);
+            await this.db.collection('video_tag_relations').deleteOne({ fingerprint: mainVideoFingerprint, tags: { $size: 0 } });
 
             return {
                 success: collectionResult.deletedCount > 0,
                 deletedCount: collectionResult.deletedCount,
-                totalVideosDeleted: childFingerprints.length + 1 // 子影片 + 主影片
+                restoredCount: childFingerprints.length
             };
         } catch (error) {
             console.error('刪除影片合集失敗:', error);

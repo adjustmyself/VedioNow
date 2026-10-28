@@ -1113,32 +1113,29 @@ class SQLiteDatabase {
         return { success: true, insertedCount };
     }
 
+    // 取消合併：只刪合集記錄，子影片恢復為一般影片回到列表，主影片移除「合集」標籤；影片記錄與其他標籤都保留
     async removeVideoCollection(mainVideoFingerprint) {
         const run = this.db.transaction(() => {
-            const childRecords = this._stmt(
+            const childFingerprints = this._stmt(
                 'SELECT fingerprint FROM video_collections WHERE main_fingerprint = ? AND is_main = 0'
-            ).all(mainVideoFingerprint);
-            const childFingerprints = childRecords.map(r => r.fingerprint);
+            ).all(mainVideoFingerprint).map(r => r.fingerprint);
 
             const collectionResult = this._stmt(`
                 DELETE FROM video_collections
                 WHERE (fingerprint = ? AND is_main = 1) OR (main_fingerprint = ? AND is_main = 0)
             `).run(mainVideoFingerprint, mainVideoFingerprint);
 
-            if (childFingerprints.length > 0) {
-                const placeholders = childFingerprints.map(() => '?').join(',');
-                this._stmt(`DELETE FROM videos WHERE fingerprint IN (${placeholders})`).run(...childFingerprints);
-                this._stmt(`DELETE FROM video_tags WHERE fingerprint IN (${placeholders})`).run(...childFingerprints);
-                console.log(`已刪除 ${childFingerprints.length} 個子影片的資料庫記錄`);
-            }
-
-            this._stmt('DELETE FROM videos WHERE fingerprint = ?').run(mainVideoFingerprint);
-            this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(mainVideoFingerprint);
+            const fingerprints = [mainVideoFingerprint, ...childFingerprints];
+            const placeholders = fingerprints.map(() => '?').join(',');
+            this._stmt(`UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint IN (${placeholders})`)
+                .run(this._now(), ...fingerprints);
+            this._stmt('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?')
+                .run(mainVideoFingerprint, COLLECTION_TAG);
 
             return {
                 success: collectionResult.changes > 0,
                 deletedCount: collectionResult.changes,
-                totalVideosDeleted: childFingerprints.length + 1
+                restoredCount: childFingerprints.length
             };
         });
         return run();

@@ -143,36 +143,38 @@ class CollectionMethods {
 
     // 先獲取合集資訊，顯示子影片數量
     try {
-      const collectionResult = await window.api.invoke('get-collection', this.selectedVideo.fingerprint);
+      const fingerprint = this.selectedVideo.fingerprint;
+      const collectionResult = await window.api.invoke('get-collection', fingerprint);
       let childCount = 0;
       if (collectionResult.success && collectionResult.data) {
         childCount = collectionResult.data.child_videos?.length || 0;
       }
 
-      const totalCount = childCount + 1; // 子影片 + 主影片
       const message = childCount > 0
-        ? `確定要刪除此合集嗎？\n\n⚠️ 警告：這將會刪除主影片和 ${childCount} 個子影片，共 ${totalCount} 個影片的資料庫記錄！\n（影片檔案不會被刪除）`
-        : '確定要刪除此合集嗎？\n\n⚠️ 這將會刪除合集資料（影片檔案不會被刪除）';
+        ? `確定要取消合併嗎？\n\n${childCount} 個子影片會恢復為一般影片，重新出現在列表中。`
+        : '確定要取消合併嗎？';
 
       if (!confirm(message)) {
         return;
       }
 
-      const result = await window.api.invoke('remove-collection', this.selectedVideo.fingerprint);
+      const result = await window.api.invoke('remove-collection', fingerprint);
 
       if (result.success) {
-        const deletedMsg = result.data?.totalVideosDeleted > 0
-          ? `合集已刪除，已移除 ${result.data.totalVideosDeleted} 個影片的資料庫記錄`
-          : '合集已刪除';
-        alert(deletedMsg);
-        this.hideVideoModal();
+        // 目前影片仍在列表中，只是不再是合集：改顯示「合併」按鈕
+        if (this.selectedVideo?.fingerprint === fingerprint) {
+          this.selectedVideo.tags = (this.selectedVideo.tags || []).filter(t => t !== '合集');
+          this.renderModalTags();
+          this.updateTagSelectorState();
+          await this.loadCollectionInfo(fingerprint);
+        }
         await this.refreshCurrentView();
       } else {
-        alert('刪除合集失敗: ' + result.error);
+        alert('取消合併失敗: ' + result.error);
       }
     } catch (error) {
-      console.error('刪除合集失敗:', error);
-      alert('刪除合集失敗');
+      console.error('取消合併失敗:', error);
+      alert('取消合併失敗');
     }
   }
 
