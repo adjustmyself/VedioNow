@@ -10,7 +10,7 @@
     "test": "node scripts/run-tests.js",
     "postinstall": "electron-builder install-app-deps",
     "generate-icons": "node scripts/generate-icons.js",
-    "package":"npx electron-packager . VedioNow --platform=win32 --arch=x64 --out=dist --overwrite --icon=assets/icon.ico --ignore=\"^/data/thumbnails\" --ignore=\"^/dist\" --ignore=\"^/tests\""
+    "package":"npx electron-packager . VedioNow --platform=win32 --arch=x64 --out=dist --overwrite --icon=assets/icon.ico --ignore=\"^/data($|/)\" --ignore=\"^/dist\" --ignore=\"^/tests\" --ignore=\"^/[.]claude\""
   },
   "keywords": [
     "video",
