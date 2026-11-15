@@ -125,7 +125,7 @@
                     </div>
                 </div>
 
-                <!-- 批次多選操作列：放在版面內（工具列下方），不蓋住底部分頁 -->
+                <!-- 批次多選操作列：疊在工具列上（絕對定位），不佔版面高度 -->
                 <div id="batch-bar" class="batch-bar hidden" role="toolbar" aria-label="批次操作">
                     <span id="batch-count" class="batch-count"></span>
                     <button type="button" class="batch-btn" data-batch="select-page">全選本頁</button>
@@ -305,7 +305,7 @@
                         <label>包含的影片:</label>
                         <div class="video-selection-hint">選擇要包含在合集中的影片</div>
                         <div id="child-videos-list" class="child-videos-list">
-                            <!-- 可選擇和拖曳排序的影片清單 -->
+                            <!-- 可勾選的影片清單 -->
                         </div>
                     </div>
                 </div>
@@ -338,7 +338,7 @@
                     <div class="option-group" id="recent-paths-group">
                         <label>最近掃描路徑:</label>
                         <div id="recent-paths-list" class="recent-paths-list">
-                            <!-- 動態載入最近5個路徑 -->
+                            <!-- 動態載入記住的掃描路徑 -->
                         </div>
                     </div>
 

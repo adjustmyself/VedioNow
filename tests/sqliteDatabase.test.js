@@ -499,8 +499,11 @@ describe('SQLiteDatabase', () => {
     });
 
     test('依開啟次數與最近開啟排序', async () => {
+      // 時間戳只到毫秒：兩次開啟之間隔開，「最近開啟」的排序才不會因為同一毫秒而不固定
+      const tick = () => new Promise(resolve => setTimeout(resolve, 5));
       await db.recordVideoPlay('C:\\v\\c.mp4');
       await db.recordVideoPlay('C:\\v\\c.mp4');
+      await tick();
       await db.recordVideoPlay('C:\\v\\b.mp4');
 
       const byCount = await db.getVideos({ sortBy: 'play_count', sortOrder: 'desc' });

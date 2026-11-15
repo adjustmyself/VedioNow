@@ -117,4 +117,41 @@ describe('Config', () => {
       expect((await config.deleteSavedSearch(a.id)).map(s => s.name)).toEqual(['b']);
     });
   });
+
+  describe('預設值合併', () => {
+    test('舊版設定檔缺少的欄位補上預設值，已有的值不被蓋掉', async () => {
+      fs.writeJsonSync(config.configPath, {
+        database: { type: 'mongodb', mongodb: { host: '10.0.0.5' } },
+        app: { theme: 'dark', pageSize: 6 }
+      });
+      const loaded = await config.load();
+      expect(loaded.database).toMatchObject({ type: 'mongodb', mongodb: { host: '10.0.0.5', port: 27017, authSource: 'admin' } });
+      expect(loaded.app).toMatchObject({ theme: 'dark', pageSize: 6, hoverPreview: true, autoBackupKeep: 7 });
+      expect(loaded.storage).toEqual({ imagesDir: '', backupDir: '' });
+      expect(loaded.scan).toEqual({ recentPaths: [], watchedFolders: [] });
+    });
+
+    test('改動 load() 的回傳值不會污染預設值', async () => {
+      fs.removeSync(config.configPath);
+      const loaded = await config.load();
+      loaded.scan.recentPaths.push('D:\\x');
+      loaded.database.type = 'mongodb';
+      expect((await config.load()).scan.recentPaths).toEqual([]);
+      expect(config.defaultConfig.database.type).toBe('sqlite');
+    });
+  });
+
+  describe('MongoDB 連線字串', () => {
+    test('依主機、帳密與參數組出連線字串，帳密會編碼', () => {
+      expect(Config.buildMongoConnectionString({
+        host: 'nas', port: 27017, database: 'videonow', username: 'me', password: 'p@ss/word', authSource: 'admin', ssl: true
+      })).toBe('mongodb://me:p%40ss%2Fword@nas:27017/videonow?authSource=admin&ssl=true');
+      expect(Config.buildMongoConnectionString({ host: 'localhost', port: 27017, database: 'videonow', authSource: 'admin' }))
+        .toBe('mongodb://localhost:27017/videonow');
+    });
+
+    test('有自訂連線字串時直接使用', () => {
+      expect(Config.buildMongoConnectionString({ host: 'x', connectionString: 'mongodb://custom/db' })).toBe('mongodb://custom/db');
+    });
+  });
 });

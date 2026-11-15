@@ -517,36 +517,27 @@ class VideoModalMethods {
     const rating = document.querySelectorAll('#video-modal .rating .star.active').length;
 
     try {
-      // 使用基於指紋的新方法來儲存評分和描述
-      if (this.selectedVideo.fingerprint) {
-        await window.api.invoke('set-video-metadata', this.selectedVideo.fingerprint, {
-          description,
-          rating
-        });
-      } else {
-        // 回退到舊方法（向後兼容）
-        await window.api.invoke('update-video', this.selectedVideo.id, {
-          description,
-          rating
-        });
+      // 有指紋的影片以指紋儲存；沒有指紋（指紋計算失敗的舊記錄）才用記錄 id
+      const video = this.selectedVideo;
+      const result = video.fingerprint
+        ? await window.api.invoke('set-video-metadata', video.fingerprint, { description, rating })
+        : await window.api.invoke('update-video', video.id, { description, rating });
+      if (!result || !result.success) {
+        throw new Error(result?.error || '儲存失敗');
       }
 
-      this.selectedVideo.description = description;
-      this.selectedVideo.rating = rating;
-
-      // 更新當前影片數據在影片列表中
-      const videoIndex = this.currentVideos.findIndex(v => v.id === this.selectedVideo.id);
-      if (videoIndex >= 0) {
-        this.currentVideos[videoIndex] = { ...this.selectedVideo };
-      }
+      video.description = description;
+      video.rating = rating;
+      // 彈窗開著時列表若在背景重新載入過，currentVideos 裡是另一個物件，一併更新
+      const listed = this.currentVideos.find(v => v.id === video.id);
+      if (listed && listed !== video) Object.assign(listed, { description, rating });
 
       this.hideVideoModal();
-
-      // 只重新載入標籤過濾器，不重新載入整個影片列表
-      await this.loadTags();
-      this.renderTagsFilter();
+      // 卡片上的星星與描述就地更新，不重新載入整個影片列表
+      this.updateVideoCardMeta(video);
     } catch (error) {
       console.error('儲存變更錯誤:', error);
+      alert(`儲存失敗：${error.message}`);
     }
   }
 
@@ -556,12 +547,16 @@ class VideoModalMethods {
     }
 
     try {
-      await window.api.invoke('delete-video', this.selectedVideo.id);
+      const result = await window.api.invoke('delete-video', this.selectedVideo.id);
+      if (!result || !result.success) {
+        throw new Error(result?.error || '刪除失敗');
+      }
       this.hideVideoModal();
       // 保持搜尋條件重新載入
       await this.refreshCurrentView();
     } catch (error) {
       console.error('刪除影片錯誤:', error);
+      alert(`刪除記錄失敗：${error.message}`);
     }
   }
 

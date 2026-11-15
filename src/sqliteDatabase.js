@@ -452,7 +452,7 @@ class SQLiteDatabase {
         return { whereSql: where.join(' AND '), params };
     }
 
-    // 排序欄位白名單；預設排序對應 idx_videos_master_filecreated 索引
+    // 排序欄位白名單；預設排序對應 idx_videos_master_filecreated_v2 索引
     _buildOrderBy(filters = {}) {
         const columns = {
             file_created_at: 'v.file_created_at',
@@ -906,8 +906,8 @@ class SQLiteDatabase {
                 : this._stmt('SELECT id FROM tags WHERE group_id = ?').all(gid);
             const valid = new Set(current.map(r => r.id));
             const ids = (orderedTagIds || []).map(Number).filter(id => valid.has(id));
-            // 必須是整個群組的完整排列，否則沒列到的標籤會留著舊序號而錯位
-            if (new Set(ids).size !== valid.size) {
+            // 必須是整個群組的完整排列（不重複、不遺漏），否則沒列到的標籤會留著舊序號而錯位
+            if (new Set(ids).size !== valid.size || ids.length !== valid.size) {
                 throw new Error('排序清單與群組內的標籤不一致');
             }
             const stmt = this._stmt('UPDATE tags SET sort_order = ?, updated_at = ? WHERE id = ?');

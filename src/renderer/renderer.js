@@ -1,4 +1,3 @@
-
 import { escapeHtml, toTagImageUrl, debounce } from './shared/util.js';
 import ThumbnailMethods from './modules/thumbnails.js';
 import TagFilterBarMethods from './modules/tagFilterBar.js';
@@ -294,28 +293,17 @@ class VideoManager {
     }
   }
 
+  // 資料有異動後重新載入：保持目前的搜尋 / 篩選條件，也停在目前這一頁
+  // （handleSearch 會跳回第一頁，批次操作或背景更新後不該把使用者帶走）
   async refreshCurrentView() {
-    // 保持當前搜尋條件重新載入資料
-    const searchTerm = this.elements.searchInput.value.trim();
-
-    // 重新載入標籤和硬碟路徑列表
     await Promise.all([
       this.loadTags(),
       this.loadDrivePaths(),
       this.loadDuplicateSummary()
     ]);
 
-    // 如果有搜尋條件或篩選，使用 handleSearch 保持條件
-    if (searchTerm || this.isAnyFilterActive()) {
-      await this.handleSearch(searchTerm);
-    } else {
-      // 沒有任何條件，直接載入
-      await this.loadVideos();
-      this.renderVideos();
-      this.renderPagination();
-    }
-
-    this.updateStats();
+    await this.fetchPage();
+    await this.fetchFilteredTagCounts();
     this.renderTagsFilter();
   }
 
@@ -357,8 +345,14 @@ class VideoManager {
     const reqId = ++this._searchReqId;
     this.showLoading();
     try {
-      const result = await this._queryCurrentPage();
+      let result = await this._queryCurrentPage();
       if (reqId !== this._searchReqId) return;
+      // 刪除或篩選結果變少後，目前頁可能已超出範圍：退到最後一頁
+      if ((result.videos || []).length === 0 && result.total > 0 && this.currentPage > 1) {
+        this.currentPage = Math.max(1, result.totalPages || 1);
+        result = await this._queryCurrentPage();
+        if (reqId !== this._searchReqId) return;
+      }
       this._applyPageResult(result);
       this.updateStats();
       this.renderVideos();
@@ -631,6 +625,29 @@ class VideoManager {
     return `<span class="video-play-count" title="${escapeHtml(title)}"> • ▶ ${count} 次</span>`;
   }
 
+  // 詳情儲存評分 / 描述後就地更新卡片（不重畫整個列表，縮圖不重載）
+  updateVideoCardMeta(video) {
+    const card = this.elements.videosContainer.querySelector(`[data-video-id="${CSS.escape(video.id)}"]`);
+    if (!card) return;
+    const rating = card.querySelector('.video-rating');
+    if (rating) rating.innerHTML = this.generateStars(video.rating || 0);
+
+    const thumb = card.querySelector('.video-thumbnail, .video-list-thumbnail');
+    if (!thumb) return;
+    const text = (video.description || '').trim();
+    let description = thumb.querySelector('.thumbnail-description');
+    if (!text) {
+      if (description) description.remove();
+    } else {
+      if (!description) {
+        description = document.createElement('div');
+        description.className = 'thumbnail-description';
+        thumb.appendChild(description);
+      }
+      description.textContent = text;
+    }
+  }
+
   updateVideoPlayCount(video) {
     const card = this.elements.videosContainer.querySelector(`[data-video-id="${CSS.escape(video.id)}"]`);
     const span = card && card.querySelector('.video-play-count');
@@ -777,15 +794,6 @@ class VideoManager {
     return stars.join('');
   }
 
-  // ========== 影片合集相關方法 ==========
-
-  // 清理資源 (當頁面卸載或重新載入時)
-  destroy() {
-    this.loadingThumbnails.clear();
-  }
-
-  // ========== 最近掃描路徑相關方法 ==========
-
 }
 
 // 各功能區塊的方法放在 modules/，併入 VideoManager
@@ -816,9 +824,4 @@ let videoManager;
 document.addEventListener('DOMContentLoaded', () => {
   videoManager = new VideoManager();
   window.videoManager = videoManager;
-
-  // 頁面卸載時清理資源
-  window.addEventListener('beforeunload', () => {
-    videoManager.destroy();
-  });
 });

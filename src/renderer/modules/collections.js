@@ -64,7 +64,7 @@ class CollectionMethods {
         const newMainFingerprint = this.elements.mainVideoSelect.value;
         const newMainVideo = folderVideos.find(v => v.fingerprint === newMainFingerprint);
         if (newMainVideo) {
-          const newDefaultName = newMainVideo.filename.substring(0, newMainVideo.filename.lastIndexOf('.'));
+          const newDefaultName = newMainVideo.filename.substring(0, newMainVideo.filename.lastIndexOf('.')) || newMainVideo.filename;
           this.elements.collectionNameNew.value = newDefaultName;
           this.renderChildVideosList(folderVideos, newMainFingerprint);
         }

@@ -1,9 +1,18 @@
 // 共用主題套用邏輯：在 <html> 上設定 data-theme，三個視窗（主視窗／設定／標籤管理）共用。
-// 以設定檔 (app.theme) 為準，並把結果鏡像到 localStorage，重開視窗時可同步套用避免淺色閃爍。
+// 以設定檔 (app.theme：light / dark / auto) 為準，並把結果鏡像到 localStorage，重開視窗時可同步套用避免淺色閃爍。
 (function () {
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+  // 目前的設定值；auto（跟隨系統）時系統深淺色一變就要重新套用
+  let currentSetting = 'light';
 
-  function applyTheme(theme) {
-    const t = theme === 'dark' ? 'dark' : 'light';
+  function resolveTheme(setting) {
+    if (setting === 'auto') return systemDark.matches ? 'dark' : 'light';
+    return setting === 'dark' ? 'dark' : 'light';
+  }
+
+  function applyTheme(setting) {
+    currentSetting = setting === 'dark' || setting === 'auto' ? setting : 'light';
+    const t = resolveTheme(currentSetting);
     document.documentElement.setAttribute('data-theme', t);
     try {
       localStorage.setItem('videonow.theme', t);
@@ -27,6 +36,11 @@
 
   // 3) 其他視窗變更主題時即時同步
   window.api.on('theme-changed', (theme) => applyTheme(theme));
+
+  // 4) 跟隨系統：作業系統切換深淺色時跟著換
+  systemDark.addEventListener('change', () => {
+    if (currentSetting === 'auto') applyTheme('auto');
+  });
 
   // 供設定頁做即時預覽
   window.applyTheme = applyTheme;

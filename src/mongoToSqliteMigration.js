@@ -1,6 +1,4 @@
 const { MongoClient } = require('mongodb');
-const fs = require('fs-extra');
-const path = require('path');
 
 // 把 MongoDB 的資料一次性搬進 SQLite。
 // 設計成可重複執行（INSERT OR IGNORE / upsert），中斷後重跑不會產生重複資料。

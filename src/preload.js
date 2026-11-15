@@ -69,9 +69,4 @@ const api = {
   }
 };
 
-// contextIsolation 開啟時經由 contextBridge 暴露；關閉時（過渡期）直接掛在 window 上
-if (process.contextIsolated) {
-  contextBridge.exposeInMainWorld('api', api);
-} else {
-  window.api = api;
-}
+contextBridge.exposeInMainWorld('api', api);

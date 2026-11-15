@@ -146,17 +146,10 @@ class ThumbnailGenerator {
   // 組 FFmpeg 參數：-ss 放在 -i 前面用關鍵格快速定位，
   // 放在後面會從頭解碼到指定秒數，網路磁碟上等於先讀完前段影片
   buildFfmpegArgs(videoPath, outputPath, offset) {
-    // 標準化路徑：UNC 網路路徑（\\server\share）必須保留反斜線，
-    // FFmpeg 在 Windows 上無法識別 //server/share 格式
-    const isUNC = videoPath.startsWith('\\\\') || videoPath.startsWith('//');
-    const normalizedVideoPath = isUNC
-      ? videoPath.replace(/\//g, '\\')
-      : videoPath.replace(/\\/g, '/');
-
     return [
       '-hide_banner',
       '-ss', String(offset),
-      '-i', normalizedVideoPath,
+      '-i', this.normalizeInputPath(videoPath),
       '-an', '-sn', '-dn',
       '-frames:v', '1',
       // 縮放到寬 640px、維持比例（高為奇數時自動補成偶數）

@@ -91,13 +91,13 @@ class SavedSearchMethods {
       a.sortBy === b.sortBy && a.sortOrder === b.sortOrder;
   }
 
-  // 依條件組出預設名稱，例如「動作 + 喜劇・★3 以上・未觀看」
+  // 依條件組出預設名稱，例如「動作 + 喜劇・★3・未觀看」
   _defaultSavedSearchName() {
     const s = this._currentSearchState();
     const parts = [];
     if (s.searchTerm) parts.push(`「${s.searchTerm}」`);
     if (s.tags.length > 0) parts.push(s.tags.join(' + '));
-    if (s.rating > 0) parts.push(`★${s.rating} 以上`);
+    if (s.rating > 0) parts.push(`★${s.rating}`);
     if (s.drivePath) parts.push(s.drivePath);
     if (s.duplicatesOnly) parts.push('有重複');
     if (s.unwatchedOnly) parts.push('未觀看');
@@ -112,7 +112,7 @@ class SavedSearchMethods {
     const lines = [];
     if (s.searchTerm) lines.push(`搜尋：${s.searchTerm}`);
     if (s.tags.length > 0) lines.push(`標籤：${s.tags.join('、')}`);
-    if (s.rating > 0) lines.push(`評分：${s.rating} 星以上`);
+    if (s.rating > 0) lines.push(`評分：${s.rating} 星`);
     if (s.drivePath) lines.push(`硬碟：${s.drivePath}`);
     if (s.duplicatesOnly) lines.push('只看有重複的影片');
     if (s.unwatchedOnly) lines.push('只看未觀看的影片');

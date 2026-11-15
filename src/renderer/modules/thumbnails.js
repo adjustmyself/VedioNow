@@ -281,7 +281,7 @@ class ThumbnailMethods {
     img.style.width = '100%';
     img.style.height = '100%';
     img.style.objectFit = 'cover';
-    // 縮圖檔名固定（路徑 hash），重產後需用版本號破壞渲染器快取，否則沿用舊圖。
+    // 縮圖檔名固定（內容指紋），重產後需用版本號破壞渲染器快取，否則沿用舊圖。
     // 版本號持久化於 thumbnailVersions，重新渲染列表時仍會帶上，避免又跳回舊圖。
     const version = this.thumbnailVersions.get(container.dataset.filepath);
     img.loading = 'lazy';
@@ -440,7 +440,7 @@ class ThumbnailMethods {
       }
     } catch (error) {
       console.error('手動生成縮圖失敗:', error);
-      alert(`縮圖生成失敗：${error.message}\n\n請確認：\n1. 系統已安裝 FFmpeg\n2. 影片檔案可正常存取\n3. 影片格式受支援`);
+      alert(`縮圖生成失敗：${error.message}\n\n請確認：\n1. 影片檔案可正常存取（網路磁碟已連線）\n2. 檔案已下載完成、沒有損毀\n3. 影片格式受支援`);
     } finally {
       // 恢復按鈕狀態
       generateBtn.textContent = originalText;

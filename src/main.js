@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const DatabaseFactory = require('./database');
@@ -261,7 +261,9 @@ app.whenReady().then(async () => {
     await config.init();
     try {
       const savedConfig = await config.load();
-      appTheme = savedConfig?.app?.theme === 'dark' ? 'dark' : 'light';
+      const savedTheme = savedConfig?.app?.theme;
+      // 「跟隨系統」依作業系統目前的深淺色決定初始背景
+      appTheme = savedTheme === 'dark' || (savedTheme === 'auto' && nativeTheme.shouldUseDarkColors) ? 'dark' : 'light';
     } catch (e) {
       // 讀不到就用預設淺色
     }
@@ -381,8 +383,14 @@ function createVideoScanner(db) {
 async function applyAutoTagRulesTo(db, filepaths) {
   const rules = (await config.getAutoTagRules()).filter(rule => rule.enabled);
   if (rules.length === 0) return 0;
-  const wanted = new Set(filepaths);
-  const refs = (await db.getAllVideoRefs()).filter(ref => wanted.has(ref.filepath));
+  // 少量檔案（監看到的新檔、命令列匯入）逐筆查，不必每次讀出整張影片表
+  let refs;
+  if (filepaths.length <= 20) {
+    refs = (await Promise.all(filepaths.map(filepath => db.getVideoByPath(filepath)))).filter(Boolean);
+  } else {
+    const wanted = new Set(filepaths);
+    refs = (await db.getAllVideoRefs()).filter(ref => wanted.has(ref.filepath));
+  }
   const { added } = await AutoTagRules.applyRules(db, rules, refs);
   if (added > 0) broadcastTagsChanged();
   return added;
@@ -492,21 +500,10 @@ ipcMain.handle('scan-videos', async (event, folderPath, options = {}) => {
   }
 });
 
-ipcMain.handle('get-videos', async (event, filters = {}) => {
-  try {
-    return await database.getVideos(filters);
-  } catch (error) {
-    console.error('Error getting videos:', error);
-    return { videos: [], total: 0, page: 1, pageSize: 9, totalPages: 0 };
-  }
-});
-
-// 新的基於指紋的標籤操作
+// 標籤關聯以影片指紋為鍵
 ipcMain.handle('add-video-tag', async (event, fingerprint, tagName) => {
   try {
-    console.log('Adding video tag:', { fingerprint, tagName });
     await database.addVideoTag(fingerprint, tagName);
-    console.log('Video tag added successfully');
     return { success: true };
   } catch (error) {
     console.error('Error adding video tag:', error);
@@ -688,9 +685,7 @@ ipcMain.handle('get-all-tag-groups', async () => {
 
 ipcMain.handle('update-tag-group', async (event, groupId, updates) => {
   try {
-    console.log('IPC: 收到更新標籤群組請求:', { groupId, updates });
     const result = await database.updateTagGroup(groupId, updates);
-    console.log('IPC: 更新標籤群組結果:', result);
     broadcastTagsChanged();
     return { success: true, result };
   } catch (error) {
@@ -720,7 +715,6 @@ ipcMain.handle('delete-tag-group', async (event, groupId) => {
   }
 });
 
-// 新的標籤管理 IPC 處理
 ipcMain.handle('create-tag', async (event, tagData) => {
   try {
     const tagId = await database.createTag(tagData);
@@ -879,10 +873,7 @@ ipcMain.handle('get-tags-by-group', async () => {
 
 ipcMain.handle('get-drive-paths', async () => {
   try {
-    console.log('開始獲取硬碟路徑...');
-    const result = await database.getAllDrivePaths();
-    console.log('成功獲取硬碟路徑，數量:', result.length);
-    return result;
+    return await database.getAllDrivePaths();
   } catch (error) {
     console.error('Error getting drive paths:', error);
     return [];
@@ -987,7 +978,6 @@ ipcMain.handle('get-folder-videos', async (event, folderPath) => {
   }
 });
 
-// 開啟標籤管理視窗
 // 開啟子視窗（設定、標籤管理）；已開啟時只把它叫到前景，避免重複開出多個 modal
 const childWindows = new Map();
 function openChildWindow(key, file, options) {
@@ -1320,16 +1310,8 @@ ipcMain.handle('reset-config', async () => {
 // 測試MongoDB連線
 ipcMain.handle('test-mongodb-connection', async (event, mongoConfig) => {
   try {
-    // 暫時更新MongoDB配置
-    const tempConfig = await config.load();
-    tempConfig.database.mongodb = { ...tempConfig.database.mongodb, ...mongoConfig };
-
-    // 創建臨時Config實例來測試連線
-    const testConfig = new Config();
-    testConfig.defaultConfig = tempConfig;
-
-    const result = await testConfig.testMongoDBConnection();
-    return result;
+    // 用表單上的值測試（尚未儲存），沒填的欄位沿用已儲存的設定
+    return await config.testMongoDBConnection(mongoConfig);
   } catch (error) {
     console.error('測試MongoDB連線失敗:', error);
     return {
@@ -1641,7 +1623,6 @@ ipcMain.handle('get-recent-scan-paths', async () => {
   }
 });
 
-// 移除單一掃描路徑
 // 自動標籤規則（存在 config.json）
 ipcMain.handle('get-auto-tag-rules', async () => {
   return { success: true, rules: await config.getAutoTagRules() };
@@ -1723,6 +1704,7 @@ ipcMain.handle('remove-watched-folder', async (event, folderPath) => {
   }
 });
 
+// 移除單一掃描路徑
 ipcMain.handle('remove-recent-scan-path', async (event, folderPath) => {
   try {
     const success = await config.removeRecentScanPath(folderPath);

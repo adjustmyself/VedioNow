@@ -57,17 +57,25 @@ class Config {
     }
   }
 
+  // 每次都回傳新的物件：呼叫端會直接改回傳值再存檔，不能讓它改到 defaultConfig。
+  // database / app / storage / scan 各區段與預設值合併，舊版設定檔缺少的欄位才會有預設值
+  _withDefaults(data = {}) {
+    const defaults = JSON.parse(JSON.stringify(this.defaultConfig));
+    const section = (key) => ({ ...defaults[key], ...(data[key] && typeof data[key] === 'object' ? data[key] : {}) });
+    const database = section('database');
+    database.mongodb = { ...defaults.database.mongodb, ...(data.database?.mongodb || {}) };
+    return { ...defaults, ...data, database, app: section('app'), storage: section('storage'), scan: section('scan') };
+  }
+
   async load() {
     try {
       if (await fs.pathExists(this.configPath)) {
-        const configData = await fs.readJson(this.configPath);
-        return { ...this.defaultConfig, ...configData };
+        return this._withDefaults(await fs.readJson(this.configPath));
       }
-      return this.defaultConfig;
     } catch (error) {
       console.error('載入配置檔案失敗:', error);
-      return this.defaultConfig;
     }
+    return this._withDefaults();
   }
 
   async save(config) {
@@ -89,27 +97,18 @@ class Config {
     return await this.save(config);
   }
 
-  async updateDatabaseConfig(databaseConfig) {
-    const config = await this.load();
-    config.database = { ...config.database, ...databaseConfig };
-    return await this.save(config);
-  }
-
   async getDatabaseConfig() {
     const config = await this.load();
     return config.database;
   }
 
-  async setDatabaseType(type) {
-    const config = await this.load();
-    config.database.type = type;
-    return await this.save(config);
-  }
-
   async getMongoDBConnectionString() {
     const config = await this.load();
-    const mongodb = config.database.mongodb;
+    return Config.buildMongoConnectionString(config.database.mongodb);
+  }
 
+  // 由 mongodb 設定區段組出連線字串（有自訂連線字串時直接使用）
+  static buildMongoConnectionString(mongodb) {
     if (mongodb.connectionString) {
       return mongodb.connectionString;
     }
@@ -137,10 +136,12 @@ class Config {
     return connectionString;
   }
 
-  async testMongoDBConnection() {
+  // 測試連線。mongodbOverrides：設定頁表單上尚未儲存的值，蓋在已儲存的設定上
+  async testMongoDBConnection(mongodbOverrides = null) {
     try {
       const { MongoClient } = require('mongodb');
-      const connectionString = await this.getMongoDBConnectionString();
+      const saved = (await this.load()).database.mongodb;
+      const connectionString = Config.buildMongoConnectionString({ ...saved, ...(mongodbOverrides || {}) });
 
       const client = new MongoClient(connectionString, {
         serverSelectionTimeoutMS: 5000,
@@ -208,13 +209,11 @@ class Config {
   async addRecentScanPath(folderPath) {
     try {
       const config = await this.load();
-      if (!config.scan) {
-        config.scan = { recentPaths: [] };
-      }
+      const recentPaths = Array.isArray(config.scan.recentPaths) ? config.scan.recentPaths : [];
 
       // 移除重複的路徑（不區分大小寫）
       const normalizedPath = folderPath.toLowerCase();
-      config.scan.recentPaths = config.scan.recentPaths.filter(
+      config.scan.recentPaths = recentPaths.filter(
         p => p.toLowerCase() !== normalizedPath
       );
 
@@ -244,7 +243,6 @@ class Config {
   async addWatchedFolder(folderPath, recursive = true) {
     try {
       const config = await this.load();
-      if (!config.scan) config.scan = { recentPaths: [] };
       const folders = Array.isArray(config.scan.watchedFolders) ? config.scan.watchedFolders : [];
       const normalizedPath = folderPath.toLowerCase();
       config.scan.watchedFolders = [
@@ -360,7 +358,7 @@ class Config {
   async removeRecentScanPath(folderPath) {
     try {
       const config = await this.load();
-      if (!config.scan || !Array.isArray(config.scan.recentPaths)) {
+      if (!Array.isArray(config.scan.recentPaths)) {
         return true;
       }
 

@@ -72,11 +72,6 @@ class FileFingerprint {
   }
 
   /**
-   * 批量計算指紋
-   * @param {Array<{filepath: string, stat?: fs.Stats}>} files
-   * @returns {Promise<Array<{filepath: string, fingerprint: string}>>}
-   */
-  /**
    * 驗證檔案是否匹配指紋
    * @param {string} filepath
    * @param {string} expectedFingerprint

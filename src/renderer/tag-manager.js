@@ -520,18 +520,26 @@ class TagManager {
   }
 
   async saveGroup() {
-    const formData = new FormData(this.elements.groupForm);
     const groupData = {
-      name: formData.get('group-name') || this.elements.groupName.value,
+      name: this.elements.groupName.value.trim(),
       color: this.elements.groupColor.value,
-      description: this.elements.groupDescription.value
+      description: this.elements.groupDescription.value.trim()
     };
 
+    if (!groupData.name) {
+      alert('請輸入群組名稱');
+      return;
+    }
+
     try {
-      if (this.editingGroup) {
-        await window.api.invoke('update-tag-group', this.editingGroup.id, groupData);
-      } else {
-        await window.api.invoke('create-tag-group', groupData);
+      const result = this.editingGroup
+        ? await window.api.invoke('update-tag-group', this.editingGroup.id, groupData)
+        : await window.api.invoke('create-tag-group', groupData);
+
+      // 例如群組名稱重複：留在編輯視窗讓使用者修改
+      if (result && result.success === false) {
+        alert(`操作失敗: ${result.error}`);
+        return;
       }
 
       this.hideGroupModal();
@@ -555,7 +563,12 @@ class TagManager {
       this.elements.confirmMessage.textContent =
         `確定要刪除群組「${group.name}」嗎？群組內的標籤將移至未分類。`;
       this.deleteCallback = async () => {
-        await window.api.invoke('delete-tag-group', groupId);
+        const result = await window.api.invoke('delete-tag-group', groupId);
+        if (result && result.success === false) {
+          alert(`刪除失敗: ${result.error}`);
+          return;
+        }
+        if (this.selectedGroup?.id === groupId) this.selectedGroup = null;
         await this.loadData();
       };
       this.elements.confirmModal.classList.remove('hidden');
@@ -730,8 +743,5 @@ class TagManager {
   }
 }
 
-// 初始化標籤管理器
-const tagManager = new TagManager();
-
-// 全域函數供HTML調用
-window.tagManager = tagManager;
+// 初始化標籤管理器；掛到 window 方便在 DevTools 除錯
+window.tagManager = new TagManager();

@@ -271,7 +271,7 @@ class MongoDatabase extends DatabaseInterface {
         const { filename, filepath, filesize, duration, description, fingerprint, file_created_at } = videoData;
         const file_mtime = videoData.file_mtime ?? null;
 
-        try {
+        {
             const videos = this.db.collection('videos');
             const byFp = fingerprint ? await videos.findOne({ fingerprint }) : null;
             const byPath = await videos.findOne({ filepath });
@@ -348,8 +348,6 @@ class MongoDatabase extends DatabaseInterface {
                 return 'updated';
             }
             return await this._insertVideo(videoData);
-        } catch (error) {
-            throw error;
         }
     }
 
@@ -1180,8 +1178,8 @@ class MongoDatabase extends DatabaseInterface {
         const current = await this.db.collection('tags').find(filter, { projection: { _id: 1 } }).toArray();
         const valid = new Set(current.map(t => t._id.toString()));
         const ids = (orderedTagIds || []).map(String).filter(id => valid.has(id));
-        // 必須是整個群組的完整排列，否則沒列到的標籤會留著舊序號而錯位
-        if (new Set(ids).size !== valid.size) {
+        // 必須是整個群組的完整排列（不重複、不遺漏），否則沒列到的標籤會留著舊序號而錯位
+        if (new Set(ids).size !== valid.size || ids.length !== valid.size) {
             throw new Error('排序清單與群組內的標籤不一致');
         }
         if (ids.length === 0) return true;
@@ -1273,8 +1271,9 @@ class MongoDatabase extends DatabaseInterface {
                     }
                 },
                 {
+                    // 物件裡寫兩個 $ne 只有後面那個有效，null（路徑不到四層）會漏網
                     $match: {
-                        drivePath: { $ne: null, $ne: "" }
+                        drivePath: { $nin: [null, ""] }
                     }
                 },
                 {
@@ -1350,8 +1349,6 @@ class MongoDatabase extends DatabaseInterface {
 
     async updateTagGroup(groupId, updates) {
         try {
-            console.log('更新標籤群組:', { groupId, updates });
-
             const updateDoc = this._pickAllowed(updates, ['name', 'color', 'description', 'sort_order']);
             updateDoc.updated_at = new Date();
 
@@ -1360,7 +1357,6 @@ class MongoDatabase extends DatabaseInterface {
                 { $set: updateDoc }
             );
 
-            console.log('更新結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
             return result.modifiedCount > 0;
         } catch (error) {
             console.error('更新標籤群組失敗:', error);
@@ -1370,22 +1366,17 @@ class MongoDatabase extends DatabaseInterface {
 
     async updateTag(tagId, updates) {
         try {
-            console.log('更新標籤:', { tagId, updates });
-
             // 先取得舊標籤，才能判斷名稱是否真的改變並同步關聯
             const existing = await this.db.collection('tags').findOne({ _id: new ObjectId(tagId) });
             if (!existing) return false;
 
-            const updateDoc = { ...updates };
-            if (updateDoc.updated_at === undefined) {
-                updateDoc.updated_at = new Date();
-            }
+            // 只保留白名單欄位（與 SQLite 版一致），避免 renderer 傳入任意欄位寫進資料庫
+            const updateDoc = this._pickAllowed(updates, ['name', 'color', 'description', 'description_image']);
+            updateDoc.updated_at = new Date();
 
-            // 如果有 group_id，轉換為 ObjectId
-            if (updateDoc.group_id) {
-                updateDoc.group_id = new ObjectId(updateDoc.group_id);
-            } else if (updateDoc.group_id === null) {
-                updateDoc.group_id = null;
+            // group_id：有值轉成 ObjectId，空值（null / 空字串）一律存 null 代表未分類
+            if (updates.group_id !== undefined) {
+                updateDoc.group_id = updates.group_id ? new ObjectId(updates.group_id) : null;
             }
 
             // 換群組時排到新群組末端，否則會沿用舊群組的序號插進中間
@@ -1429,7 +1420,6 @@ class MongoDatabase extends DatabaseInterface {
                 console.log('標籤改名，已同步關聯數:', relResult.modifiedCount);
             }
 
-            console.log('更新標籤結果:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount, renamed });
             return result.modifiedCount > 0 || renamed;
         } catch (error) {
             console.error('更新標籤失敗:', error);
@@ -1451,15 +1441,9 @@ class MongoDatabase extends DatabaseInterface {
             // 模式：路徑 + 分隔符 + 檔名（不含子資料夾）
             const pattern = `^${escapedPath}[\\\\/][^\\\\/]+$`;
 
-            console.log('資料夾路徑:', folderPath);
-            console.log('標準化路徑:', normalizedPath);
-            console.log('搜尋正則:', pattern);
-
             const videos = await this.db.collection('videos').find({
                 filepath: new RegExp(pattern, 'i')  // 不區分大小寫
             }).toArray();
-
-            console.log(`找到 ${videos.length} 個影片`);
 
             return videos.map(video => ({
                 ...video,
@@ -1604,9 +1588,11 @@ class MongoDatabase extends DatabaseInterface {
         }
     }
 
-    close() {
+    // 回傳 Promise：切換資料庫時要等連線真的關閉
+    async close() {
         if (this.client) {
-            this.client.close();
+            await this.client.close();
+            this.client = null;
         }
     }
 }

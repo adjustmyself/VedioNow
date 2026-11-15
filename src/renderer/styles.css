@@ -1062,34 +1062,10 @@ body {
     background: #c82333;
 }
 
-.btn-danger-alt {
-    background: #e74c3c;
-    color: white;
-    border: 1px solid #c0392b;
-}
-
-.btn-danger-alt:hover {
-    background: #c0392b;
-    border-color: #a93226;
-}
-
 .filter-controls {
     display: flex;
     gap: 0.5rem;
     margin-bottom: 1rem;
-}
-
-.btn-reset {
-    width: 100%;
-    background: #f5f5f5;
-    color: #666;
-    border: 1px solid #ddd;
-    margin-bottom: 1rem;
-}
-
-.btn-reset:hover {
-    background: #e8e8e8;
-    border-color: #bbb;
 }
 
 .btn-reset-small {
@@ -1965,10 +1941,6 @@ select {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.episode-item.dragging {
-    opacity: 0.5;
-}
-
 .episode-number {
     display: flex;
     align-items: center;
@@ -2618,7 +2590,6 @@ select {
 [data-theme="dark"] .rating-option,
 [data-theme="dark"] .rating-filter-stars,
 [data-theme="dark"] .tag-tab,
-[data-theme="dark"] .btn-reset,
 [data-theme="dark"] .btn-reset-small {
     background: #2d313b;
     border-color: #3f4452;
@@ -2627,7 +2598,6 @@ select {
 
 [data-theme="dark"] .rating-option:hover,
 [data-theme="dark"] .tag-tab:hover,
-[data-theme="dark"] .btn-reset:hover,
 [data-theme="dark"] .btn-reset-small:hover {
     background: #363b46;
 }
