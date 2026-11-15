@@ -207,4 +207,76 @@ describe('VideoScanner', () => {
       expect(scanner.watchers.size).toBe(0);
     });
   });
+
+  describe('監看到檔案消失', () => {
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    test('在監看資料夾內搬移：記錄跟著搬，評分與描述保留', async () => {
+      const oldPath = writeFile('a/movie.mp4', 'movie-content');
+      await scanner.scanFolder(root);
+      const before = await db.getVideoByPath(oldPath);
+      await db.setVideoMetadata(before.fingerprint, { rating: 5, description: '好看' });
+      await db.addVideoTag(before.fingerprint, '動作');
+
+      // 搬移：監看器先收到舊路徑的 unlink，新路徑的 add 稍後才來
+      const newPath = path.join(root, 'b', 'movie.mp4');
+      fs.mkdirSync(path.dirname(newPath), { recursive: true });
+      fs.renameSync(oldPath, newPath);
+      scanner.removalGraceMs = 40;
+      scanner._scheduleRemoval(oldPath, root);
+      await scanner.importFiles([newPath]);
+      await wait(120);
+
+      expect(await db.getVideoByPath(oldPath)).toBeNull();
+      const moved = await db.getVideoByPath(newPath);
+      expect(moved).toMatchObject({ id: before.id, rating: 5, description: '好看' });
+      expect((await db.getVideos({})).videos[0].tags).toEqual(['動作']);
+    });
+
+    test('檔案真的被刪除：寬限時間過後才刪記錄', async () => {
+      const gone = writeFile('a/gone.mp4', 'gone');
+      await scanner.scanFolder(root);
+      fs.unlinkSync(gone);
+
+      scanner.removalGraceMs = 40;
+      scanner._scheduleRemoval(gone, root);
+      expect(await db.getVideoByPath(gone)).not.toBeNull();
+      await wait(120);
+      expect(await db.getVideoByPath(gone)).toBeNull();
+    });
+
+    test('整個監看資料夾讀不到（磁碟離線）時保留記錄', async () => {
+      const file = writeFile('nas/offline.mp4', 'offline');
+      const watchRoot = path.join(root, 'nas');
+      await scanner.scanFolder(watchRoot);
+      fs.rmSync(watchRoot, { recursive: true, force: true });
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(await scanner._removeIfStillMissing(file, watchRoot)).toBe(false);
+      expect(await db.getVideoByPath(file)).not.toBeNull();
+    });
+
+    test('檔案又出現、停止監看或作廢時取消等待中的刪除', async () => {
+      const file = writeFile('a/back.mp4', 'back');
+      await scanner.scanFolder(root);
+      scanner.removalGraceMs = 40;
+
+      // 檔案還在（例如被同名檔覆寫）：不刪
+      scanner._scheduleRemoval(file, root);
+      await wait(120);
+      expect(await db.getVideoByPath(file)).not.toBeNull();
+
+      fs.unlinkSync(file);
+      scanner._scheduleRemoval(file, root);
+      scanner._cancelRemoval(file);
+      scanner._scheduleRemoval(file, root);
+      scanner.stopAllWatching();
+      expect(scanner.pendingRemovals.size).toBe(0);
+      scanner.dispose();
+      scanner._scheduleRemoval(file, root);
+      expect(scanner.pendingRemovals.size).toBe(0);
+      await wait(120);
+      expect(await db.getVideoByPath(file)).not.toBeNull();
+    });
+  });
 });

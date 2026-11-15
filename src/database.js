@@ -451,12 +451,18 @@ class MongoDatabase extends DatabaseInterface {
         }));
     }
 
-    // 批次刪除影片記錄（缺檔清理用）
+    // 批次刪除影片記錄（缺檔清理、批次多選用）：標籤保留、合集關係解除
     async deleteVideosByIds(ids) {
         if (ids.length === 0) return;
-        await this.db.collection('videos').deleteMany({
-            _id: { $in: ids.map(id => new ObjectId(id)) }
-        });
+        const filter = { _id: { $in: ids.map(id => new ObjectId(id)) } };
+        const videos = this.db.collection('videos');
+        const fingerprints = (await videos.find(filter, { projection: { fingerprint: 1 } }).toArray())
+            .map(v => v.fingerprint)
+            .filter(Boolean);
+        await videos.deleteMany(filter);
+        for (const fingerprint of fingerprints) {
+            await this._detachFromCollections(fingerprint);
+        }
     }
 
     // 以路徑查單一影片（檔案監控的刪除事件用）
@@ -959,9 +965,56 @@ class MongoDatabase extends DatabaseInterface {
         }
     }
 
+    // 只刪記錄（標籤關聯保留，重新掃描回來時標籤還在），並解除它的合集關係
     async deleteVideo(videoId) {
-        const objectId = new ObjectId(videoId);
-        await this.db.collection('videos').deleteOne({ _id: objectId });
+        await this.deleteVideosByIds([videoId]);
+    }
+
+    // 影片記錄消失時解除它的合集關係（與 SQLite 版一致）：
+    // - 它是合集主影片：子影片恢復為一般影片（否則永遠被隱藏），合集記錄與「合集」標籤一併清除
+    // - 它是子影片：移出合集；合集因此沒有子影片時，主影片也不再是合集
+    async _detachFromCollections(fingerprint) {
+        if (!fingerprint) return;
+        const collections = this.db.collection('video_collections');
+        const now = new Date();
+
+        const records = await collections
+            .find({ $or: [{ fingerprint }, { main_fingerprint: fingerprint }] })
+            .toArray();
+        if (records.length === 0) return;
+
+        const children = records
+            .filter(r => !r.is_main && r.main_fingerprint === fingerprint)
+            .map(r => r.fingerprint);
+        const wasMain = children.length > 0 || records.some(r => r.is_main && r.fingerprint === fingerprint);
+        const parents = [...new Set(records
+            .filter(r => !r.is_main && r.fingerprint === fingerprint)
+            .map(r => r.main_fingerprint)
+            .filter(Boolean))];
+
+        if (children.length > 0) {
+            await this.db.collection('videos').updateMany(
+                { fingerprint: { $in: children } },
+                { $set: { is_master: true, updated_at: now } }
+            );
+        }
+        await collections.deleteMany({ $or: [{ fingerprint }, { main_fingerprint: fingerprint }] });
+        if (wasMain) await this._removeCollectionTag(fingerprint);
+
+        for (const parent of parents) {
+            if (await collections.findOne({ main_fingerprint: parent, is_main: false })) continue;
+            await collections.deleteMany({ fingerprint: parent, is_main: true });
+            await this._removeCollectionTag(parent);
+        }
+    }
+
+    async _removeCollectionTag(fingerprint) {
+        const relations = this.db.collection('video_tag_relations');
+        await relations.updateOne(
+            { fingerprint },
+            { $pull: { tags: COLLECTION_TAG }, $set: { updated_at: new Date() } }
+        );
+        await relations.deleteOne({ fingerprint, tags: { $size: 0 } });
     }
 
     async deleteVideoWithFile(videoId) {
@@ -990,12 +1043,13 @@ class MongoDatabase extends DatabaseInterface {
         // 刪除資料庫記錄
         await this.db.collection('videos').deleteOne({ _id: objectId });
 
-        // 級聯刪除相關元數據（如果有指紋）
+        // 級聯刪除標籤關聯，並解除合集關係（主影片被刪時子影片要回到列表）
         if (fingerprint) {
             try {
-                await this.deleteVideoMetadata(fingerprint);
+                await this.db.collection('video_tag_relations').deleteMany({ fingerprint });
+                await this._detachFromCollections(fingerprint);
             } catch (metadataErr) {
-                console.warn('刪除影片元數據失敗:', metadataErr);
+                console.warn('刪除影片關聯資料失敗:', metadataErr);
             }
         }
 

@@ -8,6 +8,10 @@ const DIR_CONCURRENCY = 4;
 const FILE_CONCURRENCY = 8;
 // 進度事件節流間隔，避免數萬個檔案各送一次 IPC
 const PROGRESS_INTERVAL_MS = 150;
+// 監看到檔案消失後，等這麼久再確認並刪除記錄。
+// 搬移 / 改名會先收到 unlink、新位置的 add 要等寫入穩定（awaitWriteFinish 約 5 秒）才來；
+// 立刻刪記錄的話 addVideo 就認不出這是搬移，評分、描述、開啟次數都會遺失
+const REMOVAL_GRACE_MS = 30000;
 
 class VideoScanner {
   constructor(database) {
@@ -28,6 +32,9 @@ class VideoScanner {
       '.aria2'      // aria2 控制檔案
     ];
     this.watchers = new Map();
+    // 等待確認的刪除：filepath -> { timer, watchRoot }
+    this.pendingRemovals = new Map();
+    this.removalGraceMs = REMOVAL_GRACE_MS;
     this.fileFingerprint = new FileFingerprint();
     // 資料層重建（切換資料庫、還原）後舊的 scanner 作廢：不再開新的監看、背景同步提早結束
     this.disposed = false;
@@ -433,6 +440,8 @@ class VideoScanner {
     watcher
       .on('add', async (filepath) => {
         if (this._isVideoFile(filepath)) {
+          // 檔案又出現了（例如被覆寫）：取消等待中的刪除
+          this._cancelRemoval(filepath);
           try {
             const stat = await fs.stat(filepath);
             const videoInfo = await this._getVideoInfo(filepath, stat);
@@ -444,17 +453,8 @@ class VideoScanner {
           }
         }
       })
-      .on('unlink', async (filepath) => {
-        if (!this._isVideoFile(filepath)) return;
-        try {
-          const video = await this.database.getVideoByPath(filepath);
-          if (video) {
-            await this.database.deleteVideo(video.id);
-            console.log(`刪除影片記錄: ${filepath}`);
-          }
-        } catch (error) {
-          console.error(`處理刪除影片錯誤: ${filepath}`, error);
-        }
+      .on('unlink', (filepath) => {
+        if (this._isVideoFile(filepath)) this._scheduleRemoval(filepath, folderPath);
       })
       .on('error', (error) => {
         console.error(`監控錯誤 ${folderPath}:`, error);
@@ -463,11 +463,54 @@ class VideoScanner {
     this.watchers.set(folderPath, watcher);
   }
 
+  // 檔案從監看資料夾消失：先等一段時間，確認不是搬移 / 改名或磁碟暫時離線才刪記錄
+  _scheduleRemoval(filepath, watchRoot) {
+    if (this.disposed) return;
+    this._cancelRemoval(filepath);
+    const timer = setTimeout(() => {
+      this.pendingRemovals.delete(filepath);
+      this._removeIfStillMissing(filepath, watchRoot).catch((error) => {
+        console.error(`處理刪除影片錯誤: ${filepath}`, error);
+      });
+    }, this.removalGraceMs);
+    // 不要因為這個計時器讓程式無法結束
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingRemovals.set(filepath, { timer, watchRoot });
+  }
+
+  _cancelRemoval(filepath) {
+    const pending = this.pendingRemovals.get(filepath);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingRemovals.delete(filepath);
+  }
+
+  // 寬限時間過後確認是否真的要刪；回傳是否刪了記錄
+  async _removeIfStillMissing(filepath, watchRoot) {
+    if (this.disposed) return false;
+    // 整個監看資料夾都讀不到（NAS 離線、網路磁碟斷線）：不是檔案被刪，記錄保留
+    if (!await fs.pathExists(watchRoot)) {
+      console.warn(`監看資料夾目前無法存取，保留影片記錄: ${filepath}`);
+      return false;
+    }
+    if (await fs.pathExists(filepath)) return false;
+    // 搬移 / 改名時 addVideo 已把這筆記錄改到新路徑，舊路徑查不到就不用處理
+    const video = await this.database.getVideoByPath(filepath);
+    if (!video) return false;
+    await this.database.deleteVideo(video.id);
+    console.log(`刪除影片記錄: ${filepath}`);
+    return true;
+  }
+
   stopWatching(folderPath) {
     const watcher = this.watchers.get(folderPath);
     if (watcher) {
       watcher.close();
       this.watchers.delete(folderPath);
+      // 不再監看的資料夾，等待中的刪除一併取消（之後不會收到檔案搬回來的事件）
+      for (const [filepath, pending] of this.pendingRemovals) {
+        if (pending.watchRoot === folderPath) this._cancelRemoval(filepath);
+      }
       console.log(`停止監控資料夾: ${folderPath}`);
     }
   }
@@ -483,6 +526,7 @@ class VideoScanner {
       console.log(`停止監控資料夾: ${folderPath}`);
     }
     this.watchers.clear();
+    for (const filepath of [...this.pendingRemovals.keys()]) this._cancelRemoval(filepath);
   }
 
   // 影片路徑是否在掃描範圍內（Windows 路徑不分大小寫；前綴需含分隔符，避免 D:\Videos 誤中 D:\Videos2）

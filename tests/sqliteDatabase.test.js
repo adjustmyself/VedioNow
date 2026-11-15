@@ -753,6 +753,52 @@ describe('SQLiteDatabase', () => {
       }
     });
 
+    test('只刪主影片記錄（單筆 / 批次）：子影片回到列表、合集解除，其他標籤保留', async () => {
+      for (const remove of [
+        (id) => db.deleteVideo(id),
+        (id) => db.deleteVideosByIds([id])
+      ]) {
+        await db.createVideoCollection('fp-main', ['fp-c1', 'fp-c2'], '我的系列', '\\\\nas\\d\\series');
+        await db.addVideoTag('fp-main', '動作');
+        const main = await db.getVideoByPath('\\\\nas\\d\\series\\ep1.mp4');
+
+        await remove(main.id);
+
+        const videos = await db.getVideos({});
+        expect(videos.videos.map(v => v.fingerprint).sort()).toEqual(['fp-c1', 'fp-c2']);
+        const { n } = db.db.prepare('SELECT COUNT(*) AS n FROM video_collections').get();
+        expect(n).toBe(0);
+        // 「刪除記錄」保留標籤（重新掃描回來時還在），但不再帶「合集」
+        const kept = db.db.prepare("SELECT tag_name FROM video_tags WHERE fingerprint = 'fp-main'").all().map(r => r.tag_name);
+        expect(kept).toEqual(['動作']);
+
+        // 重新掃描回來：是一般影片，標籤還在
+        await addVideo({ fingerprint: 'fp-main', filepath: '\\\\nas\\d\\series\\ep1.mp4', filename: 'ep1.mp4' });
+        const back = (await db.getVideos({})).videos.find(v => v.fingerprint === 'fp-main');
+        expect(back.tags).toEqual(['動作']);
+        expect(await db.getVideoCollection('fp-main')).toBeNull();
+        await db.removeVideoTag('fp-main', '動作');
+      }
+    });
+
+    test('刪除子影片記錄：移出合集；最後一個子影片也刪掉時主影片不再是合集', async () => {
+      await db.createVideoCollection('fp-main', ['fp-c1', 'fp-c2'], '我的系列', '\\\\nas\\d\\series');
+      // 子影片不在列表中，直接用路徑找出來刪
+      await db.deleteVideo((await db.getVideoByPath('\\\\nas\\d\\series\\ep2.mp4')).id);
+
+      let collection = await db.getVideoCollection('fp-main');
+      expect(collection.child_videos.map(v => v.fingerprint)).toEqual(['fp-c2']);
+      expect((await db.getVideos({})).videos[0].tags).toContain('合集');
+
+      await db.deleteVideo((await db.getVideoByPath('\\\\nas\\d\\series\\ep3.mp4')).id);
+
+      collection = await db.getVideoCollection('fp-main');
+      expect(collection).toBeNull();
+      const videos = await db.getVideos({});
+      expect(videos.videos.map(v => v.fingerprint)).toEqual(['fp-main']);
+      expect(videos.videos[0].tags).not.toContain('合集');
+    });
+
     test('getVideosByFolder 只回傳同層影片', async () => {
       await addVideo({ fingerprint: 'fp-sub', filepath: '\\\\nas\\d\\series\\sub\\ep4.mp4', filename: 'ep4.mp4' });
       const videos = await db.getVideosByFolder('\\\\nas\\d\\series');

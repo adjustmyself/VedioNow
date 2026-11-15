@@ -674,29 +674,65 @@ class SQLiteDatabase {
         return { migrated: 0, metadataMigrated: 0 };
     }
 
+    // 只刪記錄（標籤關聯保留，重新掃描回來時標籤還在），並解除它的合集關係
     async deleteVideo(videoId) {
-        this._stmt('DELETE FROM videos WHERE id = ?').run(Number(videoId));
+        this.db.transaction(() => this._deleteRecordKeepingTagsSync(Number(videoId)))();
     }
 
-    // 刪除影片記錄及其標籤、合集關聯（單一 transaction）。
-    // 若刪的是合集主影片，子影片恢復為一般影片，避免它們永遠被隱藏
+    _deleteRecordKeepingTagsSync(id) {
+        const video = this._stmt('SELECT fingerprint FROM videos WHERE id = ?').get(id);
+        if (!video) return;
+        this._stmt('DELETE FROM videos WHERE id = ?').run(id);
+        this._detachFromCollectionsSync(video.fingerprint);
+    }
+
+    // 影片記錄消失時解除它的合集關係（同步，於 transaction 內呼叫）：
+    // - 它是合集主影片：子影片恢復為一般影片（否則永遠被隱藏），合集記錄與「合集」標籤一併清除
+    // - 它是子影片：移出合集；合集因此沒有子影片時，主影片也不再是合集
+    _detachFromCollectionsSync(fingerprint) {
+        if (!fingerprint) return;
+        const now = this._now();
+
+        const mainRow = this._stmt(
+            'SELECT 1 FROM video_collections WHERE fingerprint = ? AND is_main = 1'
+        ).get(fingerprint);
+        const children = this._stmt(
+            'SELECT fingerprint FROM video_collections WHERE main_fingerprint = ? AND is_main = 0'
+        ).all(fingerprint).map(r => r.fingerprint);
+        if (children.length > 0) {
+            const placeholders = children.map(() => '?').join(',');
+            this._stmt(`UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint IN (${placeholders})`)
+                .run(now, ...children);
+        }
+
+        // 它自己是哪些合集的子影片（刪除前先記下主影片）
+        const parents = this._stmt(
+            'SELECT DISTINCT main_fingerprint FROM video_collections WHERE fingerprint = ? AND is_main = 0'
+        ).all(fingerprint).map(r => r.main_fingerprint).filter(Boolean);
+
+        this._stmt('DELETE FROM video_collections WHERE fingerprint = ? OR main_fingerprint = ?')
+            .run(fingerprint, fingerprint);
+        if (mainRow || children.length > 0) {
+            this._stmt('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?').run(fingerprint, COLLECTION_TAG);
+        }
+
+        for (const parent of parents) {
+            const remaining = this._stmt(
+                'SELECT 1 FROM video_collections WHERE main_fingerprint = ? AND is_main = 0 LIMIT 1'
+            ).get(parent);
+            if (remaining) continue;
+            this._stmt('DELETE FROM video_collections WHERE fingerprint = ? AND is_main = 1').run(parent);
+            this._stmt('DELETE FROM video_tags WHERE fingerprint = ? AND tag_name = ?').run(parent, COLLECTION_TAG);
+        }
+    }
+
+    // 刪除影片記錄及其標籤、合集關聯（單一 transaction），用於連檔案一起刪除
     _deleteVideoRecordSync(id, fingerprint) {
         const run = this.db.transaction(() => {
             this._stmt('DELETE FROM videos WHERE id = ?').run(id);
             if (!fingerprint) return;
-
             this._stmt('DELETE FROM video_tags WHERE fingerprint = ?').run(fingerprint);
-
-            const children = this._stmt(
-                'SELECT fingerprint FROM video_collections WHERE main_fingerprint = ? AND is_main = 0'
-            ).all(fingerprint).map(r => r.fingerprint);
-            if (children.length > 0) {
-                const placeholders = children.map(() => '?').join(',');
-                this._stmt(`UPDATE videos SET is_master = 1, updated_at = ? WHERE fingerprint IN (${placeholders})`)
-                    .run(this._now(), ...children);
-            }
-            this._stmt('DELETE FROM video_collections WHERE fingerprint = ? OR main_fingerprint = ?')
-                .run(fingerprint, fingerprint);
+            this._detachFromCollectionsSync(fingerprint);
         });
         run();
     }
@@ -1049,11 +1085,10 @@ class SQLiteDatabase {
         }));
     }
 
-    // 批次刪除影片記錄（缺檔清理用）
+    // 批次刪除影片記錄（缺檔清理、批次多選用）：與 deleteVideo 相同，標籤保留、合集關係解除
     async deleteVideosByIds(ids) {
-        const del = this._stmt('DELETE FROM videos WHERE id = ?');
         this.db.transaction(() => {
-            for (const id of ids) del.run(Number(id));
+            for (const id of ids) this._deleteRecordKeepingTagsSync(Number(id));
         })();
     }
 
