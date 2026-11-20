@@ -455,9 +455,9 @@ class ThumbnailMethods {
 
     const presets = [
       { label: '30 秒（預設）', value: 30 },
-      { label: '60 秒', value: 60 },
-      { label: '90 秒', value: 90 },
-      { label: '120 秒', value: 120 }
+      { label: '1 分', value: 60 },
+      { label: '1 分 30 秒', value: 90 },
+      { label: '2 分', value: 120 }
     ];
 
     const menu = document.createElement('div');
@@ -479,40 +479,88 @@ class ThumbnailMethods {
       menu.appendChild(item);
     });
 
-    // 自訂秒數：內嵌輸入框（Electron 不支援 window.prompt，故不能用它）
+    // 自訂時間：時／分／秒三個內嵌輸入框（Electron 不支援 window.prompt，故不能用它）
     const customRow = document.createElement('div');
     customRow.className = 'thumb-seconds-custom';
 
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.min = '0';
-    input.placeholder = '自訂秒數';
-    input.className = 'thumb-seconds-input';
+    const fields = [
+      { unit: '時', max: null },
+      { unit: '分', max: 59 },
+      { unit: '秒', max: 59 }
+    ].map(({ unit, max }) => {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '0';
+      if (max !== null) input.max = String(max);
+      input.step = '1';
+      input.placeholder = '0';
+      input.className = 'thumb-seconds-input';
+      input.setAttribute('aria-label', unit);
+
+      const label = document.createElement('span');
+      label.className = 'thumb-seconds-unit';
+      label.textContent = unit;
+
+      customRow.appendChild(input);
+      customRow.appendChild(label);
+      return { input, max };
+    });
+    const inputs = fields.map((f) => f.input);
 
     const confirmBtn = document.createElement('button');
     confirmBtn.className = 'thumb-seconds-confirm';
     confirmBtn.textContent = '確定';
 
+    const markInvalid = (input, message) => {
+      input.classList.add('invalid');
+      input.title = message;
+      input.focus();
+    };
+
     const submitCustom = () => {
-      const seconds = parseInt(input.value, 10);
-      if (!Number.isFinite(seconds) || seconds < 0) {
-        input.classList.add('invalid');
-        input.focus();
+      // 空白視為 0；全部空白則不送出
+      if (inputs.every((input) => input.value.trim() === '')) {
+        markInvalid(inputs[2], '請輸入時間');
         return;
       }
+
+      const values = [];
+      for (const { input, max } of fields) {
+        const raw = input.value.trim();
+        const value = raw === '' ? 0 : Number(raw);
+        if (!Number.isInteger(value) || value < 0 || (max !== null && value > max)) {
+          markInvalid(input, max !== null ? `請輸入 0～${max} 的整數` : '請輸入 0 以上的整數');
+          return;
+        }
+        values.push(value);
+      }
+
+      const [h, m, s] = values;
+      const seconds = h * 3600 + m * 60 + s;
+
+      // 已知影片長度時，擷取時間不能超過結尾
+      const duration = Number(this.selectedVideo && this.selectedVideo.duration) || 0;
+      if (duration > 0 && seconds >= duration) {
+        markInvalid(inputs[2], `超過影片長度（${this.formatDuration(duration)}）`);
+        return;
+      }
+
       pick(seconds);
     };
 
     // 在輸入框內攔截鍵盤事件，避免冒泡觸發全域快捷鍵或關閉選單
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') submitCustom();
-      else if (e.key === 'Escape') this.closeThumbnailSecondsMenu();
+    inputs.forEach((input) => {
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') submitCustom();
+        else if (e.key === 'Escape') this.closeThumbnailSecondsMenu();
+      });
+      input.addEventListener('input', () => {
+        inputs.forEach((el) => { el.classList.remove('invalid'); el.title = ''; });
+      });
     });
-    input.addEventListener('input', () => input.classList.remove('invalid'));
     confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); submitCustom(); });
 
-    customRow.appendChild(input);
     customRow.appendChild(confirmBtn);
     menu.appendChild(customRow);
 

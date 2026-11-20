@@ -731,21 +731,30 @@ body {
 
 .thumb-seconds-custom {
     display: flex;
-    gap: 0.3rem;
+    align-items: center;
+    gap: 0.25rem;
     padding: 0.3rem;
     margin-top: 0.2rem;
     border-top: 1px solid #eee;
 }
 
 .thumb-seconds-input {
-    width: 7.5rem;
-    flex: 1 1 7.5rem;
-    min-width: 6.5rem;
-    padding: 0.35rem 0.5rem;
+    width: 3.2rem;
+    flex: 0 0 3.2rem;
+    min-width: 0;
+    padding: 0.35rem 0.3rem;
+    text-align: center;
     font-size: 0.85rem;
     border: 1px solid #ced4da;
     border-radius: 5px;
     box-sizing: border-box;
+}
+
+/* 輸入框很窄，隱藏數字微調箭頭以免擠掉數字 */
+.thumb-seconds-input::-webkit-outer-spin-button,
+.thumb-seconds-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .thumb-seconds-input:focus {
@@ -759,8 +768,15 @@ body {
     box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.2);
 }
 
+.thumb-seconds-unit {
+    font-size: 0.8rem;
+    color: #666;
+    margin-right: 0.15rem;
+}
+
 .thumb-seconds-confirm {
     flex: 0 0 auto;
+    margin-left: 0.15rem;
     padding: 0.35rem 0.7rem;
     font-size: 0.85rem;
     background: #667eea;
@@ -2566,7 +2582,8 @@ select {
 [data-theme="dark"] .tag-group-count,
 [data-theme="dark"] .modal-header h2,
 [data-theme="dark"] .info-group label,
-[data-theme="dark"] .thumb-seconds-item {
+[data-theme="dark"] .thumb-seconds-item,
+[data-theme="dark"] .thumb-seconds-unit {
     color: #cdd0d6;
 }
 
