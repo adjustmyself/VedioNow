@@ -453,6 +453,8 @@ app.on('before-quit', (event) => {
   if (isQuitting) return;
   isQuitting = true;
   event.preventDefault();
+  // 還在產縮圖/預覽的 FFmpeg 一併結束，不留下孤兒行程佔 CPU
+  ThumbnailGenerator.killAllFfmpeg();
   shutdownDataLayer().finally(() => app.quit());
 });
 

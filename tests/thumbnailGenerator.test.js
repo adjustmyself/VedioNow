@@ -107,7 +107,7 @@ describe('ThumbnailGenerator', () => {
   test('probeDuration 只帶 -i 讀檔頭，UNC 路徑保留反斜線', async () => {
     const spy = jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: 1, stderr: 'At least one output file must be specified', duration: 75.2 });
     expect(await gen.probeDuration('\\\\nas\\share\\a.mkv')).toBeCloseTo(75.2);
-    expect(spy).toHaveBeenCalledWith(['-hide_banner', '-i', '\\\\nas\\share\\a.mkv']);
+    expect(spy).toHaveBeenCalledWith(['-hide_banner', '-i', '\\\\nas\\share\\a.mkv'], ThumbnailGenerator.FFMPEG_TIMEOUTS.probe);
 
     spy.mockResolvedValue({ code: 1, stderr: 'No such file', duration: null });
     expect(await gen.probeDuration('C:\\missing.mp4')).toBeNull();
@@ -227,6 +227,33 @@ describe('ThumbnailGenerator', () => {
       expect(fs.readdirSync(gen.previewsDir)).toEqual([path.basename(keep)]);
       expect((await gen.getThumbnailStats()).previews).toEqual({ total: 1, size: 3 });
     });
+  });
+
+  test('FFmpeg 跑不完時逾時強制結束，不再佔住行程', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    // 無限長的測試訊號源，不加逾時會一直跑
+    const started = Date.now();
+    const result = await gen._runFfmpeg(['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc', '-f', 'null', '-'], 800);
+    expect(result.timedOut).toBe(true);
+    expect(result.code).toBe(-1);
+    expect(result.stderr).toContain('已強制結束');
+    expect(Date.now() - started).toBeLessThan(800 + 6000);
+  }, 15000);
+
+  test('正常結束的 FFmpeg 不算逾時', async () => {
+    const result = await gen._runFfmpeg(['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=d=0.1', '-f', 'null', '-'], 10000);
+    expect(result.timedOut).toBe(false);
+    expect(result.code).toBe(0);
+  }, 15000);
+
+  test('縮圖逾時後不再改試其他時間點', async () => {
+    const thumbPath = gen.getThumbnailPath('C:\\videos\\stuck.mkv');
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const run = jest.spyOn(gen, '_runFfmpeg').mockResolvedValue({ code: -1, stderr: '已強制結束', duration: null, timedOut: true });
+
+    await expect(gen.generateWithFFmpeg('C:\\videos\\stuck.mkv', thumbPath, 30)).rejects.toThrow();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 
   test('全部失敗時不留下任何檔案', async () => {

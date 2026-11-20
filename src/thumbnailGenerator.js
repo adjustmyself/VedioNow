@@ -33,8 +33,26 @@ const PREVIEW_WIDTH = 320;
 const PREVIEW_HEIGHT = 180;
 // Duration 出現在 stderr 開頭的輸入資訊裡；只保留尾段會被串流/中繼資料擠掉，所以另存開頭這段來解析長度
 const STDERR_HEAD_CHARS = 16000;
+// 單次 FFmpeg 執行的時間上限。損壞檔案（沒有關鍵格、串流錯亂）可能讓 FFmpeg 一直解碼停不下來，
+// 網路磁碟斷線也可能讓它卡住；超時就強制結束，避免 CPU 滿載且佔住槽位讓後面的縮圖全部排隊
+const FFMPEG_TIMEOUTS = {
+  thumbnail: 60 * 1000,
+  preview: 120 * 1000,
+  probe: 30 * 1000
+};
+// 送出終止後最多等這麼久就放行（卡在網路 I/O 的行程可能要等 I/O 回來才真的結束）
+const KILL_GRACE_MS = 5000;
 
 let runningProcesses = 0;
+// 執行中的 FFmpeg 行程，程式結束時全部終止，不留下孤兒行程
+const activeProcesses = new Set();
+
+function killAllFfmpeg() {
+  for (const child of activeProcesses) {
+    try { child.kill(); } catch { /* 已結束 */ }
+  }
+  activeProcesses.clear();
+}
 const waitingQueue = [];
 
 async function withFfmpegSlot(task) {
@@ -170,24 +188,52 @@ class ThumbnailGenerator {
       : videoPath.replace(/\\/g, '/');
   }
 
-  // 結果：{ code, stderr（尾段）, duration（從開頭解析，取不到為 null）}
-  _runFfmpeg(args) {
+  // 結果：{ code, stderr（尾段）, duration（從開頭解析，取不到為 null）, timedOut }
+  // -nostdin 並把 stdin/stdout 設為 ignore：FFmpeg 預設會讀 stdin 等互動按鍵，背景執行時可能因此卡住
+  _runFfmpeg(args, timeoutMs = FFMPEG_TIMEOUTS.thumbnail) {
     return new Promise((resolve) => {
       let stderrTail = '';
       let stderrHead = '';
       let settled = false;
+      let timedOut = false;
+      let timer = null;
+      let graceTimer = null;
+      let ffmpeg = null;
       const finish = (result) => {
         if (settled) return;
         settled = true;
-        resolve(result);
+        clearTimeout(timer);
+        clearTimeout(graceTimer);
+        if (ffmpeg) activeProcesses.delete(ffmpeg);
+        resolve({ timedOut, ...result });
       };
 
-      let ffmpeg;
       try {
-        ffmpeg = spawn(FFMPEG_PATH, args, { windowsVerbatimArguments: false, shell: false });
+        ffmpeg = spawn(FFMPEG_PATH, ['-nostdin', ...args], {
+          windowsVerbatimArguments: false,
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'pipe']
+        });
       } catch (error) {
-        finish({ code: -1, stderr: error.message });
+        finish({ code: -1, stderr: error.message, duration: null });
         return;
+      }
+      activeProcesses.add(ffmpeg);
+
+      const result = (code) => ({
+        code,
+        stderr: timedOut ? `${stderrTail}\n[FFmpeg 超過 ${Math.round(timeoutMs / 1000)} 秒未完成，已強制結束]` : stderrTail,
+        duration: parseDurationSeconds(stderrHead)
+      });
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          timedOut = true;
+          console.warn(`FFmpeg 執行逾時（${Math.round(timeoutMs / 1000)} 秒），強制結束: ${args.join(' ')}`);
+          try { ffmpeg.kill(); } catch { /* 已結束 */ }
+          graceTimer = setTimeout(() => finish(result(-1)), KILL_GRACE_MS);
+        }, timeoutMs);
       }
 
       ffmpeg.stderr.on('data', (data) => {
@@ -196,7 +242,7 @@ class ThumbnailGenerator {
         stderrTail = (stderrTail + text).slice(-STDERR_TAIL_CHARS);
       });
       ffmpeg.on('error', (error) => finish({ code: -1, stderr: error.message, duration: null }));
-      ffmpeg.on('close', (code) => finish({ code, stderr: stderrTail, duration: parseDurationSeconds(stderrHead) }));
+      ffmpeg.on('close', (code) => finish(result(timedOut ? -1 : code)));
     });
   }
 
@@ -218,7 +264,7 @@ class ThumbnailGenerator {
         }
 
         const result = await withFfmpegSlot(() =>
-          this._runFfmpeg(this.buildFfmpegArgs(videoPath, tmpPath, offset))
+          this._runFfmpeg(this.buildFfmpegArgs(videoPath, tmpPath, offset), FFMPEG_TIMEOUTS.thumbnail)
         );
         const { code, stderr } = result;
         if (duration == null) {
@@ -233,6 +279,8 @@ class ThumbnailGenerator {
           return thumbnailPath;
         }
         lastError = `exit code ${code} @${offset}s: ${stderr.slice(-300)}`;
+        // 逾時代表檔案本身有問題或磁碟卡住，換時間點多半也一樣，不再重試
+        if (result.timedOut) break;
       }
     } finally {
       await fs.remove(tmpPath).catch(() => {});
@@ -297,7 +345,7 @@ class ThumbnailGenerator {
       try {
         const offsets = ThumbnailGenerator.previewOffsets(duration);
         const { code, stderr } = await withFfmpegSlot(() =>
-          this._runFfmpeg(this.buildPreviewArgs(videoPath, tmpPath, offsets))
+          this._runFfmpeg(this.buildPreviewArgs(videoPath, tmpPath, offsets), FFMPEG_TIMEOUTS.preview)
         );
         if (code !== 0 || !await this._isValidFile(tmpPath)) {
           throw new Error(`FFmpeg 產生預覽失敗 (exit ${code}): ${stderr.slice(-300)}`);
@@ -332,7 +380,7 @@ class ThumbnailGenerator {
   // 補齊舊資料用：已經有縮圖的影片不會再跑 generateWithFFmpeg
   async probeDuration(videoPath) {
     const { duration, stderr } = await withFfmpegSlot(() =>
-      this._runFfmpeg(['-hide_banner', '-i', this.normalizeInputPath(videoPath)])
+      this._runFfmpeg(['-hide_banner', '-i', this.normalizeInputPath(videoPath)], FFMPEG_TIMEOUTS.probe)
     );
     return duration ?? parseDurationSeconds(stderr);
   }
@@ -448,5 +496,7 @@ class ThumbnailGenerator {
 module.exports = ThumbnailGenerator;
 module.exports.buildOffsets = buildOffsets;
 module.exports.parseDurationSeconds = parseDurationSeconds;
+module.exports.killAllFfmpeg = killAllFfmpeg;
+module.exports.FFMPEG_TIMEOUTS = FFMPEG_TIMEOUTS;
 // 畫面端不另外定義格數，由 get-preview 的回傳值帶過去
 module.exports.PREVIEW_FRAMES = PREVIEW_FRAMES;
