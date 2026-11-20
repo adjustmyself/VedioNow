@@ -187,11 +187,14 @@ describe('ThumbnailGenerator', () => {
     test('每個時間點一個快速定位的輸入，橫向拼接成一張', () => {
       const args = gen.buildPreviewArgs('\\\\nas\\share\\a.mkv', 'C:\\out\\p.jpg', [1, 2, 3]);
       expect(args.filter(a => a === '-i')).toHaveLength(3);
-      // -ss 都在對應的 -i 前面
-      expect(args.slice(1, 5)).toEqual(['-ss', '1', '-i', '\\\\nas\\share\\a.mkv']);
+      // -ss 都在對應的 -i 前面，每個輸入限讀幾秒（避免某格沒畫面時其他輸入解碼到檔尾）
+      expect(args.slice(1, 7)).toEqual(['-ss', '1', '-t', '3', '-i', '\\\\nas\\share\\a.mkv']);
       const filter = args[args.indexOf('-filter_complex') + 1];
       expect(filter).toContain('hstack=inputs=3');
       expect(filter).toContain('pad=320:180');
+      // 每格只取第一個畫面，取不到時留黑底
+      expect(filter.match(/trim=end_frame=1/g)).toHaveLength(3);
+      expect(filter.match(/overlay=eof_action=pass/g)).toHaveLength(3);
       expect(args[args.length - 1]).toBe('C:/out/p.jpg');
     });
 

@@ -31,6 +31,8 @@ const STDERR_TAIL_CHARS = 2000;
 const PREVIEW_FRAMES = 10;
 const PREVIEW_WIDTH = 320;
 const PREVIEW_HEIGHT = 180;
+// 預覽每個輸入最多讀幾秒（從定位點起算），只要第一格，限制住解碼量
+const PREVIEW_INPUT_SECONDS = 3;
 // Duration 出現在 stderr 開頭的輸入資訊裡；只保留尾段會被串流/中繼資料擠掉，所以另存開頭這段來解析長度
 const STDERR_HEAD_CHARS = 16000;
 // 單次 FFmpeg 執行的時間上限。損壞檔案（沒有關鍵格、串流錯亂）可能讓 FFmpeg 一直解碼停不下來，
@@ -297,18 +299,26 @@ class ThumbnailGenerator {
     );
   }
 
-  // 一次 FFmpeg 執行：每個時間點各開一個輸入（-ss 在 -i 前快速定位），縮放補邊後橫向拼接
+  // 一次 FFmpeg 執行：每個時間點各開一個輸入（-ss 在 -i 前快速定位），縮放補邊後橫向拼接。
+  // 檔頭長度可能比實際影像長（未下載完整、影像比音訊早結束），某格取不到畫面時 hstack 會一直等那一格，
+  // 其他輸入就一路解碼到檔尾、CPU 滿載。所以每個輸入只讀 PREVIEW_INPUT_SECONDS 秒、只取第一格，
+  // 並疊在黑底上（取不到畫面的格子留黑），保證很快結束而且一定有輸出
   buildPreviewArgs(videoPath, outputPath, offsets) {
     const input = this.normalizeInputPath(videoPath);
     const args = ['-hide_banner'];
-    for (const offset of offsets) args.push('-ss', String(offset), '-i', input);
-    const scaled = offsets.map((_, i) =>
-      `[${i}:v:0]scale=${PREVIEW_WIDTH}:${PREVIEW_HEIGHT}:force_original_aspect_ratio=decrease,` +
-      `pad=${PREVIEW_WIDTH}:${PREVIEW_HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
+    for (const offset of offsets) {
+      args.push('-ss', String(offset), '-t', String(PREVIEW_INPUT_SECONDS), '-i', input);
+    }
+    const cells = offsets.map((_, i) =>
+      `[${i}:v:0]trim=end_frame=1,setpts=PTS-STARTPTS,` +
+      `scale=${PREVIEW_WIDTH}:${PREVIEW_HEIGHT}:force_original_aspect_ratio=decrease,` +
+      `pad=${PREVIEW_WIDTH}:${PREVIEW_HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1[f${i}];` +
+      `color=black:s=${PREVIEW_WIDTH}x${PREVIEW_HEIGHT}:r=1:d=1[bg${i}];` +
+      `[bg${i}][f${i}]overlay=eof_action=pass,setsar=1[v${i}]`
     );
     const stack = `${offsets.map((_, i) => `[v${i}]`).join('')}hstack=inputs=${offsets.length}[out]`;
     args.push(
-      '-filter_complex', `${scaled.join(';')};${stack}`,
+      '-filter_complex', `${cells.join(';')};${stack}`,
       '-map', '[out]',
       '-frames:v', '1',
       '-q:v', '4',
