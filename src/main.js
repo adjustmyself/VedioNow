@@ -1397,6 +1397,29 @@ ipcMain.handle('open-path', async (event, targetPath) => {
   }
 });
 
+// 在檔案總管中開啟影片所在資料夾並選取該檔案；檔案已不存在時改開資料夾本身
+ipcMain.handle('show-in-folder', async (event, targetPath) => {
+  try {
+    const filePath = String(targetPath || '');
+    const ext = path.extname(filePath).toLowerCase();
+    if (!videoScanner || !videoScanner.supportedFormats.includes(ext)) {
+      return { success: false, error: '不支援此類型的檔案' };
+    }
+    if (await fs.pathExists(filePath)) {
+      shell.showItemInFolder(filePath);
+      return { success: true, error: null };
+    }
+    const dir = path.dirname(filePath);
+    if (!(await fs.pathExists(dir))) {
+      return { success: false, error: `找不到資料夾：${dir}` };
+    }
+    const error = await shell.openPath(dir);
+    return error ? { success: false, error } : { success: true, error: null };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // MongoDB → SQLite 一鍵資料遷移
 ipcMain.handle('migrate-mongodb-to-sqlite', async () => {
   try {

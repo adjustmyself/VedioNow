@@ -10,7 +10,7 @@ const INVOKE_CHANNELS = new Set([
   'get-matching-video-refs', 'get-config',
   // 單部影片
   'add-video-tag', 'remove-video-tag', 'set-video-metadata', 'update-video', 'delete-video', 'delete-video-with-file',
-  'show-delete-confirmation', 'open-path', 'upload-subtitle', 'set-video-duration', 'copy-to-clipboard',
+  'show-delete-confirmation', 'open-path', 'show-in-folder', 'upload-subtitle', 'set-video-duration', 'copy-to-clipboard',
   // 批次操作
   'batch-add-tag', 'batch-remove-tag', 'batch-set-rating', 'batch-delete-records',
   // 縮圖與預覽

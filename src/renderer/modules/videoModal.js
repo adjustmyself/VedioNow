@@ -289,6 +289,11 @@ class VideoModalMethods {
       if (this.selectedVideo) this.copyPathToClipboard(this.selectedVideo.filepath, copyFilepathBtn);
     });
 
+    // 開啟影片所在資料夾
+    document.getElementById('open-file-folder').addEventListener('click', () => {
+      this.openVideoFolder();
+    });
+
     // 綁定新增標籤按鈕
     const addTagBtn = document.getElementById('add-tag-btn');
     addTagBtn.addEventListener('click', () => {
@@ -624,6 +629,16 @@ class VideoModalMethods {
       this.updateVideoPlayCount(video);
     } else if (result && !result.success) {
       alert(`無法開啟影片：${result.error}`);
+    }
+  }
+
+  // 在檔案總管中開啟影片所在資料夾並選取該檔案（不計入開啟次數）
+  async openVideoFolder() {
+    const video = this.selectedVideo;
+    if (!video) return;
+    const result = await window.api.invoke('show-in-folder', video.filepath);
+    if (result && !result.success) {
+      alert(`無法開啟資料夾：${result.error}`);
     }
   }
 
