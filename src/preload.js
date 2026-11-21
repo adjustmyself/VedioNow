@@ -38,7 +38,7 @@ const INVOKE_CHANNELS = new Set([
 ]);
 
 // 畫面端 → 主行程（ipcMain.on，不需回應）
-const SEND_CHANNELS = new Set(['renderer-ready']);
+const SEND_CHANNELS = new Set(['renderer-ready', 'refocus-window']);
 
 // 主行程 → 畫面端
 const EVENT_CHANNELS = new Set([

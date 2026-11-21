@@ -243,6 +243,16 @@ ipcMain.on('renderer-ready', (event) => {
   }
 });
 
+// Windows 上原生 alert()/confirm() 關閉後，鍵盤焦點常常回不到頁面（點得到輸入框但打不了字），
+// 要切走再切回視窗才恢復；畫面端每次關掉對話框後送這個訊息，讓視窗重新取得焦點
+ipcMain.on('refocus-window', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return;
+  win.blur();
+  win.focus();
+  event.sender.focus();
+});
+
 app.whenReady().then(async () => {
   // 沒拿到單一實例鎖：這是重複開啟的實例，不做任何初始化（避免多開兩份資料庫連線）
   if (!gotSingleInstanceLock) return;

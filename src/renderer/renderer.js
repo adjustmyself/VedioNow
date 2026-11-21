@@ -1,3 +1,4 @@
+import './shared/dialogFocusFix.js';
 import { escapeHtml, toTagImageUrl, debounce } from './shared/util.js';
 import ThumbnailMethods from './modules/thumbnails.js';
 import TagFilterBarMethods from './modules/tagFilterBar.js';

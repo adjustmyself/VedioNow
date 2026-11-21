@@ -98,6 +98,7 @@ dist/                    # Build output directory
 ## Development Notes
 
 - Renderer windows run with `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`: no `require`/Node in page code. Everything goes through `window.api.invoke/send/on` exposed by `src/preload.js`, which allowlists channels — **a new IPC channel must be added to the preload allowlist** or calls are rejected. `window.api.on` listeners receive only the payload (no event object) and the call returns an unsubscribe function. Anything needing Node (file writes, clipboard, shell) is a main-process IPC handler; e.g. canvas thumbnails are sent as JPEG bytes to `save-renderer-thumbnail`
+- Native `alert()`/`confirm()` on Windows can leave the page without keyboard focus (inputs click but won't type until the window is re-activated). `shared/dialogFocusFix.js` wraps `window.alert`/`window.confirm` to send `refocus-window` (main does `blur()`+`focus()`) after each dialog; every window's entry module (`renderer.js`, `settings.js`, `tag-manager.js`) imports it first, and a new window must too
 - All dynamic HTML must still go through `escapeHtml()` (filenames from disk are untrusted input)
 - Chinese language interface and comments throughout codebase
 - Supports Windows, macOS, and Linux builds via electron-builder

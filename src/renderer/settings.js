@@ -1,3 +1,4 @@
+import './shared/dialogFocusFix.js';
 import { escapeHtml } from './shared/util.js';
 
 class SettingsManager {

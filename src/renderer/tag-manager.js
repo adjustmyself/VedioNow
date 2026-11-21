@@ -1,3 +1,4 @@
+import './shared/dialogFocusFix.js';
 import { escapeHtml, toTagImageUrl } from './shared/util.js';
 
 class TagManager {
